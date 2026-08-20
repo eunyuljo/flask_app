@@ -2,7 +2,6 @@
 # AI 에이전트의 '두뇌' 부분. Claude 에게 넘길 도구(tool)들을 정의하고, 대화 한 턴을 실행한다.
 # 웹(HTTP)과 관련된 코드는 전혀 없어서, 나중에 CLI 나 배치 작업에서도 그대로 재사용할 수 있다.
 
-import os
 from datetime import datetime
 
 import anthropic
@@ -60,37 +59,127 @@ SYSTEM_PROMPT = """당신은 Flask 블루프린트 학습용 샘플 앱에 내�
 
 
 # ----------------------------------------------------------------------
-# 2) 대화 실행
+# 2) 호출 경로(provider) 전환
 # ----------------------------------------------------------------------
+# 같은 Claude 모델을 부르는 두 가지 경로를 환경변수 하나로 갈아끼운다.
+# 도구 정의와 에이전트 루프는 양쪽이 완전히 똑같고, '클라이언트를 어떻게 만드느냐'만 다르다.
+CLAUDE_API = "claude_api"
+BEDROCK = "bedrock"
+
+
 class AgentNotConfigured(Exception):
-    """API 키가 없어서 에이전트를 쓸 수 없을 때 발생시키는 예외."""
+    """설정이 부족해서 에이전트를 쓸 수 없을 때 발생시키는 예외."""
 
 
-def is_configured():
-    """API 키가 준비되어 있는지 확인한다. 화면에 안내를 띄울 때 쓴다."""
-    return bool(current_app.config.get("ANTHROPIC_API_KEY"))
+def _resolve_model(provider, model):
+    """provider 에 맞는 모델 ID 를 만든다.
+
+    Bedrock 은 같은 모델이라도 이름 앞에 "anthropic." 이 붙는다.
+        claude_api -> claude-opus-5
+        bedrock    -> anthropic.claude-opus-5
+    설정에는 짧은 이름만 적어두고 여기서 자동으로 붙여주므로,
+    provider 를 바꿔도 AGENT_MODEL 은 손댈 필요가 없다.
+    """
+    if provider == BEDROCK and not model.startswith("anthropic."):
+        return "anthropic." + model
+    return model
 
 
+def check_config():
+    """설정이 준비됐는지 확인한다. 문제가 없으면 None, 있으면 안내 문구를 돌려준다."""
+    cfg = current_app.config
+    provider = cfg["AGENT_PROVIDER"]
+
+    if provider == CLAUDE_API:
+        if not cfg["ANTHROPIC_API_KEY"]:
+            return "ANTHROPIC_API_KEY 가 설정되지 않았습니다."
+        return None
+
+    if provider == BEDROCK:
+        if not cfg["AWS_REGION"]:
+            return "Bedrock 을 쓰려면 AWS_REGION 이 필요합니다."
+        # 액세스 키는 비어 있어도 된다(IAM 역할이나 ~/.aws/credentials 로 해결될 수 있음).
+        # 그래서 여기서는 막지 않고, 실제 호출 시점에 자격증명이 없으면 에러로 알린다.
+        return None
+
+    return f"AGENT_PROVIDER 값이 올바르지 않습니다: {provider!r} (claude_api 또는 bedrock)"
+
+
+def _build_client(provider, cfg):
+    """provider 에 맞는 클라이언트를 만든다. 여기가 두 경로의 유일한 차이점이다."""
+    if provider == BEDROCK:
+        # Bedrock 은 전용 클래스를 쓴다.
+        # 일반 Anthropic() 에 base_url 만 바꿔 끼우는 방식은 동작하지 않는다.
+        # 인증이 API 키가 아니라 AWS SigV4 서명이기 때문이다.
+        kwargs = {"aws_region": cfg["AWS_REGION"]}
+
+        # 값이 있는 항목만 넘긴다. 전부 비우면 botocore 기본 자격증명 체인이 알아서 찾는다.
+        if cfg["AWS_ACCESS_KEY_ID"]:
+            kwargs["aws_access_key"] = cfg["AWS_ACCESS_KEY_ID"]
+        if cfg["AWS_SECRET_ACCESS_KEY"]:
+            kwargs["aws_secret_key"] = cfg["AWS_SECRET_ACCESS_KEY"]
+        if cfg["AWS_SESSION_TOKEN"]:
+            kwargs["aws_session_token"] = cfg["AWS_SESSION_TOKEN"]
+        if cfg["AWS_PROFILE"]:
+            kwargs["aws_profile"] = cfg["AWS_PROFILE"]
+
+        # 거절 시 폴백: Bedrock 은 서버측 fallbacks 파라미터를 지원하지 않으므로
+        # SDK 가 클라이언트에서 재시도해주는 미들웨어를 대신 쓴다.
+        fallback_model = _resolve_model(BEDROCK, cfg["AGENT_FALLBACK_MODEL"])
+        return anthropic.AnthropicBedrockMantle(
+            middleware=[
+                anthropic.BetaRefusalFallbackMiddleware(
+                    fallbacks=[{"model": fallback_model}]
+                )
+            ],
+            **kwargs,
+        )
+
+    # 기본 경로: Anthropic 에 직접 호출.
+    return anthropic.Anthropic(api_key=cfg["ANTHROPIC_API_KEY"])
+
+
+def _provider_kwargs(provider, cfg):
+    """provider 별로 요청에 더 붙일 파라미터를 돌려준다."""
+    if provider == BEDROCK:
+        # Bedrock 에서는 fallbacks / 관련 beta 헤더를 보내면 안 된다.
+        # (SDK 가 막아주지 않고 그대로 전송하므로, 여기서 빼는 게 우리 책임이다.)
+        return {}
+
+    # Claude API 에서는 서버가 알아서 다른 모델로 넘겨준다.
+    return {
+        "betas": ["server-side-fallback-2026-07-01"],
+        "fallbacks": "default",
+    }
+
+
+# ----------------------------------------------------------------------
+# 3) 대화 실행
+# ----------------------------------------------------------------------
 def run_agent(history, user_message):
     """대화 한 턴을 실행하고 (답변 텍스트, 사용한 도구 목록) 을 돌려준다.
 
     history: [{"role": "user"/"assistant", "content": ...}, ...] 형태의 이전 대화
     user_message: 이번에 사용자가 입력한 문장
     """
-    api_key = current_app.config.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise AgentNotConfigured("ANTHROPIC_API_KEY 가 설정되지 않았습니다.")
+    problem = check_config()
+    if problem:
+        raise AgentNotConfigured(problem)
 
-    client = anthropic.Anthropic(api_key=api_key)
+    cfg = current_app.config
+    provider = cfg["AGENT_PROVIDER"]
+    client = _build_client(provider, cfg)
+
     messages = history + [{"role": "user", "content": user_message}]
 
     # tool_runner: '에이전트 루프'를 SDK 가 대신 돌려주는 헬퍼.
     # 직접 만들면 아래 과정을 while 문으로 반복해야 한다.
     #   요청 -> Claude 가 도구 호출을 요구 -> 내가 함수 실행 -> 결과를 다시 전달 -> 반복
     # tool_runner 는 이 반복을 알아서 처리하고, 매 턴의 응답을 하나씩 내어준다.
+    # 이 부분은 claude_api / bedrock 양쪽이 완전히 동일하다.
     runner = client.beta.messages.tool_runner(
-        model=current_app.config["AGENT_MODEL"],
-        max_tokens=current_app.config["AGENT_MAX_TOKENS"],
+        model=_resolve_model(provider, cfg["AGENT_MODEL"]),
+        max_tokens=cfg["AGENT_MAX_TOKENS"],
         system=SYSTEM_PROMPT,
         tools=TOOLS,
         messages=messages,
@@ -98,22 +187,35 @@ def run_agent(history, user_message):
         thinking={"type": "adaptive"},
         # effort 는 '얼마나 공들일지'를 정한다. 웹 요청은 사용자가 기다리는 화면이므로
         # 기본값(high) 대신 medium 으로 낮춰 응답 속도를 확보했다.
-        output_config={"effort": current_app.config["AGENT_EFFORT"]},
-        # 안전 분류기가 요청을 거절했을 때 서버가 알아서 다른 모델로 넘겨주는 기능.
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
+        output_config={"effort": cfg["AGENT_EFFORT"]},
+        **_provider_kwargs(provider, cfg),
     )
 
     used_tools = []
     final_message = None
 
-    # runner 를 순회하면 도구 호출이 끝날 때까지 자동으로 반복된다.
-    for message in runner:
-        final_message = message
-        # 이번 턴에 Claude 가 어떤 도구를 불렀는지 기록해 둔다(화면에 보여주기 위함).
-        for block in message.content:
-            if block.type == "tool_use":
-                used_tools.append(block.name)
+    try:
+        # runner 를 순회하면 도구 호출이 끝날 때까지 자동으로 반복된다.
+        for message in runner:
+            final_message = message
+            # 이번 턴에 Claude 가 어떤 도구를 불렀는지 기록해 둔다(화면에 보여주기 위함).
+            for block in message.content:
+                if block.type == "tool_use":
+                    used_tools.append(block.name)
+    except Exception as e:
+        # AWS 자격증명 관련 실패는 anthropic 예외 체계 밖에서 올라온다.
+        #   - SDK 가 서명 직전에 던지는 RuntimeError
+        #     ("Could not resolve AWS credentials from session")
+        #   - botocore 자체 예외(만료된 토큰, 잘못된 프로필 등)
+        # 둘 다 '설정을 고쳐야 하는 문제'이므로 AgentNotConfigured 로 바꿔서
+        # 화면에 원인을 안내한다.
+        is_botocore = type(e).__module__.split(".")[0] == "botocore"
+        is_no_creds = isinstance(e, RuntimeError) and "AWS credentials" in str(e)
+        if is_botocore or is_no_creds:
+            raise AgentNotConfigured(
+                f"AWS 자격증명을 확인할 수 없습니다: {e}"
+            ) from e
+        raise
 
     # 최종 답변 텍스트만 뽑아낸다.
     # content 는 text / thinking / tool_use 등 여러 종류의 블록이 섞인 리스트이므로

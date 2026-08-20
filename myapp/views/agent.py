@@ -17,7 +17,7 @@ from flask import (
 
 import anthropic
 
-from agent_core import run_agent, is_configured, AgentNotConfigured
+from agent_core import run_agent, check_config, AgentNotConfigured
 
 # 블루프린트 이름은 "agent" -> 엔드포인트는 agent.index, agent.ask, agent.reset 이 된다.
 agent_bp = Blueprint("agent", __name__)
@@ -70,8 +70,10 @@ def index():
     return render_template(
         "agent.html",
         history=_get_history(),
-        configured=is_configured(),
+        # 설정에 문제가 있으면 안내 문구가, 없으면 None 이 넘어간다.
+        config_error=check_config(),
         model=current_app.config["AGENT_MODEL"],
+        provider=current_app.config["AGENT_PROVIDER"],
     )
 
 
@@ -92,8 +94,10 @@ def ask():
         api_history = [{"role": m["role"], "content": m["content"]} for m in history]
         reply, used_tools = run_agent(api_history, user_message)
 
-    except AgentNotConfigured:
-        flash("ANTHROPIC_API_KEY 가 설정되지 않아 에이전트를 실행할 수 없습니다.", "error")
+    except AgentNotConfigured as e:
+        # 설정 부족(키 없음, 리전 없음, AWS 자격증명 없음 등)은 사용자가 고쳐야 하는 문제이므로
+        # 원인을 그대로 보여준다.
+        flash(f"에이전트를 실행할 수 없습니다: {e}", "error")
         return redirect(url_for("agent.index"))
 
     # 예외는 '좁은 것부터' 순서대로 잡는다. 맨 위에서 넓은 예외로 한 번에 잡아버리면

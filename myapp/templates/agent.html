@@ -7,13 +7,16 @@
 
 {% block content %}
   <h1>AI 에이전트</h1>
-  <p class="muted">모델: <code>{{ model }}</code></p>
+  {# provider 는 어느 경로로 모델을 부르는지를 보여준다: claude_api 또는 bedrock #}
+  <p class="muted">
+    경로: <code>{{ provider }}</code> &middot; 모델: <code>{{ model }}</code>
+  </p>
 
-  {% if not configured %}
-    {# API 키가 없어도 페이지 자체는 뜬다. 무엇을 해야 하는지 알려주기만 한다. #}
+  {% if config_error %}
+    {# 설정이 덜 됐어도 페이지 자체는 뜬다. 무엇을 해야 하는지 알려주기만 한다. #}
     <div class="flash error">
-      <strong>ANTHROPIC_API_KEY 가 설정되지 않았습니다.</strong><br>
-      <code>.env</code> 파일에 키를 넣고 서버를 다시 시작하세요.
+      <strong>{{ config_error }}</strong><br>
+      <code>.env</code> 를 수정하고 서버를 다시 시작하세요.
     </div>
   {% endif %}
 

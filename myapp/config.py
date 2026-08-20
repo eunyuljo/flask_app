@@ -82,6 +82,28 @@ class Config:
     # 웹 화면에서 사용자가 기다리므로 기본값(high)보다 낮은 medium 을 기본으로 둔다.
     AGENT_EFFORT = os.environ.get("AGENT_EFFORT", "medium")
 
+    # 어느 경로로 Claude 를 호출할지 고르는 스위치: "claude_api" 또는 "bedrock".
+    # 코드를 고치지 않고 환경변수만 바꿔서 전환할 수 있다.
+    #   claude_api -> Anthropic 에 직접 호출. ANTHROPIC_API_KEY 사용.
+    #   bedrock    -> AWS Bedrock 경유. AWS 자격증명(SigV4 서명) 사용.
+    AGENT_PROVIDER = os.environ.get("AGENT_PROVIDER", "claude_api")
+
+    # 안전 분류기가 요청을 거절했을 때 대신 시도할 모델.
+    # claude_api 에서는 서버가, bedrock 에서는 SDK 미들웨어가 이 모델로 넘긴다.
+    AGENT_FALLBACK_MODEL = os.environ.get("AGENT_FALLBACK_MODEL", "claude-opus-4-8")
+
+    # --- Bedrock 을 쓸 때만 필요한 값들 ---
+    # 리전은 필수다. Bedrock 은 리전별로 모델 액세스를 따로 켜야 한다.
+    AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+
+    # 액세스 키를 비워두면 botocore 의 기본 자격증명 체인이 대신 찾아준다.
+    # (~/.aws/credentials, EC2/ECS/Lambda 의 IAM 역할 등)
+    # EC2 나 ECS 위에서 돌린다면 키를 넣지 말고 IAM 역할을 쓰는 편이 안전하다.
+    AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
+    AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+    AWS_SESSION_TOKEN = os.environ.get("AWS_SESSION_TOKEN", "")
+    AWS_PROFILE = os.environ.get("AWS_PROFILE", "")
+
     # 커넥션 풀 옵션. 오래 놀고 있던 커넥션을 DB 가 먼저 끊어버려서 나는
     # "server closed the connection unexpectedly" 에러를 막는 설정이다.
     SQLALCHEMY_ENGINE_OPTIONS = {
