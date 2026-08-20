@@ -65,6 +65,23 @@ class Config:
     # SQLAlchemy 가 객체 변경을 추적하는 기능. 메모리만 더 먹고 쓸 일이 거의 없어서 끈다.
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
+    # ------------------------------------------------------------------
+    # AI 에이전트 (Anthropic Claude)
+    # ------------------------------------------------------------------
+    # API 키는 절대 코드에 적지 않는다. 기본값도 두지 않아서, 값이 없으면 빈 문자열이 되고
+    # 화면에 "키가 없습니다" 안내가 뜬다(앱이 죽지는 않는다).
+    ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+    # 사용할 모델 ID.
+    AGENT_MODEL = os.environ.get("AGENT_MODEL", "claude-opus-5")
+
+    # 한 번의 응답에서 만들어낼 수 있는 최대 토큰 수.
+    AGENT_MAX_TOKENS = int(os.environ.get("AGENT_MAX_TOKENS", "16000"))
+
+    # 답변에 얼마나 공을 들일지: low / medium / high / xhigh / max.
+    # 웹 화면에서 사용자가 기다리므로 기본값(high)보다 낮은 medium 을 기본으로 둔다.
+    AGENT_EFFORT = os.environ.get("AGENT_EFFORT", "medium")
+
     # 커넥션 풀 옵션. 오래 놀고 있던 커넥션을 DB 가 먼저 끊어버려서 나는
     # "server closed the connection unexpectedly" 에러를 막는 설정이다.
     SQLALCHEMY_ENGINE_OPTIONS = {

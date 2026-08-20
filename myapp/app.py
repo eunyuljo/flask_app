@@ -13,6 +13,7 @@ from config import config
 # views/main.py 안의 main_bp, views/auth.py 안의 auth_bp 를 가져오는 것.
 from views.main import main_bp
 from views.auth import auth_bp
+from views.agent import agent_bp
 
 
 def create_app(config_name=None):
@@ -84,6 +85,11 @@ def create_app(config_name=None):
     # auth 블루프린트: url_prefix="/auth" 를 주었으므로 모든 경로 앞에 /auth 가 붙는다.
     #   auth.py 의 @auth_bp.route("/login")  ->  실제 URL: /auth/login
     app.register_blueprint(auth_bp, url_prefix="/auth")
+
+    # agent 블루프린트: url_prefix="/agent" -> /agent/, /agent/ask, /agent/reset
+    # 블루프린트를 하나 더 만들어 등록하는 것만으로 앱에 새 기능 영역이 통째로 붙는다.
+    # main/auth 코드는 한 줄도 건드리지 않았다 — 이게 블루프린트를 쓰는 이유다.
+    app.register_blueprint(agent_bp, url_prefix="/agent")
 
     return app
 

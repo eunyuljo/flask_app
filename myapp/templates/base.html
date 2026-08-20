@@ -18,6 +18,19 @@
     label { display: block; margin-top: 12px; }
     input[type=text], input[type=password] { padding: 6px; width: 220px; }
     button { margin-top: 16px; padding: 8px 16px; cursor: pointer; }
+    .muted { color: #666; font-size: 0.9em; }
+    .chat { margin: 20px 0; }
+    .msg { padding: 10px 14px; border-radius: 8px; margin-bottom: 10px; }
+    .msg.user { background: #eff6ff; }
+    .msg.assistant { background: #f5f5f5; }
+    .msg .who { font-size: 0.8em; color: #666; margin-bottom: 4px; }
+    /* 모델 답변의 줄바꿈을 그대로 살린다. */
+    .msg .body { white-space: pre-wrap; }
+    .msg .tools { margin-top: 8px; font-size: 0.8em; color: #666; }
+    form.ask { display: flex; gap: 8px; align-items: center; }
+    form.ask input { flex: 1; width: auto; padding: 8px; }
+    form.ask button, form.reset button { margin-top: 0; }
+    form.reset { margin-top: 12px; }
   </style>
 </head>
 <body>
@@ -31,6 +44,8 @@
 
     {# session 은 템플릿 안에서 별도 전달 없이 바로 쓸 수 있다(Flask 가 기본 제공). #}
     {% if session.get('username') %}
+      {# 에이전트 페이지는 로그인해야 쓸 수 있으므로 로그인했을 때만 메뉴에 보여준다. #}
+      <a href="{{ url_for('agent.index') }}">AI 에이전트</a>
       <a href="{{ url_for('auth.logout') }}">로그아웃</a>
       <span style="color:#666;">({{ session.get('username') }}님)</span>
     {% else %}

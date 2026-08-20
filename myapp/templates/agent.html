@@ -1,0 +1,62 @@
+{# templates/agent.html
+   agent 블루프린트의 index() 가 렌더링하는 AI 에이전트 채팅 화면. base.html 을 상속한다. #}
+
+{% extends "base.html" %}
+
+{% block title %}AI 에이전트{% endblock %}
+
+{% block content %}
+  <h1>AI 에이전트</h1>
+  <p class="muted">모델: <code>{{ model }}</code></p>
+
+  {% if not configured %}
+    {# API 키가 없어도 페이지 자체는 뜬다. 무엇을 해야 하는지 알려주기만 한다. #}
+    <div class="flash error">
+      <strong>ANTHROPIC_API_KEY 가 설정되지 않았습니다.</strong><br>
+      <code>.env</code> 파일에 키를 넣고 서버를 다시 시작하세요.
+    </div>
+  {% endif %}
+
+  <div class="chat">
+    {% if not history %}
+      <p class="muted">아직 대화가 없습니다. 아래에 질문을 입력해 보세요.</p>
+      <ul class="muted">
+        <li>"지금 몇 시야?" &rarr; <code>get_current_time</code> 도구를 사용합니다</li>
+        <li>"이 앱에 어떤 페이지가 있어?" &rarr; <code>list_app_routes</code> 도구를 사용합니다</li>
+      </ul>
+    {% endif %}
+
+    {% for msg in history %}
+      <div class="msg {{ msg.role }}">
+        <div class="who">{{ '나' if msg.role == 'user' else '에이전트' }}</div>
+
+        {# 모델 답변에는 줄바꿈이 들어 있으므로 CSS 의 white-space 로 살려준다.
+           Jinja 는 기본적으로 HTML 을 이스케이프하므로, 모델이 <script> 를 뱉어도
+           태그가 아니라 글자로 표시된다(XSS 방지). |safe 를 붙이면 이 보호가 풀리니 주의. #}
+        <div class="body">{{ msg.content }}</div>
+
+        {# 이번 답변에서 실제로 호출된 도구 이름. 에이전트가 뭘 했는지 눈으로 볼 수 있다. #}
+        {% if msg.used_tools %}
+          <div class="tools">
+            사용한 도구:
+            {% for t in msg.used_tools %}<code>{{ t }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+
+  {# 질문 폼: /agent/ask 로 POST. url_for 로 주소를 만드는 규칙은 다른 페이지와 동일하다. #}
+  <form action="{{ url_for('agent.ask') }}" method="post" class="ask">
+    <input type="text" name="message" placeholder="예) 이 앱에 어떤 페이지가 있어?"
+           autocomplete="off" required autofocus>
+    <button type="submit">보내기</button>
+  </form>
+
+  {# 대화 초기화도 상태를 바꾸는 동작이므로 링크(GET)가 아니라 폼(POST)으로 만든다. #}
+  {% if history %}
+    <form action="{{ url_for('agent.reset') }}" method="post" class="reset">
+      <button type="submit">대화 초기화</button>
+    </form>
+  {% endif %}
+{% endblock %}
