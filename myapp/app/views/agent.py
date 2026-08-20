@@ -1,5 +1,5 @@
-# views/agent.py
-# AI 에이전트 채팅 페이지를 담당하는 블루프린트. app.py 에서 url_prefix="/agent" 로 등록되어
+# app/views/agent.py
+# AI 에이전트 채팅 페이지를 담당하는 블루프린트. app/__init__.py 에서 url_prefix="/agent" 로 등록되어
 # 이 파일의 "/", "/ask", "/reset" 은 실제로 "/agent/", "/agent/ask", "/agent/reset" 이 된다.
 
 import uuid
@@ -17,7 +17,7 @@ from flask import (
 
 import anthropic
 
-from agent_core import run_agent, check_config, AgentNotConfigured
+from app.agent_core import run_agent, check_config, AgentNotConfigured
 
 # 블루프린트 이름은 "agent" -> 엔드포인트는 agent.index, agent.ask, agent.reset 이 된다.
 agent_bp = Blueprint("agent", __name__)

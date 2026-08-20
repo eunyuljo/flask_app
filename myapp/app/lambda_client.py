@@ -1,4 +1,4 @@
-# lambda_client.py
+# app/lambda_client.py
 # Flask 에서 Lambda 를 호출하는 얇은 계층. LAMBDA_MODE 로 '진짜 AWS 호출' 과
 # '같은 프로세스에서 핸들러 직접 실행(로컬)' 을 갈아끼운다. AWS 없이도 개발할 수 있게 하기 위함이다.
 
@@ -8,7 +8,10 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from flask import current_app
 
-from lambda_functions.normalize_handler import lambda_handler
+# Flask(app 패키지)가 Lambda(api 패키지)를 import 하는 유일한 지점이다.
+# 로컬 모드에서 핸들러를 직접 부르기 위한 것으로, 개발 편의를 위한 의도적인 예외다.
+# 반대 방향(api -> app)은 절대 만들면 안 된다. Lambda 는 Flask 없이 혼자 돌아야 한다.
+from api.normalize_handler import lambda_handler
 
 LOCAL = "local"
 AWS = "aws"

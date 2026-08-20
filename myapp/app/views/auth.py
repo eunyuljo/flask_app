@@ -1,5 +1,5 @@
-# views/auth.py
-# 로그인/로그아웃을 담당하는 블루프린트. app.py 에서 url_prefix="/auth" 로 등록되어
+# app/views/auth.py
+# 로그인/로그아웃을 담당하는 블루프린트. app/__init__.py 에서 url_prefix="/auth" 로 등록되어
 # 이 파일의 "/login", "/logout" 은 실제로 "/auth/login", "/auth/logout" 으로 서비스된다.
 
 from flask import (
@@ -22,7 +22,7 @@ VALID_PASSWORD = "1234"
 
 
 # 주의: 여기에는 "/auth/login" 이 아니라 "/login" 이라고만 쓴다.
-# "/auth" 는 app.py 의 register_blueprint(..., url_prefix="/auth") 가 자동으로 붙여준다.
+# "/auth" 는 app/__init__.py 의 register_blueprint(..., url_prefix="/auth") 가 자동으로 붙여준다.
 # 만약 여기에 "/auth/login" 이라고 쓰면 최종 URL 이 "/auth/auth/login" 이 되어버린다.
 #
 # methods=["GET", "POST"] : 하나의 URL 로 두 가지 요청을 모두 처리한다.

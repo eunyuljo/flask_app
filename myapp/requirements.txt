@@ -1,3 +1,6 @@
+# Flask 앱(app 패키지)이 쓰는 의존성 목록.
+# Lambda(api 패키지)는 이 중 아무것도 필요 없다 - 표준 라이브러리만 쓴다.
+# 단, Lambda 에서 DB 적재/알람까지 하려면 배포 패키지에 psycopg 와 boto3 가 필요하다.
 Flask==3.0.3
 python-dotenv==1.0.1
 # Bedrock 을 쓰려면 [bedrock] 이 필요하다(botocore 설치 - SigV4 서명용).

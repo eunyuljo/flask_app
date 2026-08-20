@@ -1,4 +1,4 @@
-# config.py
+# app/config.py
 # 환경(개발/테스트/운영)별 설정값을 한곳에 모아두는 파일. DB 접속 정보와 secret_key 처럼
 # 코드가 아니라 '환경에 따라 달라지는 값'을 여기서 관리하고, create_app() 이 골라서 읽어간다.
 
@@ -10,8 +10,11 @@ from urllib.parse import quote_plus
 try:
     from dotenv import load_dotenv
 
-    # 이 파일(config.py) 과 같은 폴더에 있는 .env 를 읽는다.
-    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+    # .env 는 app/ 안이 아니라 프로젝트 루트(myapp/)에 둔다.
+    # config.py 는 app/ 안에 있으므로 한 단계 위로 올라가야 한다.
+    #   app/config.py  ->  dirname = app/  ->  한 단계 위 = myapp/
+    _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
 except ImportError:
     # dotenv 가 없으면 그냥 넘어간다. 이때는 실제 환경변수만 사용된다.
     pass

@@ -1,4 +1,4 @@
-# views/main.py
+# app/views/main.py
 # 메인(공개) 페이지를 담당하는 블루프린트. url_prefix 없이 등록되므로 "/" 가 그대로 최상위 URL이 된다.
 
 from flask import Blueprint, render_template, session

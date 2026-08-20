@@ -1,4 +1,4 @@
-# views/alarm.py
+# app/views/alarm.py
 # 이벤트 접수/알람 도메인을 담당하는 블루프린트. 사용자가 이벤트를 제출하면 Lambda 로 넘겨
 # 정규화 + DB 적재 + 알람 발송을 시키고, 그 결과를 화면에 보여준다. url_prefix="/alarm".
 
@@ -16,8 +16,8 @@ from flask import (
     jsonify,
 )
 
-import event_store
-from lambda_client import invoke_normalizer, LambdaInvokeError
+from app import event_store
+from app.lambda_client import invoke_normalizer, LambdaInvokeError
 
 alarm_bp = Blueprint("alarm", __name__)
 

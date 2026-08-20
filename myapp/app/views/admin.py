@@ -1,4 +1,4 @@
-# views/admin.py
+# app/views/admin.py
 # 관리자 전용 대시보드 블루프린트. 이벤트 통계와 현재 설정을 한눈에 보여준다.
 # url_prefix="/admin" 이며, 로그인만으로는 부족하고 관리자 계정이어야 들어올 수 있다.
 
@@ -13,7 +13,7 @@ from flask import (
     abort,
 )
 
-import event_store
+from app import event_store
 
 admin_bp = Blueprint("admin", __name__)
 

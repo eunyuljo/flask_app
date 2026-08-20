@@ -1,4 +1,4 @@
-# event_store.py
+# app/event_store.py
 # Lambda 가 정규화해서 돌려준 이벤트를 화면에 보여주기 위해 잠시 담아두는 저장소.
 # 진짜 원본은 Lambda 가 DB 에 넣는다. 여기 있는 건 '방금 처리한 것들'을 보여주기 위한 사본이다.
 

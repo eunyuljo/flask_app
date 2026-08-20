@@ -1,4 +1,4 @@
-# lambda_functions/normalize_handler.py
+# api/normalize_handler.py
 # AWS Lambda 핸들러. 들쭉날쭉한 원본 이벤트를 정해진 형태로 정규화하고, DB 에 적재한 뒤,
 # 심각도가 높으면 알람(SNS)을 발송한다. Flask 를 import 하지 않는다 - 순수 파이썬 함수다.
 
