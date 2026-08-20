@@ -1,0 +1,144 @@
+# config.py
+# 환경(개발/테스트/운영)별 설정값을 한곳에 모아두는 파일. DB 접속 정보와 secret_key 처럼
+# 코드가 아니라 '환경에 따라 달라지는 값'을 여기서 관리하고, create_app() 이 골라서 읽어간다.
+
+import os
+from urllib.parse import quote_plus
+
+# python-dotenv: 프로젝트 루트의 .env 파일을 읽어 os.environ 에 채워준다.
+# 설치되어 있지 않아도 앱은 그대로 동작해야 하므로 try/except 로 감싼다.
+try:
+    from dotenv import load_dotenv
+
+    # 이 파일(config.py) 과 같은 폴더에 있는 .env 를 읽는다.
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except ImportError:
+    # dotenv 가 없으면 그냥 넘어간다. 이때는 실제 환경변수만 사용된다.
+    pass
+
+
+def build_db_uri(driver, user, password, host, port, name):
+    """개별 접속 정보를 SQLAlchemy 형식의 DB URI 한 줄로 조립한다.
+
+    최종 형태:  postgresql+psycopg://아이디:비밀번호@호스트:포트/DB이름
+
+    quote_plus() 로 감싸는 이유:
+    비밀번호에 @ / : # 같은 문자가 들어 있으면 URI 구분자와 헷갈려서 접속이 깨진다.
+    예) 비밀번호가 "p@ss" 이면 그냥 넣었을 때 호스트를 "ss" 로 잘못 읽는다.
+    quote_plus 는 이런 문자를 %40 같은 안전한 형태로 바꿔준다.
+    """
+    return (
+        f"{driver}://{quote_plus(user)}:{quote_plus(password)}"
+        f"@{host}:{port}/{name}"
+    )
+
+
+class Config:
+    """모든 환경이 공통으로 쓰는 기본 설정. 아래 클래스들이 이걸 상속해서 일부만 덮어쓴다."""
+
+    # ------------------------------------------------------------------
+    # 보안 키
+    # ------------------------------------------------------------------
+    # session 과 flash 가 쿠키에 서명할 때 쓰는 키.
+    # os.environ.get("키", 기본값) -> 환경변수가 있으면 그 값을, 없으면 기본값을 쓴다.
+    SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
+
+    # ------------------------------------------------------------------
+    # DB 접속 정보
+    # ------------------------------------------------------------------
+    # 접속에 필요한 값들을 항목별로 나눠서 읽는다.
+    # 이렇게 쪼개두면 "호스트만 바꾸기" 같은 게 쉽고, 로그에 비밀번호를 빼고 찍기도 편하다.
+    DB_DRIVER = os.environ.get("DB_DRIVER", "postgresql+psycopg")
+    DB_USER = os.environ.get("DB_USER", "flask_user")
+    DB_PASSWORD = os.environ.get("DB_PASSWORD", "flask_password")
+    DB_HOST = os.environ.get("DB_HOST", "localhost")
+    DB_PORT = os.environ.get("DB_PORT", "5432")
+    DB_NAME = os.environ.get("DB_NAME", "flask_app")
+
+    # 최종 접속 문자열.
+    # DATABASE_URL 환경변수가 통째로 주어지면 그걸 그대로 쓰고(운영 환경에서 흔한 방식),
+    # 없으면 위의 항목들을 조합해서 만든다.
+    SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL") or build_db_uri(
+        DB_DRIVER, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME
+    )
+
+    # SQLAlchemy 가 객체 변경을 추적하는 기능. 메모리만 더 먹고 쓸 일이 거의 없어서 끈다.
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    # 커넥션 풀 옵션. 오래 놀고 있던 커넥션을 DB 가 먼저 끊어버려서 나는
+    # "server closed the connection unexpectedly" 에러를 막는 설정이다.
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        "pool_pre_ping": True,  # 쿼리 보내기 전에 커넥션이 살아있는지 확인
+        "pool_recycle": 280,    # 280초마다 커넥션을 새로 맺음
+    }
+
+    @staticmethod
+    def init_app(app):
+        """앱이 만들어진 뒤 환경별로 추가 작업이 필요할 때 쓰는 자리.
+
+        기본 설정에서는 할 일이 없어서 비워둔다.
+        아래 ProductionConfig 처럼 필요한 환경만 이 메서드를 덮어쓰면 된다.
+        """
+        pass
+
+
+class DevelopmentConfig(Config):
+    """로컬 개발용. 에러를 자세히 보여주고 SQL 쿼리도 콘솔에 찍는다."""
+
+    DEBUG = True
+
+    # True 로 두면 실행되는 SQL 문이 전부 터미널에 출력된다. 학습할 때 특히 유용하다.
+    SQLALCHEMY_ECHO = True
+
+
+class TestingConfig(Config):
+    """자동 테스트용. 진짜 DB 를 건드리지 않도록 메모리 SQLite 를 쓴다."""
+
+    TESTING = True
+
+    # "sqlite://" 는 파일이 아니라 메모리에 DB 를 만든다는 뜻이다.
+    # 테스트가 끝나면 흔적 없이 사라지므로 개발용 데이터가 오염되지 않는다.
+    SQLALCHEMY_DATABASE_URI = "sqlite://"
+
+    # 폼 테스트를 편하게 하려고 CSRF 검사를 끈다(Flask-WTF 를 쓸 경우에 해당).
+    WTF_CSRF_ENABLED = False
+
+
+class ProductionConfig(Config):
+    """실제 서비스용. 디버그를 끄고, 위험한 기본값이 남아있으면 실행을 막는다."""
+
+    DEBUG = False
+    SQLALCHEMY_ECHO = False
+
+    # 운영에서는 쿠키를 HTTPS 로만 전송하고, 자바스크립트가 읽지 못하게 막는다.
+    SESSION_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = "Lax"
+
+    @staticmethod
+    def init_app(app):
+        """운영 환경에서 설정이 빠졌는지 검사한다.
+
+        개발용 기본 secret_key 를 그대로 운영에 올리면 누구나 세션을 위조할 수 있다.
+        그래서 조용히 넘어가지 않고 실행 자체를 실패시킨다.
+        (에러는 늦게 터질수록 손해가 크므로, 서버가 뜨는 시점에 미리 막는 편이 낫다.)
+        """
+        if app.config["SECRET_KEY"] == "dev-secret-key-change-me":
+            raise RuntimeError(
+                "운영 환경에서는 SECRET_KEY 환경변수를 반드시 설정해야 합니다."
+            )
+        if not os.environ.get("DATABASE_URL") and not os.environ.get("DB_PASSWORD"):
+            raise RuntimeError(
+                "운영 환경에서는 DATABASE_URL 또는 DB_PASSWORD 를 설정해야 합니다."
+            )
+
+
+# 이름(문자열) -> 설정 클래스 매핑.
+# create_app("development") 처럼 문자열로 골라 쓸 수 있게 해준다.
+config = {
+    "development": DevelopmentConfig,
+    "testing": TestingConfig,
+    "production": ProductionConfig,
+    # 아무것도 지정하지 않았을 때 쓰는 기본값
+    "default": DevelopmentConfig,
+}

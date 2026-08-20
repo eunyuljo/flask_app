@@ -2,7 +2,12 @@
 # Flask 애플리케이션의 진입점. create_app() 팩토리 함수로 앱 객체를 생성하고,
 # views 패키지에 정의된 블루프린트들을 여기서 한 곳에 모아 등록한다.
 
+import os
+
 from flask import Flask
+
+# 환경별 설정 클래스들이 담긴 딕셔너리. config["development"] 처럼 이름으로 꺼내 쓴다.
+from config import config
 
 # 블루프린트 객체를 import 한다.
 # views/main.py 안의 main_bp, views/auth.py 안의 auth_bp 를 가져오는 것.
@@ -10,20 +15,41 @@ from views.main import main_bp
 from views.auth import auth_bp
 
 
-def create_app():
+def create_app(config_name=None):
     """애플리케이션 팩토리(Application Factory) 패턴.
 
     모듈을 import 하는 순간 app 객체가 만들어지는 방식(전역 app = Flask(__name__))이 아니라,
     '함수를 호출할 때' 앱을 만들어 돌려주는 방식이다.
     이렇게 하면 테스트용 앱 / 개발용 앱 / 운영용 앱을 서로 다른 설정으로 여러 개 만들 수 있고,
     순환 import(app.py -> views -> app.py) 문제도 피하기 쉬워진다.
+
+    config_name: "development" / "testing" / "production" 중 하나.
+                 생략하면 FLASK_CONFIG 환경변수를 보고, 그것도 없으면 "default"(개발용)를 쓴다.
     """
     app = Flask(__name__)
 
+    # ------------------------------------------------------------------
+    # 설정 로드
+    # ------------------------------------------------------------------
+    # 팩토리 패턴의 핵심 장점이 바로 이 부분이다.
+    # 인자로 어떤 설정을 넘기느냐에 따라 완전히 다른 성격의 앱이 만들어진다.
+    #   create_app("development") -> 디버그 켜짐, SQL 로그 출력
+    #   create_app("testing")     -> 메모리 SQLite 사용 (테스트 코드에서 호출)
+    #   create_app("production")  -> 디버그 꺼짐, 필수 환경변수 검사
+    if config_name is None:
+        config_name = os.environ.get("FLASK_CONFIG", "default")
+
+    # from_object() 는 클래스에 정의된 '대문자 속성'만 골라서 app.config 에 복사한다.
+    # 즉 SECRET_KEY, SQLALCHEMY_DATABASE_URI 는 들어가고, init_app 같은 메서드는 무시된다.
+    # 이후 app.config["SECRET_KEY"] 처럼 딕셔너리로 꺼내 쓸 수 있다.
+    app.config.from_object(config[config_name])
+
+    # 설정 클래스가 앱에 대해 추가로 할 일(운영 환경 필수값 검사 등)을 수행한다.
+    config[config_name].init_app(app)
+
     # session 과 flash 는 둘 다 '서명된 쿠키'를 사용하기 때문에 secret_key 가 반드시 필요하다.
-    # 이 값이 없으면 로그인(session) 도, flash 메시지도 RuntimeError 를 내며 동작하지 않는다.
-    # 실제 서비스에서는 코드에 박아두지 말고 환경변수 등에서 읽어와야 한다.
-    app.secret_key = "dev-secret-key-change-me"
+    # 이제 그 값은 위의 from_object() 를 통해 config.py 에서 들어온다.
+    # (app.secret_key 와 app.config["SECRET_KEY"] 는 같은 값을 가리키는 두 이름이다.)
 
     # ------------------------------------------------------------------
     # 블루프린트(Blueprint) 등록

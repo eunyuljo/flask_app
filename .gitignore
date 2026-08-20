@@ -2,3 +2,6 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# 실제 비밀번호가 들어가는 파일. 견본인 .env.example 만 커밋한다.
+.env
