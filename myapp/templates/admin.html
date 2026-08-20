@@ -1,0 +1,57 @@
+{# templates/admin.html
+   admin 블루프린트의 index() 가 렌더링하는 관리자 대시보드.
+   관리자 계정만 여기까지 도달할 수 있다(before_request 에서 걸러진다). #}
+
+{% extends "base.html" %}
+
+{% block title %}관리자{% endblock %}
+
+{% block content %}
+  <h1>관리자 대시보드</h1>
+
+  <h2>이벤트 통계</h2>
+  <div class="stats">
+    <div class="stat"><div class="n">{{ stats.total }}</div><div class="muted">보관 중</div></div>
+    <div class="stat"><div class="n">{{ stats.by_severity.critical }}</div><div class="muted">critical</div></div>
+    <div class="stat"><div class="n">{{ stats.by_severity.error }}</div><div class="muted">error</div></div>
+    <div class="stat"><div class="n">{{ stats.by_severity.warning }}</div><div class="muted">warning</div></div>
+    <div class="stat"><div class="n">{{ stats.alarmed }}</div><div class="muted">알람 발송</div></div>
+  </div>
+  <p class="muted">최대 {{ stats.capacity }}건까지만 메모리에 보관합니다(원본은 Lambda 가 DB 에 적재).</p>
+
+  <h2>현재 설정</h2>
+  {# 비밀 값은 '설정됨/미설정'만 보여주고 값 자체는 화면에 찍지 않는다. #}
+  <table>
+    {% for label, value, warn in settings %}
+      <tr>
+        <th>{{ label }}</th>
+        <td{% if warn %} class="warn"{% endif %}><code>{{ value }}</code></td>
+      </tr>
+    {% endfor %}
+  </table>
+
+  <h2>등록된 라우트</h2>
+  <p class="muted">블루프린트별로 어떤 URL 이 붙었는지 확인할 수 있습니다.</p>
+  <table>
+    {% for rule, endpoint, methods in routes %}
+      <tr><th><code>{{ rule }}</code></th><td><code>{{ endpoint }}</code> <span class="muted">{{ methods }}</span></td></tr>
+    {% endfor %}
+  </table>
+
+  <h2>최근 이벤트</h2>
+  {% if not events %}
+    <p class="muted">없습니다.</p>
+  {% else %}
+    <table>
+      {% for item in events %}
+        <tr>
+          <th><span class="badge">{{ item.record.severity }}</span></th>
+          <td>{{ item.record.message }} <span class="muted">({{ item.record.source }})</span></td>
+        </tr>
+      {% endfor %}
+    </table>
+    <form action="{{ url_for('admin.clear_events') }}" method="post">
+      <button type="submit">목록 비우기</button>
+    </form>
+  {% endif %}
+{% endblock %}

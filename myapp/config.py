@@ -104,6 +104,27 @@ class Config:
     AWS_SESSION_TOKEN = os.environ.get("AWS_SESSION_TOKEN", "")
     AWS_PROFILE = os.environ.get("AWS_PROFILE", "")
 
+    # ------------------------------------------------------------------
+    # 알람 / Lambda
+    # ------------------------------------------------------------------
+    # 이벤트 정규화를 어디서 실행할지 고르는 스위치.
+    #   local -> 같은 프로세스에서 핸들러 함수를 직접 호출 (AWS 불필요, 개발/학습용)
+    #   aws   -> 실제 Lambda 함수를 호출
+    LAMBDA_MODE = os.environ.get("LAMBDA_MODE", "local")
+
+    # aws 모드에서 호출할 Lambda 함수 이름(또는 ARN).
+    LAMBDA_FUNCTION_NAME = os.environ.get("LAMBDA_FUNCTION_NAME", "flask-app-normalize-event")
+
+    # RequestResponse(동기) = 결과를 기다렸다 화면에 보여준다.
+    # Event(비동기)        = 던지고 바로 응답한다. 결과는 CloudWatch 에서 확인.
+    LAMBDA_INVOCATION_TYPE = os.environ.get("LAMBDA_INVOCATION_TYPE", "RequestResponse")
+
+    # 관리자 계정 목록. 콤마로 구분해서 넣는다.
+    # set 으로 만들어두면 "username in ADMIN_USERS" 검사가 빠르고 읽기도 쉽다.
+    ADMIN_USERS = {
+        u.strip() for u in os.environ.get("ADMIN_USERS", "admin").split(",") if u.strip()
+    }
+
     # 커넥션 풀 옵션. 오래 놀고 있던 커넥션을 DB 가 먼저 끊어버려서 나는
     # "server closed the connection unexpectedly" 에러를 막는 설정이다.
     SQLALCHEMY_ENGINE_OPTIONS = {

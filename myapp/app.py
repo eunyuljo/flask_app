@@ -14,6 +14,8 @@ from config import config
 from views.main import main_bp
 from views.auth import auth_bp
 from views.agent import agent_bp
+from views.alarm import alarm_bp
+from views.admin import admin_bp
 
 
 def create_app(config_name=None):
@@ -44,6 +46,10 @@ def create_app(config_name=None):
     # 즉 SECRET_KEY, SQLALCHEMY_DATABASE_URI 는 들어가고, init_app 같은 메서드는 무시된다.
     # 이후 app.config["SECRET_KEY"] 처럼 딕셔너리로 꺼내 쓸 수 있다.
     app.config.from_object(config[config_name])
+
+    # 어떤 환경으로 떴는지 나중에 확인할 수 있도록 이름 자체도 남겨둔다.
+    # (관리자 대시보드에서 이 값을 보여준다.)
+    app.config["CONFIG_NAME"] = config_name
 
     # 설정 클래스가 앱에 대해 추가로 할 일(운영 환경 필수값 검사 등)을 수행한다.
     config[config_name].init_app(app)
@@ -90,6 +96,17 @@ def create_app(config_name=None):
     # 블루프린트를 하나 더 만들어 등록하는 것만으로 앱에 새 기능 영역이 통째로 붙는다.
     # main/auth 코드는 한 줄도 건드리지 않았다 — 이게 블루프린트를 쓰는 이유다.
     app.register_blueprint(agent_bp, url_prefix="/agent")
+
+    # alarm 블루프린트: 이벤트 접수 -> Lambda 정규화 -> DB/알람.
+    # 화면용 라우트(/alarm/)와 외부 시스템용 JSON API(/alarm/api/events)가 한 도메인에 함께 있다.
+    app.register_blueprint(alarm_bp, url_prefix="/alarm")
+
+    # admin 블루프린트: 관리자만 접근 가능한 대시보드.
+    # 블루프린트마다 접근 정책을 다르게 걸 수 있다는 점을 보여준다.
+    #   main  -> 누구나
+    #   agent -> 로그인한 사람
+    #   admin -> 관리자 계정만
+    app.register_blueprint(admin_bp, url_prefix="/admin")
 
     return app
 

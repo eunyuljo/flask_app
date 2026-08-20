@@ -31,6 +31,28 @@
     form.ask input { flex: 1; width: auto; padding: 8px; }
     form.ask button, form.reset button { margin-top: 0; }
     form.reset { margin-top: 12px; }
+    /* 이벤트 카드 */
+    .event { border-left: 4px solid #ddd; padding: 8px 12px; margin-bottom: 12px; background: #fafafa; }
+    .event.sev-critical { border-left-color: #dc2626; }
+    .event.sev-error    { border-left-color: #ea580c; }
+    .event.sev-warning  { border-left-color: #ca8a04; }
+    .event.sev-info     { border-left-color: #2563eb; }
+    .event-head { margin-bottom: 4px; }
+    .badge { display: inline-block; padding: 1px 8px; border-radius: 10px;
+             background: #e5e5e5; font-size: 0.75em; margin-right: 6px; }
+    .sev-critical .badge { background: #fee2e2; color: #991b1b; }
+    .sev-error .badge    { background: #ffedd5; color: #9a3412; }
+    .sev-warning .badge  { background: #fef9c3; color: #854d0e; }
+    .sev-info .badge     { background: #dbeafe; color: #1e40af; }
+    /* 관리자 대시보드 */
+    .stats { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+    .stat { background: #f5f5f5; border-radius: 8px; padding: 10px 16px; text-align: center; min-width: 74px; }
+    .stat .n { font-size: 1.5em; font-weight: bold; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee;
+             vertical-align: top; font-weight: normal; }
+    th { width: 34%; color: #444; }
+    td.warn { color: #991b1b; }
   </style>
 </head>
 <body>
@@ -46,6 +68,13 @@
     {% if session.get('username') %}
       {# 에이전트 페이지는 로그인해야 쓸 수 있으므로 로그인했을 때만 메뉴에 보여준다. #}
       <a href="{{ url_for('agent.index') }}">AI 에이전트</a>
+      <a href="{{ url_for('alarm.index') }}">이벤트</a>
+      {# 관리자 메뉴는 관리자에게만 보여준다.
+         단, '메뉴를 숨기는 것'은 보안이 아니다. 실제 차단은 admin 블루프린트의
+         before_request 가 하고, 여기서는 보이지 않게만 할 뿐이다. #}
+      {% if session.get('username') in config['ADMIN_USERS'] %}
+        <a href="{{ url_for('admin.index') }}">관리자</a>
+      {% endif %}
       <a href="{{ url_for('auth.logout') }}">로그아웃</a>
       <span style="color:#666;">({{ session.get('username') }}님)</span>
     {% else %}

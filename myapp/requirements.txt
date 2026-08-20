@@ -3,3 +3,4 @@ python-dotenv==1.0.1
 # Bedrock 을 쓰려면 [bedrock] 이 필요하다(botocore 설치 - SigV4 서명용).
 # Claude API 만 쓸 거면 anthropic==0.125.0 로 줄여도 된다.
 anthropic[bedrock]==0.125.0
+boto3==1.35.99

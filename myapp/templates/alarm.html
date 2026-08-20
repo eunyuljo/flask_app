@@ -1,0 +1,70 @@
+{# templates/alarm.html
+   alarm 블루프린트의 index() 가 렌더링하는 이벤트 접수 화면.
+   제출한 원본이 Lambda 를 거쳐 어떻게 정규화됐는지 나란히 보여준다. #}
+
+{% extends "base.html" %}
+
+{% block title %}이벤트 / 알람{% endblock %}
+
+{% block content %}
+  <h1>이벤트 접수</h1>
+  <p class="muted">
+    실행 모드: <code>{{ mode }}</code>
+    {% if mode == 'aws' %}
+      &middot; 함수: <code>{{ function_name }}</code> &middot; 호출: <code>{{ invocation_type }}</code>
+    {% else %}
+      &middot; <span>AWS 없이 핸들러를 같은 프로세스에서 직접 실행합니다.</span>
+    {% endif %}
+  </p>
+
+  <form action="{{ url_for('alarm.send') }}" method="post">
+    <label>
+      메시지
+      <input type="text" name="message" placeholder="예) 디스크 사용률 95% 초과" required>
+    </label>
+    <label>
+      심각도 (일부러 제각각인 표기를 넣어보세요 &mdash; FATAL, p1, high, warn ...)
+      <input type="text" name="severity" value="FATAL">
+    </label>
+    <label>
+      출처
+      <input type="text" name="source" value="Web-01">
+    </label>
+    <label>
+      이벤트 종류
+      <input type="text" name="event_type" value="disk">
+    </label>
+    <button type="submit">Lambda 로 보내기</button>
+  </form>
+
+  <hr>
+  <h2>최근 처리 결과 <span class="muted">({{ events|length }}건)</span></h2>
+
+  {% if not events %}
+    <p class="muted">아직 처리한 이벤트가 없습니다.</p>
+  {% endif %}
+
+  {% for item in events %}
+    {# item.record = 정규화된 표준 레코드, item.delivery = 적재/알람 결과 #}
+    <div class="event sev-{{ item.record.severity }}">
+      <div class="event-head">
+        <span class="badge">{{ item.record.severity }}</span>
+        <strong>{{ item.record.message }}</strong>
+      </div>
+      <div class="muted">
+        {{ item.record.source }} &middot; {{ item.record.event_type }}
+        &middot; 지문 <code>{{ item.record.fingerprint }}</code>
+      </div>
+      <div class="muted">발생 {{ item.record.occurred_at }}</div>
+      <div class="muted">
+        DB 적재:
+        {% if item.delivery.store.stored %}완료{% else %}건너뜀 ({{ item.delivery.store.reason }}){% endif %}
+        &nbsp;|&nbsp; 알람:
+        {% if item.delivery.alarm.alarmed %}발송{% else %}없음 ({{ item.delivery.alarm.reason }}){% endif %}
+      </div>
+      {% if item.record.meta %}
+        <div class="muted">표준 필드 외 값(meta): <code>{{ item.record.meta }}</code></div>
+      {% endif %}
+    </div>
+  {% endfor %}
+{% endblock %}
