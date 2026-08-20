@@ -1,0 +1,489 @@
+# Flask Blueprint 학습용 샘플
+
+Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예제 프로젝트입니다.
+로그인, AI 에이전트, 이벤트 알람, 관리자 페이지를 각각 별개의 블루프린트로 만들어서
+"기능이 늘어날 때 파일이 어떻게 나뉘는가"를 보여줍니다.
+
+모든 소스 파일에는 그 파일이 하는 일과 헷갈리기 쉬운 지점을 한국어 주석으로 적어두었습니다.
+
+---
+
+## 목차
+
+1. [무엇을 하는 앱인가](#무엇을-하는-앱인가)
+2. [프로젝트 구조](#프로젝트-구조)
+3. [설치 및 실행](#설치-및-실행) ← **처음이면 여기부터**
+4. [화면과 URL](#화면과-url)
+5. [블루프린트 구조 이해하기](#블루프린트-구조-이해하기)
+6. [AI 에이전트](#ai-에이전트)
+7. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
+8. [환경변수 전체 목록](#환경변수-전체-목록)
+9. [알려진 한계](#알려진-한계)
+
+---
+
+## 무엇을 하는 앱인가
+
+다섯 개의 블루프린트로 이루어져 있습니다.
+
+| 블루프린트 | url_prefix | 하는 일 |
+|---|---|---|
+| `main` | 없음 | 인덱스 페이지 |
+| `auth` | `/auth` | 로그인 / 로그아웃 (세션 기반, 하드코딩 계정 1개) |
+| `agent` | `/agent` | Claude 기반 채팅 에이전트 (도구 호출) |
+| `alarm` | `/alarm` | 이벤트 접수 → Lambda로 정규화 → 알람 |
+| `admin` | `/admin` | 관리자 대시보드 (관리자 계정만 접근) |
+
+핵심은 **각 기능이 서로의 코드를 건드리지 않는다**는 점입니다.
+`agent`를 추가할 때 `main`과 `auth`는 한 줄도 수정하지 않았습니다.
+
+---
+
+## 프로젝트 구조
+
+```
+myapp/
+├── run.py                      진입점. create_app() 을 호출해 앱 객체를 만든다
+├── requirements.txt
+├── .env.example                환경변수 견본 (복사해서 .env 로 사용)
+│
+├── app/                        ─── Flask 애플리케이션 ───
+│   ├── __init__.py             create_app() 팩토리 + 블루프린트 등록
+│   ├── config.py               환경별 설정 (개발/테스트/운영)
+│   ├── agent_core.py           AI 에이전트의 도구 정의와 실행 루프
+│   ├── event_store.py          이벤트 임시 보관소 (메모리)
+│   ├── lambda_client.py        Lambda 호출 계층 (local / aws 전환)
+│   ├── views/                  블루프린트별 라우트
+│   │   ├── main.py  auth.py  agent.py  alarm.py  admin.py
+│   └── templates/              Jinja 템플릿
+│       └── base.html  index.html  login.html  agent.html  alarm.html  admin.html
+│
+└── api/                        ─── AWS Lambda 함수 ───
+    └── normalize_handler.py    이벤트 정규화 → DB 적재 → 알람 발송
+```
+
+**의존 방향은 `app` → `api` 단방향입니다.** `api/`는 Flask를 전혀 import하지 않으므로
+Lambda에 그대로 올릴 수 있고, 파이썬만 있으면 단독 실행됩니다.
+
+---
+
+## 설치 및 실행
+
+### 사전 준비물
+
+- **Python 3.9 이상** — `requirements.txt`의 핀 버전 기준 (검증은 3.11에서 진행)
+- 그 외에는 아무것도 필요 없습니다. DB, AWS 계정, API 키 **없이도 앱은 실행됩니다.**
+
+### 1단계 — 소스 받기
+
+```bash
+git clone https://github.com/eunyuljo/flask_app.git
+cd flask_app/myapp
+```
+
+> 이후 모든 명령은 `myapp/` 안에서 실행합니다. `run.py`가 보이는 위치입니다.
+
+### 2단계 — 가상환경 만들기
+
+프로젝트 전용 파이썬 공간을 만들어 시스템 파이썬을 더럽히지 않습니다.
+
+```bash
+python3 -m venv .venv
+```
+
+활성화합니다. **터미널을 새로 열 때마다 다시 해야 합니다.**
+
+```bash
+# macOS / Linux
+source .venv/bin/activate
+
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+```
+
+프롬프트 앞에 `(.venv)`가 붙으면 성공입니다.
+
+### 3단계 — 패키지 설치
+
+```bash
+pip install -r requirements.txt
+```
+
+설치되는 것:
+
+| 패키지 | 용도 | 없으면 |
+|---|---|---|
+| `Flask` | 웹 프레임워크 | 앱이 안 뜸 |
+| `python-dotenv` | `.env` 파일 읽기 | 환경변수를 직접 export 해야 함 |
+| `anthropic[bedrock]` | Claude 호출 + AWS SigV4 서명 | 에이전트 페이지만 못 씀 |
+
+### 4단계 — 환경변수 파일 만들기
+
+```bash
+cp .env.example .env
+```
+
+**이 단계를 건너뛰어도 앱은 실행됩니다.** 기본값으로 동작하고, 설정이 필요한 기능만
+화면에서 "설정이 필요합니다"라고 안내합니다.
+
+`.env`는 `.gitignore`에 등록되어 있어 커밋되지 않습니다.
+
+### 5단계 — 실행
+
+```bash
+python run.py
+```
+
+이렇게 나오면 정상입니다.
+
+```
+ * Serving Flask app 'app'
+ * Debug mode: on
+ * Running on http://127.0.0.1:5000
+```
+
+### 6단계 — 접속
+
+브라우저에서 **http://127.0.0.1:5000** 을 엽니다.
+
+로그인 정보는 다음과 같습니다.
+
+| 항목 | 값 |
+|---|---|
+| 아이디 | `admin` |
+| 비밀번호 | `1234` |
+
+> 학습용이라 코드에 그대로 박혀 있습니다 (`app/views/auth.py`).
+
+### 7단계 — 동작 확인
+
+로그인 후 아래 순서로 눌러보면 전체 기능을 훑을 수 있습니다.
+
+1. **이벤트** 메뉴 → 메시지 `디스크 사용률 95%`, 심각도 `FATAL` 입력 후 전송
+   → `FATAL`이 `critical`로 정규화되어 표시되면 Lambda 로컬 호출이 성공한 것입니다.
+2. **관리자** 메뉴 → 방금 보낸 이벤트가 통계에 집계되는지 확인
+3. **AI 에이전트** 메뉴 → API 키를 넣었다면 "이 앱에 어떤 페이지가 있어?" 질문
+
+### 종료
+
+터미널에서 `Ctrl + C`. 가상환경을 빠져나오려면 `deactivate`.
+
+---
+
+### 선택 1 — AI 에이전트 켜기
+
+`.env`를 열어 키를 넣고 서버를 재시작합니다.
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+AWS Bedrock을 경유하려면 `AGENT_PROVIDER`만 바꾸면 됩니다.
+`AGENT_MODEL`은 그대로 두세요 — Bedrock용 `anthropic.` 접두사는 코드가 자동으로 붙입니다.
+
+```bash
+AGENT_PROVIDER=bedrock
+AWS_REGION=ap-northeast-2
+# 키를 비워두면 ~/.aws/credentials 나 IAM 역할에서 자동으로 찾습니다
+```
+
+### 선택 2 — 실제 Lambda 호출하기
+
+기본값 `LAMBDA_MODE=local`은 `api/normalize_handler.py`를 같은 프로세스에서 직접 부릅니다.
+실제 AWS Lambda를 호출하려면:
+
+```bash
+LAMBDA_MODE=aws
+LAMBDA_FUNCTION_NAME=flask-app-normalize-event
+AWS_REGION=ap-northeast-2
+```
+
+배포 방법은 [Lambda 이벤트 정규화](#lambda-이벤트-정규화) 절을 참고하세요.
+
+---
+
+## 화면과 URL
+
+| URL | 메서드 | 로그인 | 설명 |
+|---|---|---|---|
+| `/` | GET | – | 인덱스 |
+| `/auth/login` | GET, POST | – | 로그인 폼 / 처리 |
+| `/auth/logout` | GET | – | 로그아웃 |
+| `/agent/` | GET | 필요 | 에이전트 채팅 화면 |
+| `/agent/ask` | POST | 필요 | 질문 전송 |
+| `/agent/reset` | POST | 필요 | 대화 초기화 |
+| `/alarm/` | GET | 필요 | 이벤트 목록 |
+| `/alarm/send` | POST | 필요 | 폼으로 이벤트 전송 |
+| `/alarm/api/events` | POST | **불필요** | JSON 수집 엔드포인트 |
+| `/admin/` | GET | 관리자 | 대시보드 |
+| `/admin/events/clear` | POST | 관리자 | 이벤트 비우기 |
+
+관리자 계정은 `ADMIN_USERS` 환경변수로 정합니다(기본 `admin`, 쉼표로 여러 명).
+
+---
+
+## 블루프린트 구조 이해하기
+
+### url_prefix는 등록하는 쪽에서 붙는다
+
+블루프린트 파일 안에서는 접두사를 쓰지 않습니다.
+
+```python
+# app/views/auth.py
+@auth_bp.route("/login")      # "/auth/login" 이 아니다
+def login():
+    ...
+```
+
+```python
+# app/__init__.py
+app.register_blueprint(auth_bp, url_prefix="/auth")   # 여기서 "/auth" 가 붙는다
+```
+
+최종 URL은 `/auth/login`이 됩니다. 파일 안에 `/auth/login`이라고 쓰면
+`/auth/auth/login`이 되어버립니다.
+
+### url_for의 이름은 파일명이 아니다
+
+```python
+main_bp = Blueprint("main", __name__)   # ← 이 "main" 이 기준
+```
+
+따라서 `url_for('main.index')`입니다. 파일명(`main.py`)도, 변수명(`main_bp`)도 아닙니다.
+셋이 비슷해서 가장 많이 헷갈리는 부분입니다.
+
+### 접근 제어는 블루프린트 단위로
+
+```python
+# app/views/agent.py
+@agent_bp.before_request
+def require_login():
+    if not session.get("username"):
+        return redirect(url_for("auth.login"))
+```
+
+`@app.before_request`였다면 앱 전체가 막혀 로그인 페이지조차 못 들어갑니다.
+블루프린트에 붙이면 그 블루프린트의 라우트에만 적용됩니다.
+
+---
+
+## AI 에이전트
+
+단순히 질문을 던지고 답을 받는 게 아니라, **모델이 스스로 판단해 서버의 함수를 실행시키는**
+구조입니다.
+
+```
+사용자: "이 앱에 어떤 페이지가 있어?"
+   ↓
+모델: list_app_routes 도구를 호출해줘        ← 1차 응답
+   ↓
+서버: 실제로 함수 실행, url_map 읽어서 결과 반환
+   ↓
+모델: 결과를 보고 최종 답변 작성              ← 2차 응답
+```
+
+현재 도구는 두 개입니다.
+
+| 도구 | 하는 일 |
+|---|---|
+| `get_current_time` | 서버의 현재 시각 |
+| `list_app_routes` | 이 앱에 등록된 URL 목록 |
+
+### 도구 추가하는 법
+
+`app/agent_core.py`에서 함수를 만들고 `TOOLS`에 넣기만 하면 됩니다.
+
+```python
+@beta_tool
+def count_events() -> str:
+    """보관 중인 이벤트 개수를 돌려준다. 이벤트가 몇 건 쌓였는지 물어보면 사용한다."""
+    return str(len(event_store.recent()))
+
+TOOLS = [get_current_time, list_app_routes, count_events]
+```
+
+**docstring이 곧 "언제 이 도구를 쓸지"에 대한 모델의 판단 근거입니다.**
+성의 없이 쓰면 도구를 안 부르거나 엉뚱하게 부릅니다.
+
+---
+
+## Lambda 이벤트 정규화
+
+### 왜 정규화가 필요한가
+
+보내는 쪽마다 필드 이름과 심각도 표기가 제각각입니다.
+Lambda가 이걸 하나의 형태로 맞춥니다.
+
+**필드 별칭**
+
+| 표준 이름 | 이렇게 들어와도 받아줌 |
+|---|---|
+| `message` | `msg`, `description`, `text` |
+| `severity` | `level`, `priority` |
+| `source` | `from`, `origin`, `service` |
+| `event_type` | `type`, `kind`, `category` |
+| `occurred_at` | `timestamp`, `time`, `ts` |
+
+**심각도 통일** (4단계)
+
+| 표준 | 이렇게 들어와도 받아줌 |
+|---|---|
+| `critical` | critical, crit, fatal, p1, 5, emergency |
+| `error` | error, err, high, p2, 4 |
+| `warning` | warn, warning, medium, p3, 3 |
+| `info` | info, information, low, debug, p4, 2, 1 |
+
+`critical`과 `error`만 알람 발송 대상입니다.
+
+### 입력과 출력 예시
+
+```bash
+curl -X POST http://127.0.0.1:5000/alarm/api/events \
+  -H 'Content-Type: application/json' \
+  -d '{"msg":"결제 실패율 급증","priority":"p1","origin":"pay-api","host":"i-123"}'
+```
+
+응답은 정규화 결과(`record`)와 후속 처리 결과(`store`, `alarm`)를 함께 돌려줍니다.
+
+```json
+{
+  "ok": true,
+  "record": {
+    "event_id": "a88d886a176548da8e8986447360f02b",
+    "event_type": "unknown",
+    "source": "pay-api",
+    "severity": "critical",
+    "message": "결제 실패율 급증",
+    "occurred_at": "2026-08-20T17:26:22.328074+00:00",
+    "received_at": "2026-08-20T17:26:22.328091+00:00",
+    "fingerprint": "17ad93510385dc5a",
+    "meta": { "host": "i-123" }
+  },
+  "store": { "stored": false, "reason": "DATABASE_URL 미설정" },
+  "alarm": { "alarmed": false, "reason": "ALARM_SNS_TOPIC_ARN 미설정" }
+}
+```
+
+`priority: "p1"` → `severity: "critical"`, `origin` → `source`, `msg` → `message`로 바뀌고,
+표준 필드에 없는 `host`는 버려지지 않고 `meta`에 담깁니다.
+
+`store`와 `alarm`이 `false`인 것은 실패가 아니라 **설정이 없어 건너뛴 것**입니다.
+`DATABASE_URL`과 `ALARM_SNS_TOPIC_ARN`을 Lambda 쪽에 넣으면 실제로 적재·발송합니다.
+
+`fingerprint`는 같은 종류의 이벤트를 묶는 해시입니다.
+"같은 지문은 5분에 한 번만 알람" 같은 억제 규칙을 걸 때 씁니다.
+
+### local 모드와 aws 모드
+
+| | `LAMBDA_MODE=local` (기본) | `LAMBDA_MODE=aws` |
+|---|---|---|
+| 호출 방식 | 핸들러를 파이썬 함수로 직접 실행 | boto3로 실제 Lambda 호출 |
+| AWS 필요 | 없음 | 자격증명 + 함수 배포 |
+| 재현되는 것 | 정규화 로직 전부 | 정규화 + 타임아웃 + 동시성 + 비동기 |
+
+Lambda 핸들러는 결국 `(event, context)`를 받는 평범한 함수라서, 로컬에서는 그냥 호출하면 됩니다.
+
+### 배포
+
+`api/` 디렉터리 내용만 zip으로 묶는 경우:
+
+```bash
+cd api && zip -r ../function.zip . && cd ..
+```
+
+이때 핸들러 이름은 **`normalize_handler.lambda_handler`** 입니다.
+프로젝트 루트째 묶었다면 `api.normalize_handler.lambda_handler`가 됩니다.
+
+Lambda에서 DB 적재와 SNS 알람까지 쓰려면 배포 패키지에 `psycopg`와 `boto3`가 필요하고,
+아래 환경변수를 Lambda 쪽에 설정해야 합니다.
+
+```
+DATABASE_URL=postgresql://...
+ALARM_SNS_TOPIC_ARN=arn:aws:sns:...
+```
+
+두 값이 없으면 정규화만 하고 적재·알람은 조용히 건너뜁니다(에러가 아닙니다).
+
+> **주의:** `events` 테이블 DDL은 아직 이 저장소에 없습니다. 직접 만들어야 합니다.
+
+---
+
+## 환경변수 전체 목록
+
+`.env.example`을 복사해서 쓰면 됩니다. **전부 선택 사항이며, 없으면 기본값으로 동작합니다.**
+
+### 기본
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `FLASK_CONFIG` | `default` | `development` / `testing` / `production` |
+| `SECRET_KEY` | `dev-secret-key-change-me` | 세션·flash 쿠키 서명 키 |
+| `ADMIN_USERS` | `admin` | 관리자 계정, 쉼표로 구분 |
+
+운영 환경(`FLASK_CONFIG=production`)에서는 `SECRET_KEY`가 기본값이면 기동을 거부합니다.
+새 키는 이렇게 만듭니다.
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+### DB (현재 Flask에서 미사용 — [알려진 한계](#알려진-한계) 참고)
+
+| 변수 | 기본값 |
+|---|---|
+| `DATABASE_URL` | (없음, 있으면 아래 항목들보다 우선) |
+| `DB_DRIVER` | `postgresql+psycopg` |
+| `DB_USER` / `DB_PASSWORD` | `flask_user` / `flask_password` |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` | `localhost` / `5432` / `flask_app` |
+
+### AI 에이전트
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `AGENT_PROVIDER` | `claude_api` | `claude_api` 또는 `bedrock` |
+| `ANTHROPIC_API_KEY` | (없음) | `claude_api` 모드에서 필요 |
+| `AGENT_MODEL` | `claude-opus-5` | Bedrock 접두사는 자동 처리 |
+| `AGENT_MAX_TOKENS` | `16000` | 응답 최대 토큰 |
+| `AGENT_EFFORT` | `medium` | `low`~`max`. 높을수록 느리고 정확 |
+| `AGENT_FALLBACK_MODEL` | `claude-opus-4-8` | 거절 시 대체 모델 |
+
+### Lambda / AWS
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `LAMBDA_MODE` | `local` | `local` 또는 `aws` |
+| `LAMBDA_FUNCTION_NAME` | `flask-app-normalize-event` | `aws` 모드에서 호출할 함수 |
+| `LAMBDA_INVOCATION_TYPE` | `RequestResponse` | 동기. 비동기는 `Event` |
+| `AWS_REGION` | `us-east-1` | |
+| `AWS_ACCESS_KEY_ID` 등 | (없음) | 비우면 IAM 역할·`~/.aws/credentials` 사용 |
+
+---
+
+## 알려진 한계
+
+학습용 샘플이라 의도적으로 단순화한 부분과, 아직 고치지 않은 문제가 있습니다.
+
+### 의도적 단순화
+
+- **계정이 코드에 하드코딩**되어 있습니다 (`admin` / `1234`).
+- **이벤트와 대화가 메모리에만** 저장됩니다. 서버를 재시작하면 사라지고,
+  워커를 여러 개 띄우면(`gunicorn -w 4`) 요청마다 다른 메모리를 보게 됩니다.
+  실제 서비스라면 Redis나 DB가 필요합니다.
+- 이벤트 보관 상한은 **100건**이며, 넘으면 오래된 것부터 밀려납니다.
+
+### 아직 고치지 않은 문제
+
+| 문제 | 영향 |
+|---|---|
+| 로그아웃해도 에이전트 대화가 남음 | 같은 브라우저의 다음 사용자에게 이전 대화가 보일 수 있음 |
+| `production` 설정이 DB 값을 요구 | DB를 안 쓰는데도 운영 모드 기동이 실패함 |
+| `WTF_CSRF_ENABLED` 설정이 실제로는 무의미 | Flask-WTF 미설치. CSRF 방어가 없는데 있는 것처럼 보임 |
+| 대화 길이 상한 없음 | 대화가 길어질수록 토큰 비용이 계속 증가 |
+| `/alarm/api/events`에 인증 없음 | 누구나 이벤트를 밀어넣을 수 있음 |
+
+### 검증되지 않은 부분
+
+- **Bedrock 경로는 실제 호출로 검증되지 않았습니다.** 요청이 올바른 형태로
+  만들어지는 것까지만 확인했습니다.
+- **`LAMBDA_MODE=aws` 경로도 마찬가지**입니다. 로컬 모드만 실제로 동작을 확인했습니다.
+- 자동화된 테스트 코드가 없습니다.
