@@ -1,0 +1,55 @@
+{# templates/base.html
+   모든 페이지가 공통으로 상속하는 뼈대 템플릿. 네비게이션 바와 flash 메시지 영역을 담당하며,
+   자식 템플릿은 {% block content %} 부분만 채워 넣으면 된다. #}
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {# 자식 템플릿에서 {% block title %} 을 덮어쓰지 않으면 아래 기본값이 쓰인다. #}
+  <title>{% block title %}Flask Blueprint 샘플{% endblock %}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; line-height: 1.6; }
+    nav { border-bottom: 1px solid #ddd; padding-bottom: 12px; margin-bottom: 24px; }
+    nav a { margin-right: 12px; text-decoration: none; color: #2563eb; }
+    .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; }
+    .flash.success { background: #dcfce7; color: #166534; }
+    .flash.error   { background: #fee2e2; color: #991b1b; }
+    label { display: block; margin-top: 12px; }
+    input[type=text], input[type=password] { padding: 6px; width: 220px; }
+    button { margin-top: 16px; padding: 8px 16px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <nav>
+    {# 링크는 절대 "/auth/login" 처럼 직접 쓰지 않고 url_for("블루프린트명.함수명") 으로 만든다.
+       - url_for("main.index")  -> "/"
+       - url_for("auth.login")  -> "/auth/login"   (url_prefix 가 자동으로 반영된다)
+       - url_for("auth.logout") -> "/auth/logout"
+       이렇게 하면 app.py 에서 url_prefix 를 바꿔도 템플릿은 손댈 필요가 없다. #}
+    <a href="{{ url_for('main.index') }}">홈</a>
+
+    {# session 은 템플릿 안에서 별도 전달 없이 바로 쓸 수 있다(Flask 가 기본 제공). #}
+    {% if session.get('username') %}
+      <a href="{{ url_for('auth.logout') }}">로그아웃</a>
+      <span style="color:#666;">({{ session.get('username') }}님)</span>
+    {% else %}
+      <a href="{{ url_for('auth.login') }}">로그인</a>
+    {% endif %}
+  </nav>
+
+  {# flash() 로 넣어둔 메시지를 꺼내서 출력한다.
+     with_categories=true 를 주면 (카테고리, 메시지) 튜플로 받아 스타일을 구분할 수 있다.
+     한 번 꺼내면 세션에서 사라지므로 새로고침하면 더 이상 보이지 않는다. #}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  {# 자식 템플릿(index.html, login.html)이 채워 넣을 자리 #}
+  {% block content %}{% endblock %}
+</body>
+</html>

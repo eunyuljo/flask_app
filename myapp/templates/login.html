@@ -1,0 +1,30 @@
+{# templates/login.html
+   auth 블루프린트의 login() 이 GET 요청일 때 보여주는 로그인 폼 페이지. base.html 을 상속한다. #}
+
+{% extends "base.html" %}
+
+{% block title %}로그인{% endblock %}
+
+{% block content %}
+  <h1>로그인</h1>
+
+  {# form 의 action 도 url_for 로 만든다. 여기서는 자기 자신(/auth/login)에게 POST 로 제출한다.
+     같은 URL 이지만 method 가 POST 이므로 views/auth.py 의 login() 안에서
+     `if request.method == "POST":` 분기를 타게 된다. #}
+  <form action="{{ url_for('auth.login') }}" method="post">
+    <label>
+      아이디
+      {# input 의 name 값("username")이 곧 request.form.get("username") 의 키가 된다. #}
+      <input type="text" name="username" placeholder="admin" required>
+    </label>
+    <label>
+      비밀번호
+      <input type="password" name="password" placeholder="1234" required>
+    </label>
+    <button type="submit">로그인</button>
+  </form>
+
+  <p style="color:#666; margin-top:20px;">
+    학습용 계정 &mdash; 아이디: <code>admin</code> / 비밀번호: <code>1234</code>
+  </p>
+{% endblock %}

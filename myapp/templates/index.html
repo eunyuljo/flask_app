@@ -1,0 +1,28 @@
+{# templates/index.html
+   main 블루프린트의 index() 가 렌더링하는 메인 페이지. base.html 을 상속받아 content 블록만 채운다. #}
+
+{# extends 는 반드시 파일의 가장 첫 줄(주석 제외)에 와야 한다. #}
+{% extends "base.html" %}
+
+{% block title %}메인 페이지{% endblock %}
+
+{% block content %}
+  <h1>Flask Blueprint 학습용 샘플</h1>
+
+  {# username 은 views/main.py 의 render_template(..., username=username) 으로 넘어온 값이다. #}
+  {% if username %}
+    <p><strong>{{ username }}</strong>님, 환영합니다. 현재 로그인 상태입니다.</p>
+    <p><a href="{{ url_for('auth.logout') }}">로그아웃하기</a></p>
+  {% else %}
+    <p>로그인하지 않은 상태입니다.</p>
+    <p><a href="{{ url_for('auth.login') }}">로그인하러 가기</a></p>
+  {% endif %}
+
+  <hr>
+  <h2>이 프로젝트의 URL 구조</h2>
+  <ul>
+    <li><code>/</code> &rarr; main 블루프린트 (url_prefix 없음) &rarr; <code>url_for('main.index')</code></li>
+    <li><code>/auth/login</code> &rarr; auth 블루프린트 (url_prefix="/auth") &rarr; <code>url_for('auth.login')</code></li>
+    <li><code>/auth/logout</code> &rarr; auth 블루프린트 (url_prefix="/auth") &rarr; <code>url_for('auth.logout')</code></li>
+  </ul>
+{% endblock %}
