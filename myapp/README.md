@@ -227,7 +227,8 @@ DB 없이도 앱은 돌지만, DB를 붙이면 Lambda가 정규화한 이벤트�
 > **중요: 이 프로젝트는 Docker Desktop이 필요 없습니다.** 필요한 건 `docker compose` 명령뿐이고,
 > 이를 제공하는 무료·오픈소스 방법이 여러 가지 있습니다.
 
-로컬 DB를 띄우는 방법은 네 가지입니다. 회사 환경이라면 **2번 이하**를 권합니다.
+로컬 DB를 띄우는 방법은 네 가지입니다. **Windows 라면 맨 위(직접 설치)를 권합니다** —
+컨테이너 런타임 자체가 필요 없고, 이 프로젝트는 DB 한 대만 쓰므로 컨테이너로 얻는 이점이 거의 없습니다.
 
 | 방법 | 라이선스 | Windows | 비고 |
 |---|---|---|---|
@@ -236,18 +237,75 @@ DB 없이도 앱은 돌지만, DB를 붙이면 Lambda가 정규화한 이벤트�
 | **Podman Desktop** | Apache-2.0 | 지원 | `docker compose` 호환 |
 | Docker Desktop | 조건부 유료 | 지원 | 위 라이선스 조건 확인 |
 
-**PostgreSQL을 직접 설치했다면** `docker compose up -d` 를 건너뛰고, 설치 시 만든 계정으로
-DB와 사용자를 생성한 뒤 아래 2-2로 가면 됩니다.
+**2-1. DB 준비하기 — 방법 A 또는 B 중 하나만 고르세요**
+
+---
+
+#### 방법 A — PostgreSQL 직접 설치 (Windows 권장)
+
+**A-1.** [PostgreSQL Windows 설치본](https://www.postgresql.org/download/windows/)을 내려받아 실행합니다.
+
+설치 중 물어보는 것들:
+
+| 항목 | 입력 |
+|---|---|
+| 설치 구성요소 | 기본값 그대로 (pgAdmin 4, Command Line Tools 포함되어야 함) |
+| **postgres 비밀번호** | 자유롭게 정하고 **꼭 기억해 두세요** — 다음 단계에서 씁니다 |
+| Port | `5432` (기본값 유지) |
+| Locale | 기본값 |
+| Stack Builder | 실행할 필요 없음 (마지막 체크 해제) |
+
+**A-2.** 시작 메뉴에서 **SQL Shell (psql)** 을 엽니다.
+
+Server / Database / Port / Username은 전부 Enter로 넘기고,
+Password에 A-1에서 정한 postgres 비밀번호를 입력합니다.
+
+**A-3.** 아래 두 줄을 실행합니다.
 
 ```sql
--- psql 에서 실행 (설치 시 지정한 postgres 계정으로 접속)
 CREATE USER flask_user WITH PASSWORD 'flask_password';
 CREATE DATABASE flask_app OWNER flask_user;
 ```
 
-> 이 계정 정보는 `app/config.py` 기본값과 같아서 `.env` 를 건드릴 필요가 없습니다.
-> 이 경로(PostgreSQL 직접 설치 → 위 SQL → `init-db`)는 Linux에서 실제로 검증했습니다.
-> `docker compose` 경로는 설정값 대조만 했고 실행 검증은 하지 못했습니다.
+`CREATE ROLE` / `CREATE DATABASE` 가 출력되면 성공입니다. `\q` 로 나옵니다.
+
+> 이 계정 정보는 `app/config.py` 기본값과 같아서 **`.env` 를 건드릴 필요가 없습니다.**
+
+**→ 아래 2-2로 진행하세요.** (`docker compose` 관련 명령은 전부 건너뜁니다)
+
+---
+
+#### 방법 B — 컨테이너로 띄우기
+
+Docker Desktop / Docker Engine on WSL2 / Podman 중 하나가 이미 준비된 경우에만 해당합니다.
+
+```bash
+docker compose up -d
+```
+
+`docker-compose.yml`의 계정 정보도 `app/config.py` 기본값과 동일하게 맞춰두었습니다.
+
+| 항목 | 값 |
+|---|---|
+| 호스트 / 포트 | `localhost` / `5432` |
+| 사용자 / 비밀번호 | `flask_user` / `flask_password` |
+| DB 이름 | `flask_app` |
+
+**DB 끄기 / 초기화**
+
+```bash
+docker compose down        # 끄기 (데이터는 남음)
+docker compose down -v     # 데이터까지 삭제
+```
+
+> 포트 5432가 이미 쓰이고 있다면 `docker-compose.yml`의 왼쪽 포트 번호와
+> `.env`의 `DB_PORT`를 함께 바꾸세요.
+
+---
+
+> **검증 범위:** 방법 A(직접 설치 → 위 SQL → `init-db` → 적재)는 Linux에서 실제로
+> 검증했습니다. 방법 B의 `docker compose` 경로는 설정값 대조만 했고 실행 검증은
+> 하지 못했습니다. Windows 설치 프로그램의 화면 흐름도 검증하지 못했습니다.
 
 <details>
 <summary><b>Windows에서 Docker Desktop 없이 컨테이너를 쓰려면 (WSL2 + Docker Engine)</b></summary>
@@ -332,22 +390,7 @@ WSL2가 없습니다. 명령이 맞지 않으면 Docker 공식 문서를 기준�
 
 </details>
 
-**2-1. DB 켜기**
-
-```bash
-docker compose up -d
-```
-
-`docker-compose.yml`의 계정 정보는 `app/config.py`의 기본값과 똑같이 맞춰두었으므로
-**`.env`를 건드릴 필요가 없습니다.**
-
-| 항목 | 값 |
-|---|---|
-| 호스트 / 포트 | `localhost` / `5432` |
-| 사용자 / 비밀번호 | `flask_user` / `flask_password` |
-| DB 이름 | `flask_app` |
-
-**2-2. 테이블 만들기**
+**2-2. 테이블 만들기** (A / B 공통)
 
 ```bash
 flask --app run init-db
@@ -385,25 +428,18 @@ DATABASE_URL=postgresql://flask_user:flask_password@localhost:5432/flask_app
 이제 이벤트를 보내면 `store` 결과가 `{"stored": true}`로 바뀝니다.
 
 ```bash
-# psql 이 설치돼 있다면
+# 방법 A (직접 설치) — psql 이 함께 설치되어 있습니다
 psql -h localhost -U flask_user -d flask_app -c "SELECT severity, source, message FROM events;"
 
-# psql 이 없다면 (Windows 에서 주로 이쪽) — 컨테이너 안의 psql 을 그대로 씁니다
+# 방법 B (컨테이너) — 컨테이너 안의 psql 을 그대로 씁니다
 docker compose exec db psql -U flask_user -d flask_app -c "SELECT severity, source, message FROM events;"
 ```
 
-> Windows 에는 `psql` 이 기본으로 깔려 있지 않습니다. 두 번째 방법을 쓰면 따로 설치할 필요가 없습니다.
-> 앱에서 확인만 하려면 `flask --app run db-check` 로도 건수를 볼 수 있습니다.
-
-**DB 끄기 / 초기화**
-
-```bash
-docker compose down        # 끄기 (데이터는 남음)
-docker compose down -v     # 데이터까지 삭제
-```
-
-> 포트 5432가 이미 쓰이고 있다면 `docker-compose.yml`의 왼쪽 포트 번호와
-> `.env`의 `DB_PORT`를 함께 바꾸세요.
+> Windows에서 방법 A로 설치했다면 시작 메뉴의 **SQL Shell (psql)** 을 열어
+> `SELECT ... FROM events;` 를 입력해도 됩니다. `psql` 명령이 PATH에 없을 수 있는데,
+> 그때는 이 방법이 확실합니다.
+>
+> 건수만 빠르게 보려면 `flask --app run db-check` 로도 충분합니다.
 
 ### 선택 3 — 실제 Lambda 호출하기
 
