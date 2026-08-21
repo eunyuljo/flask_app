@@ -580,3 +580,28 @@ table.mini2 .no { color: var(--err-fg); }
 .flash.warn-flash { background: var(--warn-bg); color: var(--warn-fg); }
 
 .summary { white-space: pre-wrap; line-height: 1.7; }
+
+/* ==================================================================
+   15) AWS 콘솔
+   ================================================================== */
+.target-form { margin-bottom: 14px; }
+.targets { display: flex; gap: 14px; flex-wrap: wrap; }
+.targets label {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: .78rem; color: var(--text-mute); margin-top: 0;
+}
+.targets select {
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: .88rem;
+  min-width: 180px;
+}
+.targets select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* 명령 출력. 길어질 수 있으므로 상자 안에서만 스크롤시킨다. */
+pre.out, pre.err { max-height: 420px; overflow: auto; white-space: pre; }
+pre.err { color: var(--err-fg); }

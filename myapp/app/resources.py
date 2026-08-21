@@ -106,21 +106,32 @@ def save_snapshot(uri, items, account_id, region, source="demo", note=None):
 # ----------------------------------------------------------------------
 # 조회 / 비교
 # ----------------------------------------------------------------------
-def list_snapshots(uri, limit=20):
+def list_snapshots(uri, limit=20, account_id=None, region=None):
     import psycopg
+
+    where, params = [], []
+    if account_id:
+        where.append("s.account_id = %s")
+        params.append(account_id)
+    if region:
+        where.append("s.region = %s")
+        params.append(region)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    params.append(limit)
 
     with psycopg.connect(uri) as conn, conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT s.snapshot_id, s.collected_at, s.account_id, s.region,
                    s.source, s.complete, count(r.resource_id) AS resource_count
             FROM resource_snapshots s
             LEFT JOIN resources r USING (snapshot_id)
+            {where_sql}
             GROUP BY s.snapshot_id
             ORDER BY s.snapshot_id DESC
             LIMIT %s
             """,
-            (limit,),
+            params,
         )
         cols = [d.name for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -148,8 +159,14 @@ def _field_diff(old_attrs, new_attrs):
     return changes
 
 
-def diff(uri, base_id=None, target_id=None):
-    """두 스냅샷을 비교한다. 지정하지 않으면 '완료된 최근 2개'를 쓴다."""
+def diff(uri, base_id=None, target_id=None, account_id=None, region=None):
+    """두 스냅샷을 비교한다.
+
+    account_id / region 을 주면 그 범위 안에서만 최근 2개를 고른다.
+    이 조건이 없으면 서로 다른 계정의 스냅샷을 비교하게 되어,
+    A 계정 리소스는 전부 '삭제', B 계정 리소스는 전부 '생성' 으로 나온다.
+    계정이 하나뿐일 때는 티가 안 나지만 계정이 늘면 즉시 깨진다.
+    """
     import psycopg
 
     with psycopg.connect(uri) as conn, conn.cursor() as cur:
@@ -162,17 +179,47 @@ def diff(uri, base_id=None, target_id=None):
         if base_id is None or target_id is None:
             # complete = true 인 것만 고른다.
             # 수집 실패한 스냅샷과 비교하면 멀쩡한 리소스가 '삭제됨' 으로 나온다.
+            where = ["complete"]
+            params = []
+            if account_id:
+                where.append("account_id = %s")
+                params.append(account_id)
+            if region:
+                where.append("region = %s")
+                params.append(region)
+
             cur.execute(
                 "SELECT snapshot_id FROM resource_snapshots "
-                "WHERE complete ORDER BY snapshot_id DESC LIMIT 2"
+                f"WHERE {' AND '.join(where)} ORDER BY snapshot_id DESC LIMIT 2",
+                params,
             )
             ids = [r[0] for r in cur.fetchall()]
             if len(ids) < 2:
+                scope = ""
+                if account_id or region:
+                    scope = f" ({account_id or '전체 계정'} / {region or '전체 리전'})"
                 raise ResourceError(
-                    f"비교하려면 완료된 스냅샷이 2개 이상 필요합니다 (현재 {len(ids)}개).\n"
+                    f"비교하려면 완료된 스냅샷이 2개 이상 필요합니다{scope} "
+                    f"(현재 {len(ids)}개).\n"
                     "flask --app run collect-resources --demo 를 두 번 실행해 보세요."
                 )
             target_id, base_id = ids[0], ids[1]
+
+        # 직접 지정한 경우에도 계정이 섞이지 않았는지 확인한다.
+        cur.execute(
+            "SELECT snapshot_id, account_id, region FROM resource_snapshots "
+            "WHERE snapshot_id = ANY(%s)",
+            ([base_id, target_id],),
+        )
+        scopes = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+        if len(scopes) == 2 and scopes.get(base_id) != scopes.get(target_id):
+            b, t = scopes.get(base_id), scopes.get(target_id)
+            raise ResourceError(
+                "서로 다른 계정/리전의 스냅샷은 비교할 수 없습니다.\n"
+                f"  #{base_id}: {b[0]} / {b[1]}\n"
+                f"  #{target_id}: {t[0]} / {t[1]}\n"
+                "같은 계정과 리전 안에서 비교해야 의미가 있습니다."
+            )
 
         # 생성/삭제/변경을 한 번의 FULL OUTER JOIN 으로 뽑는다.
         # digest 비교라서 JSONB 전체를 맞대보지 않아도 된다.

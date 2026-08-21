@@ -79,3 +79,34 @@ CREATE TABLE IF NOT EXISTS resources (
 -- 특정 리소스의 이력을 따라갈 때 쓴다.
 CREATE INDEX IF NOT EXISTS idx_resources_id ON resources (resource_id, snapshot_id DESC);
 CREATE INDEX IF NOT EXISTS idx_resources_type ON resources (resource_type);
+
+
+-- ======================================================================
+-- 고객사 AWS 계정
+-- ----------------------------------------------------------------------
+-- 어떤 계정에 어떤 역할로 들어갈지를 적어둔다.
+-- role_arn 이 비어 있으면 '데모 계정' 으로 취급해 실제 AWS 를 부르지 않는다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS aws_accounts (
+    id          BIGSERIAL PRIMARY KEY,
+    customer    TEXT    NOT NULL,              -- 고객사 이름
+    account_id  TEXT    NOT NULL UNIQUE,       -- 12자리 AWS 계정 번호
+    alias       TEXT,                          -- 화면에 보여줄 짧은 이름
+    role_arn    TEXT    NOT NULL DEFAULT '',   -- 비어 있으면 데모 계정
+
+    -- 혼동된 대리인(confused deputy) 문제를 막는 값.
+    -- 주의: 학습용이라 평문으로 둔다. 실제 서비스라면 Secrets Manager 등에
+    -- 보관하고 여기에는 참조만 저장해야 한다.
+    external_id TEXT    NOT NULL DEFAULT '',
+
+    regions     TEXT[]  NOT NULL DEFAULT '{}', -- 수집/조회를 허용할 리전
+    enabled     BOOLEAN NOT NULL DEFAULT true,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_customer ON aws_accounts (customer, account_id);
+
+-- 스냅샷을 계정/리전으로 찾을 일이 많아진다.
+CREATE INDEX IF NOT EXISTS idx_snapshots_scope
+    ON resource_snapshots (account_id, region, snapshot_id DESC);

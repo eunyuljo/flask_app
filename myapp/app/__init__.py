@@ -24,6 +24,7 @@ from app.views.dashboard import dashboard_bp
 from app.views.explore import explore_bp
 from app.views.resources import resources_bp
 from app.views.report import report_bp
+from app.views.console import console_bp
 
 
 def create_app(config_name=None):
@@ -133,6 +134,10 @@ def create_app(config_name=None):
     # report 블루프린트: url_prefix="/report"
     # 이벤트 집계와 리소스 변경을 한 장으로 묶어 보여주고 Markdown 으로 내보낸다.
     app.register_blueprint(report_bp, url_prefix="/report")
+
+    # console 블루프린트: url_prefix="/console"
+    # 고객사 계정을 골라 AWS CLI 읽기 전용 명령을 실행한다. 관리자 전용.
+    app.register_blueprint(console_bp, url_prefix="/console")
 
     # ------------------------------------------------------------------
     # CLI 명령 등록

@@ -19,15 +19,16 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 7. [이벤트 질의어](#이벤트-질의어)
 8. [리소스 변경 추적](#리소스-변경-추적)
 9. [운영 리포트](#운영-리포트)
-10. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
-11. [환경변수 전체 목록](#환경변수-전체-목록)
-12. [알려진 한계](#알려진-한계)
+10. [AWS 콘솔 (다중 계정)](#aws-콘솔-다중-계정)
+11. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
+12. [환경변수 전체 목록](#환경변수-전체-목록)
+13. [알려진 한계](#알려진-한계)
 
 ---
 
 ## 무엇을 하는 앱인가
 
-아홉 개의 블루프린트로 이루어져 있습니다.
+열 개의 블루프린트로 이루어져 있습니다.
 
 | 블루프린트 | url_prefix | 하는 일 |
 |---|---|---|
@@ -39,7 +40,8 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 | `dashboard` | `/dashboard` | PostgreSQL 집계 지표와 차트 |
 | `explore` | `/explore` | 질의어로 이벤트 조회 (PromQL 스타일) |
 | `resources` | `/resources` | AWS 리소스 스냅샷 비교 (무엇이 바뀌었나) |
-| `report` | `/report` | 기간별 운영 리포트 + Markdown 내보내기 |
+| `report` | `/report` | 기간별 운영 리포트 + Markdown/PowerPoint 내보내기 |
+| `console` | `/console` | 고객사 계정 선택 후 AWS CLI 읽기 전용 실행 (관리자 전용) |
 
 핵심은 **각 기능이 서로의 코드를 건드리지 않는다**는 점입니다.
 `agent`를 추가할 때 `main`과 `auth`는 한 줄도 수정하지 않았습니다.
@@ -68,13 +70,17 @@ myapp/
 │   ├── resources.py            리소스 스냅샷 저장 / 정규화 / diff
 │   ├── report.py               기간 리포트 집계 / Markdown / AI 요약
 │   ├── report_pptx.py          리포트를 PowerPoint 슬라이드로
+│   ├── accounts.py             고객사 AWS 계정 목록
+│   ├── aws_session.py          AssumeRole + 임시 자격증명 캐싱
+│   ├── awscli.py               AWS CLI 허용 목록 + 실행
 │   ├── lambda_client.py        Lambda 호출 계층 (local / aws 전환)
 │   ├── views/                  블루프린트별 라우트
 │   │   ├── main.py  auth.py  agent.py  alarm.py  admin.py
-│   │       dashboard.py  explore.py  resources.py  report.py
+│   │       dashboard.py  explore.py  resources.py  report.py  console.py
 │   ├── templates/              Jinja 템플릿
 │   │   └── base.html  index.html  login.html  agent.html  alarm.html
-│   │       admin.html  dashboard.html  explore.html  resources.html  report.html
+│   │       admin.html  dashboard.html  explore.html  resources.html
+│   │       report.html  console.html
 │   └── static/                 정적 파일 (Flask 가 /static/... 으로 자동 공개)
 │       └── css/style.css       전체 스타일. base.html 에서 link 로 연결
 │
@@ -552,6 +558,7 @@ AWS_REGION=ap-northeast-2
 | `/report/` | GET | 필요 | 운영 리포트 (`?days=1\|7\|30`, `?summary=1`) |
 | `/report/download` | GET | 필요 | 리포트를 Markdown 파일로 |
 | `/report/download.pptx` | GET | 필요 | 리포트를 PowerPoint 파일로 |
+| `/console/` | GET, POST | **관리자** | 계정 선택 후 AWS CLI 실행 |
 | `/admin/` | GET | 관리자 | 설정·라우트 확인 |
 | `/admin/events/clear` | POST | 관리자 | 이벤트 비우기 |
 
@@ -768,6 +775,70 @@ Markdown 양쪽에 붙습니다.
 
 ---
 
+## AWS 콘솔 (다중 계정)
+
+`/console/` 에서 **고객사 → 계정 → 리전**을 고르고 AWS CLI 읽기 전용 명령을 실행합니다.
+관리자만 접근할 수 있습니다.
+
+```bash
+# 계정 등록 (role-arn 을 비우면 데모 계정 - 실제 AWS 를 부르지 않음)
+flask --app run add-account --customer "A커머스" --account-id 123456789012 \
+      --alias prod --regions "ap-northeast-2,us-east-1"
+
+flask --app run add-account --customer "B물류" --account-id 999988887777 \
+      --role-arn "arn:aws:iam::999988887777:role/ViewOnly" \
+      --external-id "..." --regions "ap-northeast-2"
+
+flask --app run list-accounts
+```
+
+### 동작
+
+```
+고객사 [A커머스 ▾]  계정 [prod ▾]  리전 [ap-northeast-2 ▾]
+> aws ec2 describe-instances
+
+  ① 그 계정의 role_arn 으로 sts:AssumeRole
+  ② 임시 자격증명 획득 (캐시, 만료 5분 전 갱신)
+  ③ 자격증명을 환경변수로 넣어 셸 없이 실행
+  ④ 출력 표시 + 감사 로그 기록
+```
+
+자격증명은 **파일에 쓰지 않고** 해당 프로세스의 환경변수로만 넘깁니다.
+계정을 바꾸면 자격증명도 통째로 바뀌므로 계정 간 섞일 여지가 없습니다.
+
+### 두 겹으로 막습니다
+
+**1. 셸을 쓰지 않습니다 (`shell=False`)** — 이게 실제 방어선입니다.
+`;` `|` `&&` `$( )` 가 특별한 뜻을 잃고 그냥 문자열이 됩니다. 셸이 없으니 셸 주입도 없습니다.
+
+**2. 허용 목록** — 오류 메시지를 분명히 하기 위한 두 번째 겹입니다.
+
+| 검사 | 거부 대상 |
+|---|---|
+| 실행 파일 | `aws` 외 전부 |
+| 하위 명령 | `describe` `list` `get` `search` `lookup` `batch-get` 로 시작하지 않는 것 |
+| 옵션 | `--region` `--profile` `--endpoint-url` 등 (리전·자격증명은 화면 선택으로만) |
+| 셸 문법 | `;` `\|` `&&` `$( )` `` ` `` `>` `<` |
+
+서버 환경변수를 자식 프로세스에 통째로 물려주지 않습니다.
+`.env` 의 `ANTHROPIC_API_KEY` 나 DB 비밀번호가 노출될 이유가 없기 때문입니다.
+
+### 감사 로그
+
+명령 실행은 이벤트로 남습니다. 결과를 세 가지로 구분합니다.
+
+| outcome | 뜻 |
+|---|---|
+| `ok` / `failed` | 실행됨 (종료코드에 따라) |
+| `rejected` | **금지된 명령을 시도함** — 감사에서 눈여겨봐야 할 기록 |
+| `exec_failed` | 허용됐으나 실행 환경 문제 (AWS CLI 미설치, 시간 초과) |
+
+`rejected` 와 `exec_failed` 를 같은 값으로 남기면 감사 로그에서 위험 신호를
+골라낼 수 없어서 분리했습니다.
+
+---
+
 ## Lambda 이벤트 정규화
 
 ### 왜 정규화가 필요한가
@@ -971,4 +1042,6 @@ python -c "import secrets; print(secrets.token_hex(32))"
 - **`LAMBDA_MODE=aws` 경로도 마찬가지**입니다. 로컬 모드만 실제로 동작을 확인했습니다.
 - **리소스 수집의 실제 AWS 경로(`collect-resources` 를 `--demo` 없이)도 미검증**입니다.
   스키마·정규화·diff·화면은 합성 데이터로 검증했습니다.
+- **콘솔의 AssumeRole 과 실제 `aws` 명령 실행도 미검증**입니다. 개발 환경에
+  AWS CLI 와 자격증명이 없습니다. 허용 목록 판정·차단·감사 로그·화면은 검증했습니다.
 - 자동화된 테스트 코드가 없습니다.

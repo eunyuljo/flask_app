@@ -1,0 +1,176 @@
+{# app/templates/console.html
+   고객사 -> 계정 -> 리전을 고르고 AWS CLI 읽기 전용 명령을 실행하는 콘솔.
+   셸을 거치지 않으므로 파이프나 명령 연결은 동작하지 않는다. #}
+
+{% extends "base.html" %}
+
+{% block title %}콘솔{% endblock %}
+{% block page_title %}AWS 콘솔{% endblock %}
+
+{% block topbar %}
+  {% if account %}
+    <span class="muted">
+      {{ account.customer }} · <code>{{ account.account_id }}</code> · {{ region }}
+      {% if demo %}<span class="badge sev-warning">데모</span>{% endif %}
+    </span>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+
+  {% if error and not grouped %}
+    <div class="flash error" style="white-space:pre-wrap">{{ error }}</div>
+    <p class="muted">
+      계정을 등록하려면
+      <code>flask --app run add-account --customer "A사" --account-id 123456789012
+      --regions ap-northeast-2</code> 를 실행하세요.
+    </p>
+
+  {% else %}
+
+    {# 대상 선택 + 명령 입력. 고객사를 바꾸면 계정 목록이 따라 바뀌어야 하므로
+       선택만 바꿨을 때도 폼을 다시 제출한다(자바스크립트 없이 처리). #}
+    <form method="post" action="{{ url_for('console.index') }}" class="panel target-form">
+      <div class="panel-body">
+        <div class="targets">
+          <label>고객사
+            <select name="customer" onchange="this.form.command.value=''; this.form.submit()">
+              {% for c in grouped | sort %}
+                <option value="{{ c }}" {% if c == customer %}selected{% endif %}>{{ c }}</option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <label>계정
+            <select name="account_id" onchange="this.form.command.value=''; this.form.submit()">
+              {% for a in customer_accounts %}
+                <option value="{{ a.account_id }}" {% if a.account_id == account_id %}selected{% endif %}>
+                  {{ a.alias or a.account_id }}{% if not a.role_arn %} (데모){% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+
+          <label>리전
+            <select name="region">
+              {% for r in regions %}
+                <option value="{{ r }}" {% if r == region %}selected{% endif %}>{{ r }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+
+        <div class="qbar" style="margin-top:12px">
+          <input type="text" name="command" value="{{ command }}" spellcheck="false"
+                 autocomplete="off" placeholder="aws ec2 describe-instances">
+          <button type="submit">실행</button>
+        </div>
+
+        {% if demo %}
+          <p class="muted small" style="margin-bottom:0">
+            이 계정은 <b>데모</b>입니다(<code>role_arn</code> 미설정).
+            AssumeRole 을 하지 않으므로 실제 AWS 에는 접속하지 않습니다.
+          </p>
+        {% endif %}
+      </div>
+    </form>
+
+    {% if error %}
+      <div class="flash error" style="white-space:pre-wrap">{{ error }}</div>
+    {% endif %}
+
+    <div class="grid two">
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>실행 결과</h2>
+          {% if result %}
+            <span class="hint">
+              종료코드 {{ result.returncode }} · {{ result.elapsed }}초
+            </span>
+          {% endif %}
+        </div>
+        <div class="panel-body">
+          {% if not result %}
+            <p class="muted" style="margin-top:0">
+              대상을 고르고 명령을 실행하면 결과가 여기에 표시됩니다.
+            </p>
+          {% else %}
+            <p class="muted small" style="margin-top:0">
+              실행: <code>{{ result.argv | join(' ') }}</code>
+            </p>
+            {% if result.stdout %}
+              <pre class="sql out">{{ result.stdout }}</pre>
+            {% endif %}
+            {% if result.stderr %}
+              <p class="muted small">stderr</p>
+              <pre class="sql err">{{ result.stderr }}</pre>
+            {% endif %}
+            {% if result.truncated %}
+              <p class="muted small">출력이 길어 일부만 표시했습니다.</p>
+            {% endif %}
+          {% endif %}
+        </div>
+      </section>
+
+      <div>
+        <section class="panel">
+          <div class="panel-head"><h2>예시</h2><span class="hint">누르면 입력됨</span></div>
+          <div class="panel-body">
+            <ul class="examples">
+              {% for e in examples %}
+                <li>
+                  <a href="#" onclick="document.querySelector('input[name=command]').value=
+                     '{{ e }}'; return false;"><code>{{ e }}</code></a>
+                </li>
+              {% endfor %}
+            </ul>
+          </div>
+        </section>
+
+        <section class="panel" style="margin-top:14px">
+          <div class="panel-head"><h2>실행 규칙</h2></div>
+          <div class="panel-body">
+            <p class="muted small" style="margin-top:0">허용되는 하위 명령</p>
+            <p>{% for p in prefixes %}<code>{{ p }}-</code> {% endfor %}</p>
+
+            <p class="muted small">막히는 것</p>
+            <table class="mini">
+              <tr><td><code>aws</code> 외 프로그램</td><td>거부</td></tr>
+              <tr><td>쓰기 계열 하위 명령</td><td>거부</td></tr>
+              <tr><td><code>--region</code> <code>--profile</code></td><td>거부</td></tr>
+              <tr><td><code>;</code> <code>|</code> <code>&amp;&amp;</code> <code>$( )</code></td><td>거부</td></tr>
+            </table>
+
+            <p class="muted small">
+              셸을 거치지 않고 <code>aws</code> 를 직접 실행합니다(<code>shell=False</code>).
+              그래서 파이프·리다이렉션·명령 연결은 애초에 동작하지 않습니다.
+              자격증명은 AssumeRole 로 받은 임시 값이며 파일에 쓰지 않습니다.
+            </p>
+          </div>
+        </section>
+
+        {% if sessions %}
+          <section class="panel" style="margin-top:14px">
+            <div class="panel-head">
+              <h2>세션 캐시</h2><span class="hint">자격증명 값은 표시하지 않음</span>
+            </div>
+            <div class="panel-body">
+              <table class="rows">
+                <tr><th>계정</th><th>리전</th><th>만료까지</th></tr>
+                {% for s in sessions %}
+                  <tr>
+                    <td><code>{{ s.account_id }}</code></td>
+                    <td>{{ s.region }}</td>
+                    <td>{{ (s.expires_in // 60) }}분</td>
+                  </tr>
+                {% endfor %}
+              </table>
+            </div>
+          </section>
+        {% endif %}
+      </div>
+
+    </div>
+  {% endif %}
+{% endblock %}

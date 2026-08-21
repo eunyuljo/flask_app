@@ -13,6 +13,7 @@ from flask import current_app
 # Lambda 핸들러의 정규화 함수를 그대로 가져다 쓴다.
 # 샘플 데이터도 실제와 똑같은 경로를 거치게 하려는 것이다.
 from api.normalize_handler import normalize
+from app.accounts import upsert_account, list_accounts
 from app.resources import save_snapshot, psycopg_uri
 
 # schema.sql 은 프로젝트 루트의 db/ 에 있다.
@@ -251,6 +252,56 @@ def register_cli(app):
 
         click.echo(f"스냅샷 #{snapshot_id} 저장 ({source}, {region}, 리소스 {len(items)}개)")
         click.echo("차이 보기: http://127.0.0.1:5000/resources/")
+
+    @app.cli.command("add-account")
+    @click.option("--customer", required=True, help="고객사 이름")
+    @click.option("--account-id", required=True, help="12자리 AWS 계정 번호")
+    @click.option("--alias", default=None, help="화면에 표시할 짧은 이름")
+    @click.option("--role-arn", default="", help="AssumeRole 대상. 비우면 데모 계정")
+    @click.option("--external-id", default="", help="AssumeRole 의 ExternalId")
+    @click.option("--regions", default="ap-northeast-2", help="쉼표로 구분한 리전 목록")
+    @click.option("--disabled", is_flag=True, help="등록만 하고 사용은 막아둠")
+    def add_account(customer, account_id, alias, role_arn, external_id, regions, disabled):
+        """고객사 AWS 계정을 등록한다(이미 있으면 갱신).
+
+        --role-arn 을 비워두면 데모 계정이 되어 실제 AWS 를 호출하지 않는다.
+        자격증명 없이 화면과 명령 판정 흐름을 확인할 때 쓴다.
+        """
+        region_list = [r.strip() for r in regions.split(",") if r.strip()]
+        if not region_list:
+            raise click.ClickException("리전을 최소 하나는 지정해야 합니다.")
+
+        try:
+            upsert_account(
+                customer=customer, account_id=account_id, alias=alias,
+                role_arn=role_arn, external_id=external_id,
+                regions=region_list, enabled=not disabled,
+            )
+        except Exception as e:
+            if type(e).__module__.split(".")[0] == "psycopg":
+                raise click.ClickException(
+                    f"DB 작업에 실패했습니다.\n  {e}\n"
+                    "  aws_accounts 테이블이 없다면 flask --app run init-db 를 실행하세요."
+                )
+            raise
+
+        mode = "데모" if not role_arn else "AssumeRole"
+        click.echo(f"등록: {customer} / {account_id} ({mode}, {', '.join(region_list)})")
+
+    @app.cli.command("list-accounts")
+    def list_accounts_cmd():
+        """등록된 고객사 계정을 보여준다."""
+        rows = list_accounts(enabled_only=False)
+        if not rows:
+            click.echo("등록된 계정이 없습니다. flask --app run add-account 로 추가하세요.")
+            return
+        click.echo(f"{'고객사':<14}{'계정':<16}{'모드':<12}{'리전':<28}사용")
+        for a in rows:
+            mode = "데모" if not a["role_arn"] else "AssumeRole"
+            click.echo(
+                f"{a['customer']:<14}{a['account_id']:<16}{mode:<12}"
+                f"{','.join(a['regions']):<28}{'예' if a['enabled'] else '아니오'}"
+            )
 
 
 def _demo_resources(uri, drift):
