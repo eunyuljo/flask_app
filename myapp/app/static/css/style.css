@@ -568,3 +568,15 @@ table.mini2 td { vertical-align: top; padding: 8px 10px 8px 0; }
 table.mini2 .ok { color: var(--ok-fg); }
 table.mini2 .no { color: var(--err-fg); }
 .small { font-size: .78rem; }
+
+/* ==================================================================
+   14) 리포트
+   ================================================================== */
+/* 증감 표시. 방향을 색으로만 알리지 않도록 부호(+/-)를 항상 함께 쓴다. */
+.up   { color: var(--err-fg); font-weight: 600; }   /* 늘어남 = 나쁜 신호 */
+.down { color: var(--ok-fg);  font-weight: 600; }   /* 줄어듦 = 좋은 신호 */
+.kpi .k .up, .kpi .k .down { font-size: .95em; }
+
+.flash.warn-flash { background: var(--warn-bg); color: var(--warn-fg); }
+
+.summary { white-space: pre-wrap; line-height: 1.7; }

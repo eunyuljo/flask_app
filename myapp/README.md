@@ -18,15 +18,16 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 6. [AI 에이전트](#ai-에이전트)
 7. [이벤트 질의어](#이벤트-질의어)
 8. [리소스 변경 추적](#리소스-변경-추적)
-9. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
-10. [환경변수 전체 목록](#환경변수-전체-목록)
-11. [알려진 한계](#알려진-한계)
+9. [운영 리포트](#운영-리포트)
+10. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
+11. [환경변수 전체 목록](#환경변수-전체-목록)
+12. [알려진 한계](#알려진-한계)
 
 ---
 
 ## 무엇을 하는 앱인가
 
-여덟 개의 블루프린트로 이루어져 있습니다.
+아홉 개의 블루프린트로 이루어져 있습니다.
 
 | 블루프린트 | url_prefix | 하는 일 |
 |---|---|---|
@@ -38,6 +39,7 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 | `dashboard` | `/dashboard` | PostgreSQL 집계 지표와 차트 |
 | `explore` | `/explore` | 질의어로 이벤트 조회 (PromQL 스타일) |
 | `resources` | `/resources` | AWS 리소스 스냅샷 비교 (무엇이 바뀌었나) |
+| `report` | `/report` | 기간별 운영 리포트 + Markdown 내보내기 |
 
 핵심은 **각 기능이 서로의 코드를 건드리지 않는다**는 점입니다.
 `agent`를 추가할 때 `main`과 `auth`는 한 줄도 수정하지 않았습니다.
@@ -64,13 +66,14 @@ myapp/
 │   ├── stats.py                대시보드용 집계 질의 (SQL)
 │   ├── query.py                이벤트 질의어 파서 + SQL 컴파일러
 │   ├── resources.py            리소스 스냅샷 저장 / 정규화 / diff
+│   ├── report.py               기간 리포트 집계 / Markdown / AI 요약
 │   ├── lambda_client.py        Lambda 호출 계층 (local / aws 전환)
 │   ├── views/                  블루프린트별 라우트
 │   │   ├── main.py  auth.py  agent.py  alarm.py  admin.py
-│   │       dashboard.py  explore.py  resources.py
+│   │       dashboard.py  explore.py  resources.py  report.py
 │   ├── templates/              Jinja 템플릿
 │   │   └── base.html  index.html  login.html  agent.html  alarm.html
-│   │       admin.html  dashboard.html  explore.html  resources.html
+│   │       admin.html  dashboard.html  explore.html  resources.html  report.html
 │   └── static/                 정적 파일 (Flask 가 /static/... 으로 자동 공개)
 │       └── css/style.css       전체 스타일. base.html 에서 link 로 연결
 │
@@ -543,6 +546,8 @@ AWS_REGION=ap-northeast-2
 | `/dashboard/` | GET | 필요 | 지표 대시보드 (`?hours=6\|24\|72`) |
 | `/explore/` | GET | 필요 | 질의어로 이벤트 조회 (`?q=`, `?hours=`) |
 | `/resources/` | GET | 필요 | 리소스 스냅샷 비교 (`?base=`, `?target=`) |
+| `/report/` | GET | 필요 | 운영 리포트 (`?days=1\|7\|30`, `?summary=1`) |
+| `/report/download` | GET | 필요 | 리포트를 Markdown 파일로 |
 | `/admin/` | GET | 관리자 | 설정·라우트 확인 |
 | `/admin/events/clear` | POST | 관리자 | 이벤트 비우기 |
 
@@ -718,6 +723,36 @@ flask --app run collect-resources --demo --drift 1.0   # 두 번째 실행 (변�
 
 **2. `complete` 플래그** — 수집이 도중에 실패하면 못 읽은 리소스가 "삭제됨"으로
 보입니다. 완료 표시가 없는 스냅샷은 비교 대상에서 자동으로 빠집니다.
+
+---
+
+## 운영 리포트
+
+`/report/` 에서 기간별 리포트를 보고 Markdown 으로 내려받을 수 있습니다.
+
+```
+/report/?days=7              화면
+/report/download?days=7      Markdown 파일
+/report/?days=7&summary=1    AI 요약 포함 (API 키 필요)
+```
+
+### 설계에서 신경 쓴 것
+
+**절대 건수보다 변화를 앞에 둡니다.** 모든 지표에 직전 같은 길이의 기간을 함께 뽑아
+증감률을 붙입니다. "web-02 가 11건으로 1위" 보다 "web-02 가 5건 → 11건(+120%)" 이
+훨씬 신뢰할 만한 신호이기 때문입니다.
+
+**표본이 적으면 경고합니다.** 건수가 적으면 아무 문제 없는 인프라에서도 그럴듯한
+1등이 만들어집니다. 30건 미만이면 "순위는 우연일 수 있다" 는 배너가 화면과
+Markdown 양쪽에 붙습니다.
+
+**조용해진 출처를 따로 보여줍니다.** 직전 기간엔 이벤트가 있었는데 이번엔 0건인
+출처입니다. 정말 안정된 것일 수도, **수집이 끊긴 것일 수도** 있습니다.
+조용한 것과 건강한 것은 다릅니다.
+
+**AI 요약은 선택입니다.** 키가 없으면 버튼이 나타나지 않고, 집계는 그대로 전부 나옵니다.
+요약 프롬프트에는 "알람이 몰린 곳을 원인으로 단정하지 말 것", "표본이 적으면 그렇게
+밝힐 것" 같은 제약을 넣어 뒀습니다.
 
 ---
 
