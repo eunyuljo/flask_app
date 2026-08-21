@@ -1,0 +1,48 @@
+{# templates/runbook.html
+   runbook 블루프린트의 index() 가 렌더링하는 런북 목록. #}
+
+{% extends "base.html" %}
+
+{% block title %}런북{% endblock %}
+{% block page_title %}런북{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    알람 종류별 대응 절차입니다. 알람의 <strong>지문(fingerprint)</strong>에 절차를 붙여두면,
+    같은 알람이 다시 왔을 때 이벤트 목록에서 바로 펼쳐볼 수 있습니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  <p><a href="{{ url_for('runbook.new') }}">새 런북 작성</a></p>
+
+  <hr>
+  <h2>등록된 런북 <span class="muted">({{ items|length }}건)</span></h2>
+
+  {% if not items %}
+    <p class="muted">
+      아직 없습니다. <a href="{{ url_for('alarm.index') }}">이벤트 화면</a>에서
+      알람 하나를 골라 "이 알람에 절차 쓰기"를 누르면 지문이 자동으로 채워집니다.
+    </p>
+  {% endif %}
+
+  {% for r in items %}
+    <div class="event {% if r.customer %}rb-scoped{% else %}rb-common{% endif %}">
+      <div class="event-head">
+        <span class="badge">{% if r.customer %}{{ r.customer }}{% else %}공통{% endif %}</span>
+        <strong><a href="{{ url_for('runbook.edit', runbook_id=r.id) }}">{{ r.title }}</a></strong>
+      </div>
+      <div class="muted">
+        지문 <code>{{ r.fingerprint }}</code>
+        {% if r.sample %} &middot; 예) {{ r.sample }}{% endif %}
+      </div>
+      <div class="muted">{{ r.author }} &middot; {{ r.updated_at }}</div>
+      <details class="meta-fold">
+        <summary class="muted">절차 보기</summary>
+        <div class="rb-body">{{ r.body }}</div>
+      </details>
+    </div>
+  {% endfor %}
+{% endblock %}

@@ -1,0 +1,155 @@
+{# templates/handover.html
+   handover 블루프린트의 index() 가 렌더링하는 당직 인계 화면. #}
+
+{% extends "base.html" %}
+
+{% block title %}당직 인계{% endblock %}
+{% block page_title %}당직 인계{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    다음 당직자에게 넘길 내용입니다. 지난 근무 구간의 알람과
+    <strong>아직 끝나지 않은 작업</strong>을 한 장으로 모읍니다.
+  </p>
+
+  <p class="muted">
+    구간:
+    {% for h in choices %}
+      {% if h == hours %}
+        <strong>{{ h }}시간</strong>
+      {% else %}
+        <a href="{{ url_for('handover.index', hours=h) }}">{{ h }}시간</a>
+      {% endif %}
+      {% if not loop.last %}&middot;{% endif %}
+    {% endfor %}
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if data %}
+    <div class="kpis">
+      <div class="kpi"><span class="n">{{ data.total }}</span><span class="k">전체 이벤트</span></div>
+      <div class="kpi"><span class="n">{{ data.alarm_count }}</span><span class="k">critical + error</span></div>
+      <div class="kpi"><span class="n">{{ data.new_kinds|length }}</span><span class="k">처음 나타난 알람</span></div>
+      <div class="kpi"><span class="n">{{ data.open_work|length }}</span><span class="k">진행 중인 작업</span></div>
+    </div>
+
+    {# 처음 나타난 알람을 맨 위에 둔다. 반복되던 알람보다 이쪽이 중요하다. #}
+    <section class="panel">
+      <div class="panel-head">
+        <h2>이번 근무에 처음 나타난 알람</h2>
+        <span class="hint">{{ data.new_kinds|length }}건</span>
+      </div>
+      <div class="panel-body">
+        {% if not data.new_kinds %}
+          <p class="muted">없습니다. 이번 구간의 알람은 모두 이전에도 있던 종류입니다.</p>
+        {% else %}
+          {% for k in data.new_kinds %}
+            <div class="chg sev-{{ k.severity }}">
+              <div class="chg-head">
+                <span class="badge">{{ k.severity }}</span>
+                <strong>{{ k.sample }}</strong>
+                <span class="muted">{{ k.source }} &middot; {{ k.c }}건</span>
+              </div>
+              <div class="muted">첫 발생 {{ k.first_seen.strftime('%m-%d %H:%M') }}</div>
+            </div>
+          {% endfor %}
+        {% endif %}
+      </div>
+    </section>
+
+    <div class="grid two">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>많이 난 알람</h2><span class="hint">지문 기준</span>
+        </div>
+        <div class="panel-body">
+          {% if not data.top %}
+            <p class="muted">이번 구간에 이벤트가 없습니다.</p>
+          {% else %}
+            <table class="mini2">
+              {% for t in data.top %}
+                <tr>
+                  <td class="fname">{{ t.c }}건</td>
+                  <td>
+                    {{ t.sample }}
+                    <div class="muted">
+                      {{ t.severity }} &middot; {{ t.source }}
+                      &middot; 마지막 {{ t.last_seen.strftime('%m-%d %H:%M') }}
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </table>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>진행 중인 작업</h2>
+          <span class="hint">{{ data.open_work|length }}건</span>
+        </div>
+        <div class="panel-body">
+          {% if not data.open_work %}
+            <p class="muted">확정되지 않은 작업이 없습니다.</p>
+          {% else %}
+            <table class="mini2">
+              {% for w in data.open_work %}
+                <tr>
+                  <td class="fname">#{{ w.id }}</td>
+                  <td>
+                    <a href="{{ url_for('work.detail', work_id=w.id) }}">{{ w.title }}</a>
+                    <div class="muted">
+                      {% if w.ticket %}{{ w.ticket }} &middot; {% endif %}
+                      {{ w.customer }} &middot; {{ work_label.get(w.status, w.status) }}
+                      &middot; {{ w.operator }}
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </table>
+          {% endif %}
+        </div>
+      </section>
+    </div>
+
+    {% if data.no_runbook %}
+      <section class="panel">
+        <div class="panel-head">
+          <h2>대응 절차가 없는 알람</h2>
+          <span class="hint">{{ data.no_runbook|length }}건</span>
+        </div>
+        <div class="panel-body">
+          <p class="muted">
+            이번 구간의 critical/error 중 런북이 없는 것들입니다.
+            인계받는 사람이 판단 근거 없이 마주치게 됩니다.
+          </p>
+          <table class="mini2">
+            {% for n in data.no_runbook %}
+              <tr>
+                <td class="fname">{{ n.c }}건</td>
+                <td>
+                  {{ n.sample }}
+                  <div class="muted">
+                    {{ n.severity }} &middot;
+                    <a href="{{ url_for('runbook.new', fingerprint=n.fingerprint,
+                                        sample=n.sample[:120]) }}">절차 쓰기</a>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </table>
+        </div>
+      </section>
+    {% endif %}
+
+    <hr>
+    <p>
+      <a href="{{ url_for('handover.download', hours=hours) }}">인계 문서 내려받기 (Markdown)</a>
+      <span class="muted">&mdash; 메신저에 그대로 붙여넣을 수 있습니다</span>
+    </p>
+  {% endif %}
+{% endblock %}

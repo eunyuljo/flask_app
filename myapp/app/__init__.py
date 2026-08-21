@@ -26,6 +26,8 @@ from app.views.resources import resources_bp
 from app.views.report import report_bp
 from app.views.console import console_bp
 from app.views.work import work_bp
+from app.views.runbook import runbook_bp
+from app.views.handover import handover_bp
 
 
 def create_app(config_name=None):
@@ -145,6 +147,18 @@ def create_app(config_name=None):
     # resources 블루프린트가 '무엇이 바뀌었나' 를 보여준다면,
     # 여기는 거기에 '누가, 왜, 어떤 요청으로' 를 붙인다.
     app.register_blueprint(work_bp, url_prefix="/work")
+
+    # runbook 블루프린트: url_prefix="/runbook"
+    # 알람 종류(지문)별 대응 절차. alarm 안에 넣지 않고 따로 뺀 이유는
+    # 알람은 '지나가는 사건' 이고 런북은 '쌓여서 자산이 되는 문서' 라
+    # 수명과 다루는 방식이 다르기 때문이다.
+    app.register_blueprint(runbook_bp, url_prefix="/runbook")
+
+    # handover 블루프린트: url_prefix="/handover"
+    # 당직 인계. report 블루프린트와 목적이 다르다.
+    #   report   -> 고객사에 내는 것, 월 단위, 기간 대비 변화가 핵심
+    #   handover -> 다음 당직자에게 넘기는 것, 시간 단위, 미해결 항목이 핵심
+    app.register_blueprint(handover_bp, url_prefix="/handover")
 
     # ------------------------------------------------------------------
     # CLI 명령 등록

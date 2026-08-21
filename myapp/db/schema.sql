@@ -153,3 +153,40 @@ CREATE TABLE IF NOT EXISTS work_orders (
 
 CREATE INDEX IF NOT EXISTS idx_work_orders_scope
     ON work_orders (customer, account_id, id DESC);
+
+-- ======================================================================
+-- 런북 (알람 종류별 대응 절차)
+-- ----------------------------------------------------------------------
+-- "이 알람이 뜨면 이렇게 하세요" 를 지문(fingerprint)에 붙여둔다.
+--
+-- 지문이 제 역할을 해야만 성립하는 테이블이다. 지문이 메시지 전문을 해시하던
+-- 시절에는 같은 알람이 매번 다른 지문이 되어 런북을 붙일 대상이 없었다.
+-- (api/normalize_handler.py 의 _fingerprint 참고)
+--
+-- customer 가 빈 문자열이면 '모든 고객사 공통' 절차다.
+-- 같은 지문에 공통 절차와 고객사 전용 절차가 둘 다 있으면 전용이 이긴다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS runbooks (
+    id          BIGSERIAL   PRIMARY KEY,
+
+    fingerprint TEXT        NOT NULL,
+    customer    TEXT        NOT NULL DEFAULT '',   -- '' = 공통
+
+    title       TEXT        NOT NULL,
+    body        TEXT        NOT NULL,              -- 대응 절차 본문
+    author      TEXT        NOT NULL,
+
+    -- 이 런북이 어떤 알람에서 나왔는지 사람이 알아볼 수 있게 남긴다.
+    -- 지문만 남기면 나중에 목록에서 무슨 알람인지 알 수가 없다.
+    sample      TEXT        NOT NULL DEFAULT '',
+
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- 같은 지문 + 같은 고객사에 런북이 둘일 이유가 없다.
+    -- 이 제약이 있어야 '수정' 을 ON CONFLICT 로 처리할 수 있다.
+    UNIQUE (fingerprint, customer)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runbooks_fingerprint ON runbooks (fingerprint);

@@ -1,0 +1,58 @@
+{# templates/runbook_edit.html
+   런북 작성/수정 화면. 새로 쓸 때와 고칠 때 같은 폼을 쓴다. #}
+
+{% extends "base.html" %}
+
+{% block title %}{% if item.id %}런북 수정{% else %}런북 작성{% endif %}{% endblock %}
+{% block page_title %}{% if item.id %}런북 수정{% else %}런북 작성{% endif %}{% endblock %}
+
+{% block content %}
+  <p class="muted"><a href="{{ url_for('runbook.index') }}">&larr; 런북 목록</a></p>
+
+  {% if item.sample %}
+    <p class="muted">이 알람에 붙습니다: <strong>{{ item.sample }}</strong></p>
+  {% endif %}
+
+  <form action="{{ url_for('runbook.save') }}" method="post" class="wo-form">
+    <label>
+      지문 (fingerprint)
+      {# 지문은 알람에서 넘어온 값을 그대로 쓴다. 손으로 고칠 일이 아니다. #}
+      <input type="text" name="fingerprint" value="{{ item.fingerprint }}" required
+             {% if item.id %}readonly{% endif %}>
+    </label>
+
+    <label>
+      적용 범위
+      <select name="customer">
+        <option value="" {% if not item.customer %}selected{% endif %}>공통 (모든 고객사)</option>
+        {% for c in customers %}
+          <option value="{{ c }}" {% if c == item.customer %}selected{% endif %}>{{ c }} 전용</option>
+        {% endfor %}
+      </select>
+    </label>
+    <p class="muted">
+      같은 지문에 공통 절차와 고객사 전용 절차가 둘 다 있으면 <strong>전용이 이깁니다.</strong>
+    </p>
+
+    <label>
+      제목
+      <input type="text" name="title" value="{{ item.title }}" required
+             placeholder="예) EC2 CPU 사용률 임계값 초과">
+    </label>
+
+    <label>
+      대응 절차
+      <textarea name="body" rows="14" required
+                placeholder="1. 인스턴스 상태 확인&#10;   aws ec2 describe-instances --instance-ids ...&#10;2. 최근 배포 이력 확인&#10;3. 30분 이상 지속되면 스케일아웃 검토&#10;4. 고객사 담당자에게 통보 (야간은 다음 날 오전)">{{ item.body }}</textarea>
+    </label>
+
+    <input type="hidden" name="sample" value="{{ item.sample }}">
+    <button type="submit">저장</button>
+  </form>
+
+  {% if item.id %}
+    <form action="{{ url_for('runbook.delete', runbook_id=item.id) }}" method="post" class="danger">
+      <button type="submit">이 런북 지우기</button>
+    </form>
+  {% endif %}
+{% endblock %}

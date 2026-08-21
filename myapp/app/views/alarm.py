@@ -21,6 +21,7 @@ from app import event_store
 from app.accounts import list_accounts, by_customer, get_account, AccountError
 from app.agent_core import diagnose as run_diagnose, AgentNotConfigured
 from app.lambda_client import invoke_normalizer, LambdaInvokeError
+from app.runbook import find_many, find as find_runbook, RunbookError
 from app.stats import fingerprint_history, StatsUnavailable
 
 alarm_bp = Blueprint("alarm", __name__)
@@ -58,9 +59,20 @@ def index():
     # 방금 진단한 결과가 있으면 그 이벤트에만 펼쳐서 보여준다.
     diagnosed = request.args.get("diagnosed", "")
 
+    events = event_store.recent(20)
+
+    # 이벤트마다 find() 를 부르면 20건에 질의가 20번 나간다. 한 번에 가져온다.
+    runbooks = {}
+    try:
+        runbooks = find_many([e["record"].get("fingerprint", "") for e in events])
+    except RunbookError:
+        # 런북은 없어도 알람 화면은 떠야 한다. 조용히 건너뛴다.
+        pass
+
     return render_template(
         "alarm.html",
-        events=event_store.recent(20),
+        events=events,
+        runbooks=runbooks,
         mode=current_app.config["LAMBDA_MODE"],
         function_name=current_app.config["LAMBDA_FUNCTION_NAME"],
         invocation_type=current_app.config["LAMBDA_INVOCATION_TYPE"],
@@ -220,8 +232,15 @@ def diagnose():
     except StatsUnavailable:
         history = None
 
+    # 이 알람에 등록된 대응 절차. 있으면 모델이 일반론 대신 이 절차를 따른다.
+    # 고객사 전용 절차가 있으면 그것을, 없으면 공통 절차를 쓴다.
     try:
-        text, commands = run_diagnose(event, account, region, history)
+        book = find_runbook(event["fingerprint"], account["customer"])
+    except RunbookError:
+        book = None
+
+    try:
+        text, commands = run_diagnose(event, account, region, history, book)
     except AgentNotConfigured as e:
         flash(f"진단을 실행할 수 없습니다: {e}", "error")
         return redirect(url_for("alarm.index"))

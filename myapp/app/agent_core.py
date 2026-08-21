@@ -325,10 +325,14 @@ DIAGNOSE_SYSTEM_PROMPT = """당신은 AWS 운영 담당자를 돕는 진단 도�
 ## 다음에 확인할 것
 
 발생 이력이 주어지면 반드시 반영하세요. 처음 발생인지 반복되는 알람인지에 따라
-봐야 할 곳이 달라집니다. 이력이 '집계 불가'로 표시되면 그 사실을 밝히세요."""
+봐야 할 곳이 달라집니다. 이력이 '집계 불가'로 표시되면 그 사실을 밝히세요.
+
+등록된 대응 절차가 주어지면 그 절차를 우선하세요. 일반적인 AWS 지식보다
+이 조직이 실제로 하는 방식이 먼저입니다. 절차대로 확인한 결과를 쓰고,
+절차에 없는 것을 제안할 때는 절차 밖의 제안임을 밝히세요."""
 
 
-def _format_event(event, history):
+def _format_event(event, history, runbook=None):
     """모델에게 넘길 알람 설명을 만든다."""
     lines = [
         "다음 알람을 진단해 주세요.",
@@ -360,16 +364,26 @@ def _format_event(event, history):
         for s in history.get("samples", [])[:5]:
             lines.append(f"  - {s['occurred_at']} [{s['severity']}] {s['message']}")
 
+    # 등록된 대응 절차가 있으면 그대로 넘긴다.
+    # 이게 없으면 모델은 일반적인 AWS 지식으로만 답할 수밖에 없다.
+    # 절차가 있으면 "이 고객사에서 이 알람에 실제로 하는 것" 을 답한다.
+    if runbook:
+        scope = f"{runbook['customer']} 전용" if runbook["customer"] else "공통"
+        lines.append("")
+        lines.append(f"등록된 대응 절차 ({scope}) — {runbook['title']}")
+        lines.append(runbook["body"])
+
     return "\n".join(lines)
 
 
-def diagnose(event, account, region, history=None):
+def diagnose(event, account, region, history=None, runbook=None):
     """알람 하나를 진단한다. (진단문, 실행한 명령 목록) 을 돌려준다.
 
     event   : 정규화된 이벤트 레코드
     account : app.accounts 가 돌려준 계정 dict (조회 범위는 이 계정 하나뿐)
     region  : 조회할 리전
     history : app.stats.fingerprint_history 결과. 없으면 None.
+    runbook : app.runbook.find() 결과. 있으면 모델이 이 절차를 따른다.
     """
     from flask import g
 
@@ -391,7 +405,7 @@ def diagnose(event, account, region, history=None):
         max_tokens=cfg["AGENT_MAX_TOKENS"],
         system=DIAGNOSE_SYSTEM_PROMPT,
         tools=[aws_read],
-        messages=[{"role": "user", "content": _format_event(event, history)}],
+        messages=[{"role": "user", "content": _format_event(event, history, runbook)}],
         max_iterations=DIAG_MAX_ITERATIONS,
         thinking={"type": "adaptive"},
         output_config={"effort": cfg["AGENT_EFFORT"]},

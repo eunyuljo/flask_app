@@ -79,6 +79,29 @@
         {% endif %}
       {% endif %}
 
+      {# 이 알람에 등록된 대응 절차. 있으면 접어서 보여주고, 없으면 쓰러 가는 링크만. #}
+      {% set rb = runbooks.get(item.record.fingerprint) %}
+      {% if item.record.event_type != 'diagnose' and item.record.event_type != 'console' %}
+        {% if rb %}
+          <details class="rb-fold">
+            <summary>
+              대응 절차: {{ rb.title }}
+              <span class="muted">({% if rb.customer %}{{ rb.customer }} 전용{% else %}공통{% endif %})</span>
+            </summary>
+            <div class="rb-body">{{ rb.body }}</div>
+            <div class="muted">
+              <a href="{{ url_for('runbook.edit', runbook_id=rb.id) }}">절차 고치기</a>
+            </div>
+          </details>
+        {% else %}
+          <div class="muted">
+            <a href="{{ url_for('runbook.new',
+                                fingerprint=item.record.fingerprint,
+                                sample=item.record.message[:120]) }}">이 알람에 절차 쓰기</a>
+          </div>
+        {% endif %}
+      {% endif %}
+
       {# 진단은 실제 알람에만 붙인다. 진단 기록 자체를 또 진단할 이유는 없다. #}
       {% if grouped and item.record.event_type != 'diagnose' and item.record.event_type != 'console' %}
         <form action="{{ url_for('alarm.diagnose') }}" method="post" class="diag-form">

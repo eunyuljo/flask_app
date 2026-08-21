@@ -733,3 +733,37 @@ pre.err { color: var(--err-fg); }
 .event.wo-before_taken { border-left-color: var(--sev-warning); }
 .event.wo-after_taken  { border-left-color: var(--accent); }
 .event.wo-closed       { border-left-color: var(--sev-info); }
+
+/* ------------------------------------------------------------------
+   런북 (알람 대응 절차)
+   ------------------------------------------------------------------ */
+/* 절차 본문은 번호 목록과 명령이 섞인 여러 줄 텍스트다.
+   마크다운으로 렌더링하지 않고 쓴 그대로 보여주되 줄바꿈만 살린다. */
+.rb-body {
+  white-space: pre-wrap;
+  line-height: 1.6;
+  margin-top: 6px;
+  padding: 9px 11px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: .88rem;
+}
+
+/* 알람 카드 안에 접어둔 절차. 있다는 사실 자체가 눈에 띄어야 하므로
+   muted 로 두지 않고 본문 색을 쓴다. */
+.rb-fold { margin-top: 9px; }
+.rb-fold > summary { cursor: pointer; font-size: .88rem; }
+.rb-fold .muted { margin-top: 5px; }
+
+/* 런북 목록의 좌측 띠. 공통과 고객사 전용을 구분한다. */
+.event.rb-common { border-left-color: var(--sev-info); }
+.event.rb-scoped { border-left-color: var(--accent); }
+
+/* 인계 화면은 변경 카드(.chg)를 심각도 표시에 재사용한다.
+   .chg 는 기본 좌측 띠가 회색이고 chg-added/removed/modified 만 색을 덮으므로,
+   심각도용 띠를 따로 걸어준다. 배지 색은 .sev-* 규칙이 이미 처리한다. */
+.chg.sev-critical { border-left-color: var(--sev-critical); }
+.chg.sev-error    { border-left-color: var(--sev-error); }
+.chg.sev-warning  { border-left-color: var(--sev-warning); }
+.chg.sev-info     { border-left-color: var(--sev-info); }
