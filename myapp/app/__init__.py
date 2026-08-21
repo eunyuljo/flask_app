@@ -29,6 +29,8 @@ from app.views.work import work_bp
 from app.views.runbook import runbook_bp
 from app.views.handover import handover_bp
 from app.views.incident import incident_bp
+from app.views.noise import noise_bp
+from app.views.customer import customer_bp
 
 
 def create_app(config_name=None):
@@ -166,6 +168,17 @@ def create_app(config_name=None):
     # 처음으로 한 화면에서 만나는 곳이다. 셋 다 시각이 찍혀 있는데 지금까지
     # 서로를 몰랐다 - 장애 조사는 그 셋을 한 시간축에 세워야 시작된다.
     app.register_blueprint(incident_bp, url_prefix="/incident")
+
+    # noise 블루프린트: url_prefix="/noise"
+    # 시끄러운 알람 순위와 지문별 억제 규칙. 실제 억제 판정은 여기가 아니라
+    # api/normalize_handler.py 에서 한다 - 알람을 보내는 쪽이 Lambda 이므로.
+    app.register_blueprint(noise_bp, url_prefix="/noise")
+
+    # customer 블루프린트: url_prefix="/customer"
+    # 이 앱에 처음 생기는 '고객사 축' 화면이다. 나머지 블루프린트는 전부
+    # 기능 축(알람은 알람끼리, 작업은 작업끼리)이라, 고객사 하나의 상태를
+    # 보려면 화면을 여섯 개 돌아야 했다.
+    app.register_blueprint(customer_bp, url_prefix="/customer")
 
     # ------------------------------------------------------------------
     # CLI 명령 등록

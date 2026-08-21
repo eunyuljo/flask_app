@@ -802,3 +802,20 @@ input[type=datetime-local] {
 .sev-badge-error    { background: var(--orange-bg); color: var(--orange-fg); }
 .sev-badge-warning  { background: var(--warn-bg);   color: var(--warn-fg); }
 .sev-badge-info     { background: var(--surface);   color: var(--text-mute); }
+
+/* ------------------------------------------------------------------
+   알람 노이즈
+   ------------------------------------------------------------------ */
+/* 관리 상태(절차/규칙 유무). 색만으로 구분하지 않고 글자로도 말한다. */
+.nz-state { margin-top: 5px; }
+.nz-ok  { color: var(--ok-fg); }
+.nz-gap { color: var(--err-fg); }
+
+.nz-form { margin-top: 8px; }
+.nz-form label { margin-top: 10px; }
+.nz-form input[type=text] { width: 100%; max-width: 420px; }
+.nz-form button { margin-top: 12px; }
+
+/* 체크박스는 블록으로 떨어뜨리지 않고 글자 옆에 둔다. */
+.nz-check { display: flex; align-items: center; gap: 7px; }
+.nz-check input[type=checkbox] { width: auto; margin: 0; }

@@ -300,3 +300,44 @@ BEGIN
             CHECK (customer_status IN ('none', 'draft', 'sent'));
     END IF;
 END $$;
+
+-- ======================================================================
+-- 알람 억제 (노이즈 줄이기)
+-- ----------------------------------------------------------------------
+-- 지문별로 "이 알람은 N분에 한 번만" 또는 "아예 보내지 마" 를 정한다.
+--
+-- events 스키마 주석에 "억제 규칙에 쓴다" 고 적어두고 구현이 없었다.
+-- 지문이 메시지 전문을 해시하던 시절에는 같은 알람이 매번 다른 지문이라
+-- 억제가 성립하지 않았기 때문이다. 지문을 고치고 나서야 만들 수 있게 됐다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS alarm_rules (
+    fingerprint     TEXT        PRIMARY KEY,
+
+    -- 이 시간 안에 같은 지문으로 이미 알람을 보냈으면 건너뛴다.
+    -- 0 이면 억제하지 않는다(매번 보낸다).
+    window_minutes  INTEGER     NOT NULL DEFAULT 0
+                    CHECK (window_minutes >= 0),
+
+    -- 아예 보내지 않는다. window_minutes 보다 우선한다.
+    muted           BOOLEAN     NOT NULL DEFAULT false,
+
+    -- 왜 이 규칙을 걸었는지. 나중에 푸는 사람이 알아야 한다.
+    note            TEXT        NOT NULL DEFAULT '',
+    sample          TEXT        NOT NULL DEFAULT '',   -- 어떤 알람인지 알아볼 예시
+
+    author          TEXT        NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 마지막으로 알람을 보낸 시각. 억제 판정의 근거다.
+-- alarm_rules 와 분리한 이유: 규칙은 사람이 만들고 오래 남지만,
+-- 이 값은 알람이 나갈 때마다 바뀌는 실행 상태다. 섞어두면
+-- 규칙을 지웠을 때 발송 이력까지 사라진다.
+CREATE TABLE IF NOT EXISTS alarm_state (
+    fingerprint     TEXT        PRIMARY KEY,
+    last_alarmed_at TIMESTAMPTZ NOT NULL,
+    sent_count      BIGINT      NOT NULL DEFAULT 1,
+    suppressed_count BIGINT     NOT NULL DEFAULT 0
+);

@@ -1,0 +1,164 @@
+{# templates/customer.html
+   customer 블루프린트의 index() 가 렌더링하는 고객사 현황.
+   이 앱의 다른 화면은 전부 기능 축이고, 여기만 고객사 축이다. #}
+
+{% extends "base.html" %}
+
+{% block title %}고객사 현황{% endblock %}
+{% block page_title %}고객사 현황{% endblock %}
+
+{% block content %}
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if names %}
+    <p class="muted">
+      고객사:
+      {% for n in names %}
+        {% if n == selected %}<strong>{{ n }}</strong>
+        {% else %}<a href="{{ url_for('customer.index', name=n) }}">{{ n }}</a>{% endif %}
+        {% if not loop.last %}&middot;{% endif %}
+      {% endfor %}
+    </p>
+  {% else %}
+    <p class="muted">
+      등록된 고객사가 없습니다.
+      <code>flask --app run add-account</code> 로 계정을 먼저 등록하세요.
+    </p>
+  {% endif %}
+
+  {% if data %}
+    <div class="kpis">
+      <div class="kpi">
+        <span class="n">{{ data.account_count }}</span>
+        <span class="k">계정{% if data.demo_count %} (데모 {{ data.demo_count }}){% endif %}</span>
+      </div>
+      <div class="kpi"><span class="n">{{ data.works|length }}</span><span class="k">진행 중인 작업</span></div>
+      <div class="kpi"><span class="n">{{ data.incidents|length }}</span><span class="k">장애 기록</span></div>
+      <div class="kpi">
+        <span class="n">{{ data.runbooks.scoped + data.runbooks.common }}</span>
+        <span class="k">런북 (전용 {{ data.runbooks.scoped }})</span>
+      </div>
+    </div>
+
+    {% if data.unsent %}
+      <div class="flash warn-flash">
+        고객 제출본을 아직 내지 않은 장애가 {{ data.unsent }}건 있습니다.
+      </div>
+    {% endif %}
+
+    <section class="panel">
+      <div class="panel-head"><h2>계정</h2><span class="hint">마지막 리소스 수집</span></div>
+      <div class="panel-body">
+        {% if not data.accounts %}
+          <p class="muted">등록된 계정이 없습니다.</p>
+        {% else %}
+          <table class="mini2">
+            {% for a in data.accounts %}
+              <tr>
+                <td class="fname"><code>{{ a.account_id }}</code></td>
+                <td>
+                  {{ a.alias or '(별칭 없음)' }}
+                  {% if a.is_demo %}<span class="badge">데모</span>{% endif %}
+                  {% if not a.enabled %}<span class="badge">비활성</span>{% endif %}
+                  <div class="muted">
+                    {{ a.regions|join(', ') }}
+                    &middot;
+                    {% if a.last_collected %}
+                      수집 {{ a.last_collected.strftime('%Y-%m-%d %H:%M') }}
+                    {% else %}
+                      <span class="nz-gap">수집된 적 없음</span>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </table>
+          <p class="muted">
+            수집이 오래됐으면 리소스 변경과 사후 보고서의 근거도 그만큼 낡습니다.
+          </p>
+        {% endif %}
+      </div>
+    </section>
+
+    <div class="grid two">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>진행 중인 작업</h2><span class="hint">{{ data.works|length }}건</span>
+        </div>
+        <div class="panel-body">
+          {% if not data.works %}
+            <p class="muted">확정되지 않은 작업이 없습니다.</p>
+          {% else %}
+            <table class="mini2">
+              {% for w in data.works %}
+                <tr>
+                  <td class="fname">#{{ w.id }}</td>
+                  <td>
+                    <a href="{{ url_for('work.detail', work_id=w.id) }}">{{ w.title }}</a>
+                    <div class="muted">
+                      {% if w.ticket %}{{ w.ticket }} &middot; {% endif %}
+                      {{ w.account_id }} &middot; {{ w.operator }}
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </table>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>장애</h2><span class="hint">최근 {{ data.incidents|length }}건</span>
+        </div>
+        <div class="panel-body">
+          {% if not data.incidents %}
+            <p class="muted">기록된 장애가 없습니다.</p>
+          {% else %}
+            <table class="mini2">
+              {% for i in data.incidents %}
+                <tr>
+                  <td class="fname">{{ i.started_at.strftime('%m-%d') }}</td>
+                  <td>
+                    <a href="{{ url_for('incident.detail', incident_id=i.id) }}">{{ i.title }}</a>
+                    <div class="muted">
+                      {{ i.severity }} &middot;
+                      {% if i.customer_status == 'sent' %}
+                        <span class="nz-ok">고객 제출됨</span>
+                      {% else %}
+                        <span class="nz-gap">고객 제출본 미완</span>
+                      {% endif %}
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </table>
+          {% endif %}
+        </div>
+      </section>
+    </div>
+
+    {# 낼 수 없는 것을 분명히 적는다. 임의로 전체 수치를 고객사 것처럼
+       보여주면 그게 제일 나쁘다. #}
+    <section class="panel">
+      <div class="panel-head"><h2>알람</h2></div>
+      <div class="panel-body">
+        <p class="muted">
+          <strong>고객사별 알람 건수는 낼 수 없습니다.</strong>
+          <code>events</code> 에 계정이나 고객사 정보가 없기 때문입니다 &mdash;
+          <code>source</code> 가 <code>pay-api</code> 같은 서비스 이름이라
+          고객사로 묶을 수단이 없습니다.
+        </p>
+        <p class="muted">
+          이벤트를 보내는 쪽에서 계정 번호를 함께 넣어주면
+          (정규화가 표준 필드 외의 값을 <code>meta</code> 에 보존합니다)
+          그때부터 고객사별 집계가 가능해집니다. 전체 기준으로는
+          <a href="{{ url_for('noise.index') }}">알람 노이즈</a> 와
+          <a href="{{ url_for('dashboard.index') }}">대시보드</a> 에서 볼 수 있습니다.
+        </p>
+      </div>
+    </section>
+  {% endif %}
+{% endblock %}

@@ -25,15 +25,18 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 13. [런북](#런북)
 14. [당직 인계](#당직-인계)
 15. [장애 사후 보고서 (RCA)](#장애-사후-보고서-rca)
-16. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
-17. [환경변수 전체 목록](#환경변수-전체-목록)
-18. [알려진 한계](#알려진-한계)
+16. [알람 노이즈](#알람-노이즈)
+17. [고객사 현황](#고객사-현황)
+18. [테스트](#테스트)
+19. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
+20. [환경변수 전체 목록](#환경변수-전체-목록)
+21. [알려진 한계](#알려진-한계)
 
 ---
 
 ## 무엇을 하는 앱인가
 
-열네 개의 블루프린트로 이루어져 있습니다.
+열여섯 개의 블루프린트로 이루어져 있습니다.
 
 | 블루프린트 | url_prefix | 하는 일 |
 |---|---|---|
@@ -51,6 +54,8 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 | `runbook` | `/runbook` | 알람 종류(지문)별 대응 절차 |
 | `handover` | `/handover` | 당직 인계 (지난 근무 구간 요약 + 미해결 작업) |
 | `incident` | `/incident` | 장애 사후 보고서 (타임라인 자동 조립 + RCA 문서) |
+| `noise` | `/noise` | 시끄러운 알람 순위와 지문별 억제 규칙 |
+| `customer` | `/customer` | 고객사 하나의 현황 (유일한 '고객사 축' 화면) |
 
 핵심은 **각 기능이 서로의 코드를 건드리지 않는다**는 점입니다.
 `agent`를 추가할 때 `main`과 `auth`는 한 줄도 수정하지 않았습니다.
@@ -67,7 +72,7 @@ myapp/
 ├── docker-compose.yml          로컬 개발용 PostgreSQL
 ├── db/
 │   └── schema.sql              events / resources / accounts / work_orders
-│                               / runbooks / incidents DDL
+│                               / runbooks / incidents / alarm_rules DDL
 │
 ├── app/                        ─── Flask 애플리케이션 ───
 │   ├── __init__.py             create_app() 팩토리 + 블루프린트 등록
@@ -85,6 +90,8 @@ myapp/
 │   ├── handover.py             당직 인계 집계 + Markdown
 │   ├── incident.py             장애 기록 + 타임라인 조립
 │   ├── rca.py                  사후 보고서 문서 생성
+│   ├── noise.py                알람 노이즈 집계 + 억제 규칙
+│   ├── customer.py             고객사 현황 집계
 │   ├── report.py               기간 리포트 집계 / Markdown / AI 요약
 │   ├── report_pptx.py          리포트를 PowerPoint 슬라이드로
 │   ├── accounts.py             고객사 AWS 계정 목록
@@ -95,17 +102,23 @@ myapp/
 │   │   ├── main.py  auth.py  agent.py  alarm.py  admin.py
 │   │       dashboard.py  explore.py  resources.py  report.py  console.py
 │   │       work.py  runbook.py  handover.py  incident.py
+│   │       noise.py  customer.py
 │   ├── templates/              Jinja 템플릿
 │   │   └── base.html  index.html  login.html  agent.html  alarm.html
 │   │       admin.html  dashboard.html  explore.html  resources.html
 │   │       report.html  console.html  work.html  work_detail.html
 │   │       runbook.html  runbook_edit.html  handover.html
-│   │       incident.html  incident_detail.html
+│   │       incident.html  incident_detail.html  noise.html  customer.html
 │   └── static/                 정적 파일 (Flask 가 /static/... 으로 자동 공개)
 │       └── css/style.css       전체 스타일. base.html 에서 link 로 연결
 │
-└── api/                        ─── AWS Lambda 함수 ───
-    └── normalize_handler.py    이벤트 정규화 → DB 적재 → 알람 발송
+├── api/                        ─── AWS Lambda 함수 ───
+│   └── normalize_handler.py    이벤트 정규화 → DB 적재 → 알람 발송(+억제)
+│
+└── tests/                      pytest. DB 없이 도는 것이 대부분
+    └── test_normalize.py  test_awscli.py  test_query.py
+        test_resources.py  test_app.py  test_suppression.py
+        test_noise_customer.py
 ```
 
 **의존 방향은 `app` → `api` 단방향입니다.** `api/`는 Flask를 전혀 import하지 않으므로
@@ -1216,6 +1229,135 @@ pay-api 만 : 알람 14건 /  5종  타임라인 19줄   ← 장애의 이야기
 
 ---
 
+## 알람 노이즈
+
+시끄러운 알람을 지문으로 묶어 순위를 냅니다. `/noise/` 입니다.
+
+**건수만으로는 부족합니다.** 500번 났어도 절차와 규칙이 있으면 관리되는
+것이고, 20번 났는데 아무것도 없으면 그게 문제입니다. 그래서 같은 줄에
+**런북 유무**와 **억제 규칙 유무**를 붙여서 봅니다.
+
+```
+11건  CPU usage 94.5% on i-0abc123
+      critical · web-01 · 지문 99be11fd84e1f21d
+      절차 있음  |  억제 규칙 없음
+```
+
+### 억제 규칙
+
+지문별로 두 가지를 정합니다.
+
+| | 뜻 |
+|---|---|
+| `window_minutes` | 이 시간 안에 같은 지문으로 이미 보냈으면 건너뜀 |
+| `muted` | 아예 보내지 않음 (window 보다 우선) |
+
+**둘 다 비어 있는 규칙은 만들지 못합니다.** 목록만 늘리고 "규칙이 걸려
+있다"는 착각을 주기 때문입니다.
+
+`note` 는 선택이 아니라 사실상 필수입니다 — 나중에 이 규칙을 푸는 사람이
+왜 걸었는지 알아야 합니다.
+
+### 판정은 Lambda 에서 합니다
+
+```
+app/noise.py                    사람이 보고 규칙을 정하는 쪽
+api/normalize_handler.py        실제 억제 판정 (알람을 보내는 쪽)
+```
+
+알람은 Lambda 가 보내므로 판정도 거기서 일어나야 합니다. 웹에서 판정하면
+Lambda 를 직접 호출하는 경로에서는 억제가 걸리지 않습니다.
+
+**DATABASE_URL 이 없으면 판정하지 않고 통과시킵니다.** 억제를 못 해서 알람이
+더 가는 것보다, 판정에 실패했다고 알람을 막는 쪽이 훨씬 위험합니다.
+
+### 상태 테이블을 규칙과 분리했습니다
+
+```
+alarm_rules   사람이 만든 규칙. 오래 남는다
+alarm_state   마지막 발송 시각과 횟수. 알람마다 바뀌는 실행 상태
+```
+
+섞어두면 규칙을 지웠을 때 발송 이력까지 사라집니다.
+
+---
+
+## 고객사 현황
+
+`/customer/` 입니다. **이 앱에서 유일한 '고객사 축' 화면입니다.**
+
+나머지 블루프린트는 전부 기능 축입니다 — 알람은 알람끼리, 작업은 작업끼리.
+그런데 MSP 는 고객사 단위로 일하므로 "A커머스 지금 어떤 상태야?"에 답하려면
+화면을 여섯 개 돌아야 했습니다.
+
+한 장에 모읍니다.
+
+- **계정** — 데모/실계정, 리전, **마지막 리소스 수집 시각**
+- **진행 중인 작업** — 확정되지 않은 작업 기록
+- **장애** — 최근 기록과 고객 제출본 미완 경고
+- **런북** — 이 고객사 전용 + 공통
+
+마지막 수집 시각을 계정 옆에 붙인 이유가 있습니다. **그게 오래됐으면
+리소스 변경도 사후 보고서의 근거도 전부 그만큼 낡은 상태**라는 뜻입니다.
+
+### 낼 수 없는 것은 낼 수 없다고 적습니다
+
+**고객사별 알람 건수는 나오지 않습니다.** `events` 에 계정이나 고객사
+정보가 없기 때문입니다 — `source` 가 `pay-api` 같은 서비스 이름이라 고객사로
+묶을 수단이 없습니다. RCA 타임라인에서 출처를 사람이 지정해야 했던 것과
+같은 원인입니다.
+
+화면에 그 사실과 이유를 적어둡니다. 임의로 전체 수치를 고객사 것처럼
+보여주는 것이 제일 나쁩니다.
+
+고치려면 이벤트를 보내는 쪽에서 계정 번호를 함께 넣으면 됩니다. 정규화가
+표준 필드 외의 값을 `meta` 에 보존하므로 값은 이미 살아남습니다.
+
+---
+
+## 테스트
+
+```bash
+python -m pytest -q                # 전부
+python -m pytest -q -m "not db"    # DB 없이 도는 것만
+```
+
+DB 가 없으면 DB 가 필요한 테스트는 **실패가 아니라 건너뜁니다.** 이 앱은
+DB 없이도 뜨는 것을 전제로 하는데, DB 없는 개발자가 매번 빨간 화면을 볼
+이유가 없습니다.
+
+```
+157 passed                       (PostgreSQL 있을 때)
+140 passed, 17 skipped           (없을 때)
+```
+
+### 무엇을 덮었나
+
+실제로 버그가 났던 자리를 우선으로 골랐습니다.
+
+| 파일 | 덮는 것 |
+|---|---|
+| `test_normalize.py` | 필드 별칭, 심각도 매핑, **지문 묶임** |
+| `test_awscli.py` | 허용 목록 — 쓰기 명령·다른 프로그램·셸 문법·금지 옵션 |
+| `test_query.py` | 질의어 파싱과 **SQL 인젝션 방어** |
+| `test_resources.py` | 리소스 정규화·다이제스트·필드 비교 |
+| `test_app.py` | 팩토리, 인증 리다이렉트, **모든 GET 라우트** |
+| `test_suppression.py` | 억제 판정 (DB 없을 때 통과시키는 것 포함) |
+| `test_noise_customer.py` | 노이즈 집계, 심각도 정렬, 고객사 격리 |
+
+`test_app.py` 의 라우트 훑기는 `testing` 설정(= `sqlite://`)으로 돌기 때문에
+**DB 가 전혀 없는 상태에서 모든 화면이 200 을 내는지**까지 함께 확인합니다.
+이 프로젝트에서 500 에러가 두 번 났는데(pptx 표 좌표, RCA 커서 덮어쓰기)
+둘 다 이 테스트 하나면 즉시 잡혔을 것들입니다.
+
+### 표시가 붙은 테스트
+
+```python
+@pytest.mark.db      # PostgreSQL 필요. 없으면 건너뜀
+```
+
+---
+
 ## Lambda 이벤트 정규화
 
 ### 왜 정규화가 필요한가
@@ -1445,4 +1587,4 @@ python -c "import secrets; print(secrets.token_hex(32))"
 - **작업 기록의 실제 AWS 수집 경로도 미검증**입니다. 데모 계정(합성 리소스)으로
   상태 전이·차이·증적 문서를 검증했습니다. 실제 계정은 AssumeRole 로 받은
   자격증명으로 boto3 를 부르는데, 이 경로가 아직 한 번도 실행되지 않았습니다.
-- 자동화된 테스트 코드가 없습니다.
+

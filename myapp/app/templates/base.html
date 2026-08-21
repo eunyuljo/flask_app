@@ -47,11 +47,17 @@
       {# session 은 템플릿 안에서 별도 전달 없이 바로 쓸 수 있다(Flask 가 기본 제공). #}
       {% if session.get('username') %}
         <div class="side-label">관측</div>
+        <a href="{{ url_for('customer.index') }}" class="{% if ep.startswith('customer.') %}on{% endif %}">
+          <span class="ico">◉</span>고객사 현황
+        </a>
         <a href="{{ url_for('dashboard.index') }}" class="{% if ep.startswith('dashboard.') %}on{% endif %}">
           <span class="ico">▤</span>대시보드
         </a>
         <a href="{{ url_for('alarm.index') }}" class="{% if ep.startswith('alarm.') %}on{% endif %}">
           <span class="ico">◈</span>이벤트
+        </a>
+        <a href="{{ url_for('noise.index') }}" class="{% if ep.startswith('noise.') %}on{% endif %}">
+          <span class="ico">≋</span>알람 노이즈
         </a>
         <a href="{{ url_for('explore.index') }}" class="{% if ep.startswith('explore.') %}on{% endif %}">
           <span class="ico">⌕</span>탐색

@@ -13,3 +13,6 @@ psycopg[binary]==3.2.3
 
 # 리포트를 PowerPoint 로 내보낼 때 사용.
 python-pptx==1.0.2
+
+# 테스트 (python -m pytest). 앱 실행에는 필요 없다.
+pytest==9.1.1

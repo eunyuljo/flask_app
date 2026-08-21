@@ -1,0 +1,121 @@
+{# templates/noise.html
+   noise 블루프린트의 index() 가 렌더링하는 알람 노이즈 화면.
+   건수만 보여주지 않고 '관리되고 있는가'(런북·규칙)를 같은 줄에 붙인다. #}
+
+{% extends "base.html" %}
+
+{% block title %}알람 노이즈{% endblock %}
+{% block page_title %}알람 노이즈{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    시끄러운 알람을 지문으로 묶어 순위를 냅니다.
+    <strong>건수만으로는 부족합니다</strong> &mdash; 500번 났어도 절차와 규칙이 있으면
+    관리되는 것이고, 20번 났는데 아무것도 없으면 그게 문제입니다.
+  </p>
+
+  <p class="muted">
+    구간:
+    {% for h in choices %}
+      {% if h == hours %}<strong>{{ h }}시간</strong>
+      {% else %}<a href="{{ url_for('noise.index', hours=h) }}">{{ h }}시간</a>{% endif %}
+      {% if not loop.last %}&middot;{% endif %}
+    {% endfor %}
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if total %}
+    <div class="kpis">
+      <div class="kpi"><span class="n">{{ total.total }}</span><span class="k">전체 이벤트</span></div>
+      <div class="kpi"><span class="n">{{ total.kinds }}</span><span class="k">알람 종류</span></div>
+      <div class="kpi">
+        <span class="n">{{ total.top5_pct }}%</span>
+        <span class="k">상위 5종이 차지</span>
+      </div>
+      <div class="kpi"><span class="n">{{ total.rules }}</span><span class="k">억제 규칙 (muted {{ total.muted }})</span></div>
+    </div>
+
+    <p class="muted">
+      상위 5종이 전체의 {{ total.top5_pct }}%입니다.
+      {% if total.top5_pct >= 50 %}
+        <strong>몇 개만 잡아도 노이즈가 절반 넘게 줄어듭니다.</strong>
+      {% endif %}
+      {% if total.suppressed %}
+        지금까지 규칙으로 걸러낸 알람 {{ total.suppressed }}건.
+      {% endif %}
+    </p>
+  {% endif %}
+
+  <hr>
+  <h2>시끄러운 알람 <span class="muted">({{ items|length }}종)</span></h2>
+
+  {% if not items %}
+    <p class="muted">이 구간에 이벤트가 없습니다.</p>
+  {% endif %}
+
+  {% for i in items %}
+    <div class="event sev-{{ i.severity }}">
+      <div class="event-head">
+        <span class="badge">{{ i.c }}건</span>
+        <strong>{{ i.sample }}</strong>
+      </div>
+      <div class="muted">
+        {{ i.severity }} &middot; {{ i.source }}
+        &middot; {{ i.first_seen.strftime('%m-%d %H:%M') }} ~ {{ i.last_seen.strftime('%m-%d %H:%M') }}
+        &middot; 지문 <code>{{ i.fingerprint }}</code>
+      </div>
+
+      {# 관리 상태를 한 줄로. 색이 아니라 글자로 표시한다. #}
+      <div class="muted nz-state">
+        {% if i.has_runbook %}
+          <span class="nz-ok">절차 있음</span>
+        {% else %}
+          <span class="nz-gap">절차 없음</span>
+          &mdash; <a href="{{ url_for('runbook.new', fingerprint=i.fingerprint,
+                                      sample=i.sample[:120]) }}">쓰기</a>
+        {% endif %}
+        &nbsp;|&nbsp;
+        {% if i.muted %}
+          <span class="nz-gap">muted &mdash; 알람 발송 안 함</span>
+        {% elif i.window_minutes %}
+          <span class="nz-ok">{{ i.window_minutes }}분에 한 번</span>
+        {% else %}
+          <span class="nz-gap">억제 규칙 없음</span>
+        {% endif %}
+        {% if i.suppressed_count %}&nbsp;|&nbsp; 걸러냄 {{ i.suppressed_count }}건{% endif %}
+        {% if i.note %}&nbsp;|&nbsp; {{ i.note }}{% endif %}
+      </div>
+
+      <details class="rb-fold">
+        <summary>억제 규칙 {% if i.window_minutes or i.muted %}고치기{% else %}걸기{% endif %}</summary>
+        <form action="{{ url_for('noise.rule') }}" method="post" class="nz-form">
+          <input type="hidden" name="fingerprint" value="{{ i.fingerprint }}">
+          <input type="hidden" name="sample" value="{{ i.sample[:120] }}">
+          <label>
+            같은 알람은 몇 분에 한 번만 <span class="muted">(0 = 억제 안 함)</span>
+            <input type="text" name="window_minutes" value="{{ i.window_minutes or 0 }}">
+          </label>
+          <label class="nz-check">
+            <input type="checkbox" name="muted" {% if i.muted %}checked{% endif %}>
+            아예 보내지 않음 (muted)
+          </label>
+          <label>
+            이유 <span class="muted">(나중에 푸는 사람이 알아야 합니다)</span>
+            <input type="text" name="note" value="{{ i.note or '' }}"
+                   placeholder="예) 배치 시간대 정상 동작. 2026-09 개선 예정">
+          </label>
+          <button type="submit">저장</button>
+        </form>
+        {% if i.window_minutes or i.muted %}
+          <form action="{{ url_for('noise.delete_rule') }}" method="post" class="danger">
+            <input type="hidden" name="fingerprint" value="{{ i.fingerprint }}">
+            <button type="submit">규칙 지우기</button>
+          </form>
+        {% endif %}
+      </details>
+    </div>
+  {% endfor %}
+{% endblock %}

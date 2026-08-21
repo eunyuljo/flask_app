@@ -233,10 +233,108 @@ def store_event(record):
     return {"stored": True}
 
 
+def check_suppression(fingerprint):
+    """이 지문의 알람을 지금 보내도 되는지 본다.
+
+    돌려주는 값: (보내도 되는가, 이유)
+
+    억제는 지문이 제 역할을 해야만 성립한다. 메시지 전문을 해시하던 시절에는
+    같은 알람이 매번 다른 지문이 되어 이 판정이 항상 통과했다.
+
+    DATABASE_URL 이 없으면 판정하지 않고 통과시킨다. 억제 못 해서 알람이
+    더 가는 것보다, 판정에 실패했다고 알람을 막는 쪽이 훨씬 위험하다.
+    """
+    database_url = os.environ.get("DATABASE_URL", "")
+    if not database_url:
+        return True, ""
+
+    import psycopg
+
+    with psycopg.connect(database_url) as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.alarm_rules')")
+        if cur.fetchone()[0] is None:
+            return True, ""
+
+        cur.execute(
+            "SELECT window_minutes, muted FROM alarm_rules WHERE fingerprint = %s",
+            (fingerprint,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return True, ""
+
+        window_minutes, muted = row
+        if muted:
+            _count_suppressed(cur, fingerprint)
+            return False, "이 알람은 muted 로 설정되어 있습니다"
+
+        if window_minutes <= 0:
+            return True, ""
+
+        # 마지막 발송이 창 안에 있으면 건너뛴다.
+        cur.execute(
+            """
+            SELECT last_alarmed_at
+              FROM alarm_state
+             WHERE fingerprint = %s
+               AND last_alarmed_at > now() - make_interval(mins => %s)
+            """,
+            (fingerprint, window_minutes),
+        )
+        if cur.fetchone() is not None:
+            _count_suppressed(cur, fingerprint)
+            return False, f"{window_minutes}분 안에 같은 알람을 이미 보냈습니다"
+
+    return True, ""
+
+
+def _count_suppressed(cur, fingerprint):
+    """억제된 횟수를 센다. 규칙이 실제로 얼마나 줄여줬는지 나중에 보기 위함이다."""
+    cur.execute(
+        """
+        INSERT INTO alarm_state (fingerprint, last_alarmed_at, sent_count, suppressed_count)
+        VALUES (%s, now(), 0, 1)
+        ON CONFLICT (fingerprint) DO UPDATE
+            SET suppressed_count = alarm_state.suppressed_count + 1
+        """,
+        (fingerprint,),
+    )
+
+
+def _mark_sent(fingerprint):
+    """발송 시각을 기록한다. 다음 억제 판정의 기준이 된다."""
+    database_url = os.environ.get("DATABASE_URL", "")
+    if not database_url:
+        return
+
+    import psycopg
+
+    with psycopg.connect(database_url) as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.alarm_state')")
+        if cur.fetchone()[0] is None:
+            return
+        cur.execute(
+            """
+            INSERT INTO alarm_state (fingerprint, last_alarmed_at, sent_count)
+            VALUES (%s, now(), 1)
+            ON CONFLICT (fingerprint) DO UPDATE
+                SET last_alarmed_at = now(),
+                    sent_count = alarm_state.sent_count + 1
+            """,
+            (fingerprint,),
+        )
+
+
 def send_alarm(record):
     """심각도가 높으면 SNS 로 알람을 발송한다. 토픽이 없으면 건너뛴다."""
     if record["severity"] not in ALARM_SEVERITIES:
         return {"alarmed": False, "reason": f"심각도 {record['severity']} 는 알람 대상 아님"}
+
+    # 억제 판정은 토픽 확인보다 먼저 한다. 토픽이 없어 어차피 안 나가는
+    # 상황에서도 '억제됐다' 는 사실은 세어둬야 규칙 효과를 볼 수 있다.
+    allowed, reason = check_suppression(record["fingerprint"])
+    if not allowed:
+        return {"alarmed": False, "suppressed": True, "reason": reason}
 
     topic_arn = os.environ.get("ALARM_SNS_TOPIC_ARN", "")
     if not topic_arn:
@@ -249,6 +347,7 @@ def send_alarm(record):
         Subject=f"[{record['severity'].upper()}] {record['source']} - {record['event_type']}"[:100],
         Message=json.dumps(record, ensure_ascii=False, indent=2),
     )
+    _mark_sent(record["fingerprint"])
     return {"alarmed": True, "topic": topic_arn}
 
 
