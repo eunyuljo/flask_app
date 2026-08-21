@@ -114,7 +114,10 @@
     {% set gap = 3 %}
     {% set bw = ((W - gap * (tl|length - 1)) / (tl|length)) %}
 
-    <svg class="chart" viewBox="0 0 {{ W }} {{ H + 22 }}"
+    {# viewBox 를 좌우로 pad 만큼 넓힌다. 막대 수가 많아지면 첫/마지막 눈금 글자가
+       중앙 정렬 때문에 그림 밖으로 삐져나가 잘리기 때문이다. #}
+    {% set pad = 14 %}
+    <svg class="chart" viewBox="{{ -pad }} 0 {{ W + pad * 2 }} {{ H + 22 }}"
          role="img" aria-label="시간대별 이벤트 건수">
       {# 기준선. 축은 눈에 띄면 안 되므로 옅게. #}
       <line x1="0" y1="{{ H }}" x2="{{ W }}" y2="{{ H }}" class="axis"/>
