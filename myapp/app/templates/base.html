@@ -56,6 +56,9 @@
         <a href="{{ url_for('explore.index') }}" class="{% if ep.startswith('explore.') %}on{% endif %}">
           <span class="ico">⌕</span>탐색
         </a>
+        <a href="{{ url_for('resources.index') }}" class="{% if ep.startswith('resources.') %}on{% endif %}">
+          <span class="ico">▩</span>리소스 변경
+        </a>
 
         <div class="side-label">도구</div>
         <a href="{{ url_for('agent.index') }}" class="{% if ep.startswith('agent.') %}on{% endif %}">

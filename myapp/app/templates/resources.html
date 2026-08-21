@@ -1,0 +1,155 @@
+{# app/templates/resources.html
+   두 스냅샷 사이의 인프라 변경을 보여준다.
+   변경된 것은 '이전 값 -> 현재 값' 을 나란히 놓는데, 이전 값이 곧 되돌릴 목표값이다. #}
+
+{% extends "base.html" %}
+
+{% block title %}리소스 변경{% endblock %}
+{% block page_title %}리소스 변경{% endblock %}
+
+{% block topbar %}
+  {% if result %}
+    <span class="muted">
+      #{{ result.base.snapshot_id }} → #{{ result.target.snapshot_id }}
+    </span>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+
+  {% if error %}
+    <div class="flash error" style="white-space:pre-wrap">{{ error }}</div>
+    <p class="muted">
+      스냅샷을 만들려면 <code>flask --app run collect-resources --demo</code> 를
+      두 번 실행하세요.
+    </p>
+
+  {% else %}
+
+    <div class="kpis">
+      <div class="kpi">
+        <span class="n">{{ result.summary.added }}</span><span class="k">생성</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ result.summary.modified }}</span><span class="k">변경</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ result.summary.removed }}</span><span class="k">삭제</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ result.target_count }}</span><span class="k">현재 리소스</span>
+      </div>
+    </div>
+
+    <div class="grid two">
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>변경 내역</h2>
+          <span class="hint">{{ result.changes | length }}건</span>
+        </div>
+        <div class="panel-body">
+          {% if not result.changes %}
+            <p class="muted">두 스냅샷 사이에 변경이 없습니다.</p>
+          {% else %}
+            {% for c in result.changes %}
+              <div class="chg chg-{{ c.change }}">
+                <div class="chg-head">
+                  {# 색만으로 구분하지 않도록 종류를 글자로도 표시한다. #}
+                  <span class="badge">
+                    {% if c.change == 'added' %}생성
+                    {% elif c.change == 'removed' %}삭제
+                    {% else %}변경{% endif %}
+                  </span>
+                  <code>{{ c.resource_id }}</code>
+                  <span class="muted">{{ c.resource_type }}</span>
+                </div>
+
+                {% if c.change == 'modified' %}
+                  <table class="fields">
+                    {% for f in c.fields %}
+                      <tr>
+                        <td class="fname">{{ f.field }}</td>
+                        <td class="before">{{ f.before | tojson(indent=None) }}</td>
+                        <td class="arrow">→</td>
+                        <td class="after">{{ f.after | tojson(indent=None) }}</td>
+                      </tr>
+                    {% endfor %}
+                  </table>
+                {% elif c.change == 'removed' %}
+                  <p class="muted small">
+                    삭제 전 상태가 스냅샷에 남아 있습니다. 다만 같은 리소스로는
+                    되살릴 수 없고, 새로 만들어야 합니다.
+                  </p>
+                {% endif %}
+              </div>
+            {% endfor %}
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>스냅샷</h2><span class="hint">클릭해 비교 대상 변경</span>
+        </div>
+        <div class="panel-body">
+          <table class="rows">
+            <tr><th>#</th><th>수집 시각</th><th>리소스</th><th>상태</th></tr>
+            {% for s in snapshots %}
+              <tr>
+                <td>
+                  <a href="{{ url_for('resources.index',
+                                      base=s.snapshot_id,
+                                      target=result.target.snapshot_id) }}">
+                    #{{ s.snapshot_id }}</a>
+                </td>
+                <td class="nowrap">{{ s.collected_at.strftime('%m-%d %H:%M:%S') }}</td>
+                <td>{{ s.resource_count }}</td>
+                <td>
+                  {% if s.complete %}
+                    <span class="muted">{{ s.source }}</span>
+                  {% else %}
+                    {# 미완료 스냅샷은 비교에서 제외된다. 수집 실패를 삭제로 오독하지 않기 위함. #}
+                    <span class="badge sev-warning">미완료</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </table>
+          <p class="muted small">
+            비교 기준: #{{ result.base.snapshot_id }}
+            ({{ result.base.collected_at.strftime('%m-%d %H:%M:%S') if result.base.collected_at }})
+            → #{{ result.target.snapshot_id }}
+            ({{ result.target.collected_at.strftime('%m-%d %H:%M:%S') if result.target.collected_at }})
+          </p>
+        </div>
+      </section>
+
+    </div>
+
+    <section class="panel" style="margin-top:14px">
+      <div class="panel-head"><h2>이 화면으로 할 수 있는 것 / 없는 것</h2></div>
+      <div class="panel-body">
+        <table class="mini2">
+          <tr>
+            <td><b>설정 변경</b><br><span class="muted">SG 규칙, S3 공개 설정, IAM 정책, 태그</span></td>
+            <td class="ok">이전 값이 남아 있어 <b>되돌릴 수 있습니다</b></td>
+          </tr>
+          <tr>
+            <td><b>수명주기</b><br><span class="muted">종료된 EC2, 삭제된 RDS</span></td>
+            <td class="no">같은 리소스로는 <b>못 되살립니다</b>. 새로 만들어야 합니다</td>
+          </tr>
+          <tr>
+            <td><b>소실성</b><br><span class="muted">릴리스된 EIP, 삭제된 로그</span></td>
+            <td class="no">복구 <b>불가</b></td>
+          </tr>
+        </table>
+        <p class="muted small">
+          스냅샷은 "무엇이 어떻게 바뀌었나" 에 대한 기록이자 되돌릴 목표값입니다.
+          실제로 되돌리는 것은 별도의 쓰기 API 호출이며, 이 화면은 그 일을 하지 않습니다.
+        </p>
+      </div>
+    </section>
+
+  {% endif %}
+{% endblock %}

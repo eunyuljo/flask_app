@@ -22,6 +22,7 @@ from app.views.alarm import alarm_bp
 from app.views.admin import admin_bp
 from app.views.dashboard import dashboard_bp
 from app.views.explore import explore_bp
+from app.views.resources import resources_bp
 
 
 def create_app(config_name=None):
@@ -122,6 +123,11 @@ def create_app(config_name=None):
     # explore 블루프린트: url_prefix="/explore"
     # 질의어로 이벤트를 뒤져보는 화면. 대시보드(정해진 지표)와 목적이 달라서 따로 뒀다.
     app.register_blueprint(explore_bp, url_prefix="/explore")
+
+    # resources 블루프린트: url_prefix="/resources"
+    # 인프라 상태 스냅샷 비교. 이벤트(무슨 일이 있었나)와 달리
+    # 리소스는 상태(지금 어떻게 되어 있나)라 성격이 달라 따로 뒀다.
+    app.register_blueprint(resources_bp, url_prefix="/resources")
 
     # ------------------------------------------------------------------
     # CLI 명령 등록

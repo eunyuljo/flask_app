@@ -17,15 +17,16 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 5. [블루프린트 구조 이해하기](#블루프린트-구조-이해하기)
 6. [AI 에이전트](#ai-에이전트)
 7. [이벤트 질의어](#이벤트-질의어)
-8. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
-9. [환경변수 전체 목록](#환경변수-전체-목록)
-10. [알려진 한계](#알려진-한계)
+8. [리소스 변경 추적](#리소스-변경-추적)
+9. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
+10. [환경변수 전체 목록](#환경변수-전체-목록)
+11. [알려진 한계](#알려진-한계)
 
 ---
 
 ## 무엇을 하는 앱인가
 
-일곱 개의 블루프린트로 이루어져 있습니다.
+여덟 개의 블루프린트로 이루어져 있습니다.
 
 | 블루프린트 | url_prefix | 하는 일 |
 |---|---|---|
@@ -36,6 +37,7 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 | `admin` | `/admin` | 설정·라우트 확인 (관리자 계정만 접근) |
 | `dashboard` | `/dashboard` | PostgreSQL 집계 지표와 차트 |
 | `explore` | `/explore` | 질의어로 이벤트 조회 (PromQL 스타일) |
+| `resources` | `/resources` | AWS 리소스 스냅샷 비교 (무엇이 바뀌었나) |
 
 핵심은 **각 기능이 서로의 코드를 건드리지 않는다**는 점입니다.
 `agent`를 추가할 때 `main`과 `auth`는 한 줄도 수정하지 않았습니다.
@@ -61,12 +63,14 @@ myapp/
 │   ├── event_store.py          이벤트 임시 보관소 (메모리)
 │   ├── stats.py                대시보드용 집계 질의 (SQL)
 │   ├── query.py                이벤트 질의어 파서 + SQL 컴파일러
+│   ├── resources.py            리소스 스냅샷 저장 / 정규화 / diff
 │   ├── lambda_client.py        Lambda 호출 계층 (local / aws 전환)
 │   ├── views/                  블루프린트별 라우트
-│   │   ├── main.py  auth.py  agent.py  alarm.py  admin.py  dashboard.py  explore.py
+│   │   ├── main.py  auth.py  agent.py  alarm.py  admin.py
+│   │       dashboard.py  explore.py  resources.py
 │   ├── templates/              Jinja 템플릿
 │   │   └── base.html  index.html  login.html  agent.html  alarm.html
-│   │       admin.html  dashboard.html  explore.html
+│   │       admin.html  dashboard.html  explore.html  resources.html
 │   └── static/                 정적 파일 (Flask 가 /static/... 으로 자동 공개)
 │       └── css/style.css       전체 스타일. base.html 에서 link 로 연결
 │
@@ -538,6 +542,7 @@ AWS_REGION=ap-northeast-2
 | `/alarm/api/events` | POST | **불필요** | JSON 수집 엔드포인트 |
 | `/dashboard/` | GET | 필요 | 지표 대시보드 (`?hours=6\|24\|72`) |
 | `/explore/` | GET | 필요 | 질의어로 이벤트 조회 (`?q=`, `?hours=`) |
+| `/resources/` | GET | 필요 | 리소스 스냅샷 비교 (`?base=`, `?target=`) |
 | `/admin/` | GET | 관리자 | 설정·라우트 확인 |
 | `/admin/events/clear` | POST | 관리자 | 이벤트 비우기 |
 
@@ -666,6 +671,53 @@ TOOLS = [get_current_time, list_app_routes, count_events]
 
 **docstring이 곧 "언제 이 도구를 쓸지"에 대한 모델의 판단 근거입니다.**
 성의 없이 쓰면 도구를 안 부르거나 엉뚱하게 부릅니다.
+
+---
+
+## 리소스 변경 추적
+
+인프라 상태를 주기적으로 스냅샷으로 찍고, 스냅샷끼리 비교해 **무엇이 생기고 사라지고
+바뀌었는지**를 보여줍니다. AWS Config 가 하는 일의 축소판입니다.
+
+```bash
+flask --app run collect-resources --demo          # AWS 없이 합성 리소스로
+flask --app run collect-resources --demo --drift 1.0   # 두 번째 실행 (변경 발생)
+```
+
+`/resources/` 에서 결과를 봅니다.
+
+```
+[생성  ] i-0new5326    ec2:instance
+[변경  ] app-logs      s3:bucket
+         public_access_blocked   true → false
+[변경  ] sg-web        ec2:security_group
+         ingress  [80, 443] → [80, 443, 22]
+[삭제  ] i-0e4f5a6b    ec2:instance
+```
+
+실제 AWS 에서 수집하려면 `--demo` 를 빼고 실행합니다. 읽기 전용 호출만 하므로
+`ReadOnlyAccess` 수준의 권한이면 충분합니다.
+
+### 되돌릴 수 있는 것과 없는 것
+
+스냅샷은 **"무엇이 어떻게 바뀌었나"에 대한 기록이자 되돌릴 목표값**입니다.
+실제로 되돌리는 것은 별도의 쓰기 API 호출이며, 이 프로젝트는 그 일을 하지 않습니다.
+
+| 부류 | 예시 | 스냅샷만으로 복원 |
+|---|---|---|
+| 설정 변경 | SG 규칙, S3 공개 설정, IAM 정책, 태그 | **가능** — 이전 값을 다시 쓰면 됨 |
+| 수명주기 | 종료된 EC2, 삭제된 RDS | **불가** — 새로 만들어야 함 |
+| 소실성 | 릴리스된 EIP, 삭제된 로그 | **불가** |
+
+### 두 가지 안전장치
+
+**1. 노이즈 정규화** — `LastModified`, 요청 토큰, 리스트 순서처럼 매번 달라지지만
+의미 없는 값을 해시 계산 전에 걷어냅니다. 이걸 빼먹으면 아무것도 안 바뀐 날에도
+전부 "변경됨"으로 떠서 diff 가 쓸모없어집니다. 스냅샷 비교가 실무에서 실패하는
+가장 흔한 이유입니다.
+
+**2. `complete` 플래그** — 수집이 도중에 실패하면 못 읽은 리소스가 "삭제됨"으로
+보입니다. 완료 표시가 없는 스냅샷은 비교 대상에서 자동으로 빠집니다.
 
 ---
 
@@ -870,4 +922,6 @@ python -c "import secrets; print(secrets.token_hex(32))"
 - **Bedrock 경로는 실제 호출로 검증되지 않았습니다.** 요청이 올바른 형태로
   만들어지는 것까지만 확인했습니다.
 - **`LAMBDA_MODE=aws` 경로도 마찬가지**입니다. 로컬 모드만 실제로 동작을 확인했습니다.
+- **리소스 수집의 실제 AWS 경로(`collect-resources` 를 `--demo` 없이)도 미검증**입니다.
+  스키마·정규화·diff·화면은 합성 데이터로 검증했습니다.
 - 자동화된 테스트 코드가 없습니다.
