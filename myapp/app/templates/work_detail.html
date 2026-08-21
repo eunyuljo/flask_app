@@ -1,0 +1,164 @@
+{# templates/work_detail.html
+   work 블루프린트의 detail() 이 렌더링하는 작업 상세.
+   작업 전/후 스냅샷을 찍고, 그 차이를 보고, 증적을 확정한다.
+   변경 표시는 /resources/ 화면과 같은 .chg / table.fields 를 그대로 쓴다. #}
+
+{% extends "base.html" %}
+
+{% block title %}작업 #{{ item.id }}{% endblock %}
+{% block page_title %}작업 #{{ item.id }} &mdash; {{ item.title }}{% endblock %}
+
+{% block content %}
+  <p class="muted"><a href="{{ url_for('work.index') }}">&larr; 작업 목록</a></p>
+
+  <table class="mini2">
+    <tr><td class="fname">티켓</td><td>{% if item.ticket %}<code>{{ item.ticket }}</code>{% else %}<span class="muted">없음</span>{% endif %}</td></tr>
+    <tr><td class="fname">고객사</td><td>{{ item.customer }}</td></tr>
+    <tr><td class="fname">계정 / 리전</td><td><code>{{ item.account_id }}</code> / <code>{{ item.region }}</code></td></tr>
+    <tr><td class="fname">작업자</td><td>{{ item.operator }}</td></tr>
+    <tr><td class="fname">상태</td><td>{{ labels[item.status] }}</td></tr>
+    <tr><td class="fname">생성</td><td>{{ item.created_at }}</td></tr>
+    {% if item.closed_at %}<tr><td class="fname">확정</td><td>{{ item.closed_at }}</td></tr>{% endif %}
+  </table>
+
+  {% if item.request %}
+    <h2>고객 요청</h2>
+    <div class="msg assistant"><div class="body">{{ item.request }}</div></div>
+  {% endif %}
+  {% if item.expected %}
+    <h2>예상한 변경</h2>
+    <div class="msg assistant"><div class="body">{{ item.expected }}</div></div>
+  {% endif %}
+
+  {# ---- 진행 단계 ---------------------------------------------------- #}
+  <h2>진행</h2>
+  <ol class="steps">
+    <li class="{% if item.before_snapshot_id %}done{% elif item.status == 'open' %}now{% endif %}">
+      <strong>작업 전 스냅샷</strong>
+      {% if item.before_snapshot_id %}
+        <span class="muted">#{{ item.before_snapshot_id }} 저장됨</span>
+      {% else %}
+        <span class="muted">아직 없음</span>
+      {% endif %}
+      {% if item.status == 'open' %}
+        <form action="{{ url_for('work.snapshot', work_id=item.id) }}" method="post" class="inline-form">
+          <input type="hidden" name="phase" value="before">
+          <button type="submit">지금 찍기</button>
+        </form>
+      {% endif %}
+    </li>
+
+    <li class="{% if item.status == 'before_taken' %}now{% elif item.after_snapshot_id %}done{% endif %}">
+      <strong>실제 작업</strong>
+      <span class="muted">
+        {% if item.status == 'before_taken' %}
+          이 앱 밖에서 작업하세요. 끝나면 아래 '작업 후 스냅샷'을 찍습니다.
+        {% else %}&mdash;{% endif %}
+      </span>
+    </li>
+
+    <li class="{% if item.after_snapshot_id %}done{% elif item.status == 'before_taken' %}now{% endif %}">
+      <strong>작업 후 스냅샷</strong>
+      {% if item.after_snapshot_id %}
+        <span class="muted">#{{ item.after_snapshot_id }} 저장됨</span>
+      {% else %}
+        <span class="muted">아직 없음</span>
+      {% endif %}
+      {% if item.status == 'before_taken' %}
+        <form action="{{ url_for('work.snapshot', work_id=item.id) }}" method="post" class="inline-form">
+          <input type="hidden" name="phase" value="after">
+          <button type="submit">지금 찍기</button>
+        </form>
+      {% endif %}
+    </li>
+
+    <li class="{% if item.status == 'closed' %}done{% elif item.status == 'after_taken' %}now{% endif %}">
+      <strong>증적 확정</strong>
+      {% if item.status == 'closed' %}<span class="muted">확정됨</span>{% endif %}
+    </li>
+  </ol>
+
+  {# ---- 차이 --------------------------------------------------------- #}
+  {% if diff_error %}
+    <div class="flash error" style="white-space:pre-wrap">{{ diff_error }}</div>
+  {% endif %}
+
+  {% if rdiff %}
+    <h2>작업 전후 차이</h2>
+
+    <div class="kpis">
+      <div class="kpi"><span class="n">{{ rdiff.summary.added }}</span><span class="k">생성</span></div>
+      <div class="kpi"><span class="n">{{ rdiff.summary.modified }}</span><span class="k">변경</span></div>
+      <div class="kpi"><span class="n">{{ rdiff.summary.removed }}</span><span class="k">삭제</span></div>
+      <div class="kpi"><span class="n">{{ rdiff.target_count }}</span><span class="k">작업 후 리소스</span></div>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>변경 내역</h2>
+        <span class="hint">
+          #{{ rdiff.base.snapshot_id }} &rarr; #{{ rdiff.target.snapshot_id }}
+        </span>
+      </div>
+      <div class="panel-body">
+        {% if not rdiff.changes %}
+          <p class="muted">작업 전후 상태가 동일합니다. 변경된 리소스가 없습니다.</p>
+        {% else %}
+          {% for c in rdiff.changes %}
+            <div class="chg chg-{{ c.change }}">
+              <div class="chg-head">
+                {# 색만으로 구분하지 않도록 종류를 글자로도 표시한다. #}
+                <span class="badge">
+                  {% if c.change == 'added' %}생성
+                  {% elif c.change == 'removed' %}삭제
+                  {% else %}변경{% endif %}
+                </span>
+                <code>{{ c.resource_id }}</code>
+                <span class="muted">{{ c.resource_type }}</span>
+              </div>
+              {% if c.change == 'modified' %}
+                <table class="fields">
+                  {% for f in c.fields %}
+                    <tr>
+                      <td class="fname">{{ f.field }}</td>
+                      <td class="before">{{ f.before | tojson(indent=None) }}</td>
+                      <td class="arrow">&rarr;</td>
+                      <td class="after">{{ f.after | tojson(indent=None) }}</td>
+                    </tr>
+                  {% endfor %}
+                </table>
+              {% endif %}
+            </div>
+          {% endfor %}
+        {% endif %}
+      </div>
+    </section>
+  {% endif %}
+
+  {# ---- 확정 / 내보내기 ------------------------------------------------ #}
+  {% if item.status == 'after_taken' %}
+    <h2>증적 확정</h2>
+    <p class="muted">
+      확정하면 스냅샷을 더 바꾸지 않습니다. 위 변경 목록이 요청 범위 안에
+      있는지 확인한 뒤 눌러 주세요.
+    </p>
+    <form action="{{ url_for('work.close', work_id=item.id) }}" method="post">
+      <label>
+        작업 메모 <span class="muted">(선택)</span>
+        <textarea name="note" rows="2"
+                  placeholder="예) 요청대로 443/tcp 한 줄만 추가. 그 외 변경 없음."></textarea>
+      </label>
+      <button type="submit">확정</button>
+    </form>
+  {% endif %}
+
+  {% if item.note %}
+    <h2>작업 메모</h2>
+    <div class="msg assistant"><div class="body">{{ item.note }}</div></div>
+  {% endif %}
+
+  {% if item.before_snapshot_id and item.after_snapshot_id %}
+    <hr>
+    <p><a href="{{ url_for('work.evidence', work_id=item.id) }}">증적 문서 내려받기 (Markdown)</a></p>
+  {% endif %}
+{% endblock %}

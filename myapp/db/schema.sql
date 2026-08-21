@@ -110,3 +110,46 @@ CREATE INDEX IF NOT EXISTS idx_accounts_customer ON aws_accounts (customer, acco
 -- 스냅샷을 계정/리전으로 찾을 일이 많아진다.
 CREATE INDEX IF NOT EXISTS idx_snapshots_scope
     ON resource_snapshots (account_id, region, snapshot_id DESC);
+
+-- ======================================================================
+-- 작업 기록 (변경 증적)
+-- ----------------------------------------------------------------------
+-- MSP 엔지니어가 고객 요청으로 작업할 때 "요청한 것만 바뀌었다" 를 증명하기 위한
+-- 기록이다. 작업 전/후로 스냅샷을 한 벌씩 찍어두고, 그 둘의 차이를 증적으로 남긴다.
+--
+-- resource_snapshots 만으로는 '무엇이 바뀌었나' 까지만 알 수 있다.
+-- 여기서 '누가, 왜, 어떤 요청으로' 를 붙여야 감사 자료가 된다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS work_orders (
+    id          BIGSERIAL   PRIMARY KEY,
+
+    ticket      TEXT        NOT NULL DEFAULT '',   -- 외부 티켓 번호 (Jira 등)
+    title       TEXT        NOT NULL,
+    request     TEXT        NOT NULL DEFAULT '',   -- 고객 요청 원문
+    expected    TEXT        NOT NULL DEFAULT '',   -- 바뀔 것으로 예상한 것
+
+    customer    TEXT        NOT NULL,
+    account_id  TEXT        NOT NULL,
+    region      TEXT        NOT NULL,
+    operator    TEXT        NOT NULL,              -- 작업자
+
+    -- open        : 만들어졌고 아직 아무 스냅샷도 없음
+    -- before_taken: 작업 전 스냅샷을 찍음 (이제 실제 작업을 해도 됨)
+    -- after_taken : 작업 후 스냅샷을 찍음 (차이를 볼 수 있음)
+    -- closed      : 증적을 확정함. 더 이상 스냅샷을 바꾸지 않는다
+    status      TEXT        NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open', 'before_taken', 'after_taken', 'closed')),
+
+    -- 스냅샷이 지워지면 증적의 근거가 사라진다. CASCADE 로 같이 지우지 않고
+    -- 삭제 자체를 막는다(RESTRICT). 증적은 남아 있는 편이 안전하다.
+    before_snapshot_id BIGINT REFERENCES resource_snapshots ON DELETE RESTRICT,
+    after_snapshot_id  BIGINT REFERENCES resource_snapshots ON DELETE RESTRICT,
+
+    note        TEXT        NOT NULL DEFAULT '',   -- 작업 결과 메모
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    closed_at   TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_work_orders_scope
+    ON work_orders (customer, account_id, id DESC);

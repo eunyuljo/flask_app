@@ -14,6 +14,7 @@ from flask import current_app
 # 샘플 데이터도 실제와 똑같은 경로를 거치게 하려는 것이다.
 from api.normalize_handler import normalize
 from app.accounts import upsert_account, list_accounts
+from app.collect import demo_resources, aws_resources, CollectError
 from app.resources import save_snapshot, psycopg_uri
 
 # schema.sql 은 프로젝트 루트의 db/ 에 있다.
@@ -231,12 +232,16 @@ def register_cli(app):
         region = region or current_app.config["AWS_REGION"]
         uri = psycopg_uri()
 
-        if demo:
-            items, account_id = _demo_resources(uri, drift)
-            source = "demo"
-        else:
-            items, account_id = _aws_resources(region)
-            source = "aws"
+        try:
+            if demo:
+                account_id = "123456789012"
+                items = demo_resources(uri, account_id, region, drift)
+                source = "demo"
+            else:
+                items, account_id = aws_resources(region)
+                source = "aws"
+        except CollectError as e:
+            raise click.ClickException(str(e))
 
         try:
             snapshot_id = save_snapshot(
@@ -302,178 +307,3 @@ def register_cli(app):
                 f"{a['customer']:<14}{a['account_id']:<16}{mode:<12}"
                 f"{','.join(a['regions']):<28}{'예' if a['enabled'] else '아니오'}"
             )
-
-
-def _demo_resources(uri, drift):
-    """합성 리소스 목록을 만든다.
-
-    이전 스냅샷이 있으면 그걸 가져와 일부만 바꾼다.
-    그래야 '어제와 오늘의 차이' 가 그럴듯하게 나온다.
-    """
-    import json
-    import psycopg
-
-    account_id = "123456789012"
-
-    with psycopg.connect(uri) as conn, conn.cursor() as cur:
-        cur.execute("SELECT to_regclass('public.resources')")
-        if cur.fetchone()[0] is None:
-            raise click.ClickException(
-                "resources 테이블이 없습니다. flask --app run init-db 를 먼저 실행하세요."
-            )
-        cur.execute(
-            "SELECT snapshot_id FROM resource_snapshots "
-            "WHERE complete AND source = 'demo' ORDER BY snapshot_id DESC LIMIT 1"
-        )
-        row = cur.fetchone()
-        previous = []
-        if row:
-            cur.execute(
-                "SELECT resource_id, resource_type, attributes FROM resources "
-                "WHERE snapshot_id = %s",
-                (row[0],),
-            )
-            previous = [
-                {"resource_id": r[0], "resource_type": r[1], "attributes": r[2]}
-                for r in cur.fetchall()
-            ]
-
-    if not previous:
-        # 첫 수집: 기준이 되는 인프라를 만든다.
-        return [
-            {"resource_id": "i-0a1b2c3d", "resource_type": "ec2:instance",
-             "attributes": {"instance_type": "t3.medium", "state": "running",
-                            "security_groups": ["sg-web"], "tags": {"Name": "web-01", "Env": "prod"}}},
-            {"resource_id": "i-0e4f5a6b", "resource_type": "ec2:instance",
-             "attributes": {"instance_type": "t3.small", "state": "running",
-                            "security_groups": ["sg-app"], "tags": {"Name": "app-01", "Env": "prod"}}},
-            {"resource_id": "sg-web", "resource_type": "ec2:security_group",
-             "attributes": {"ingress": ["80/tcp:0.0.0.0/0", "443/tcp:0.0.0.0/0"], "vpc": "vpc-main"}},
-            {"resource_id": "sg-app", "resource_type": "ec2:security_group",
-             "attributes": {"ingress": ["8080/tcp:sg-web"], "vpc": "vpc-main"}},
-            {"resource_id": "app-logs", "resource_type": "s3:bucket",
-             "attributes": {"public_access_blocked": True, "versioning": "Enabled",
-                            "encryption": "AES256"}},
-            {"resource_id": "db-prod", "resource_type": "rds:instance",
-             "attributes": {"engine": "postgres", "class": "db.t3.medium",
-                            "multi_az": False, "public": False}},
-            {"resource_id": "role-app", "resource_type": "iam:role",
-             "attributes": {"policies": ["AmazonS3ReadOnlyAccess"], "max_session": 3600}},
-        ], account_id
-
-    # 이후 수집: 이전 것을 복사한 뒤 확률적으로 변화를 준다.
-    import copy
-    import random
-
-    items = copy.deepcopy(previous)
-
-    # 수집할 때마다 값이 달라지지만 의미는 없는 필드.
-    # 정규화가 이걸 걷어내는지 확인하는 용도이기도 하다.
-    for it in items:
-        it["attributes"]["LastModified"] = _now_iso()
-
-    mutations = [
-        ("i-0a1b2c3d", "instance_type", "t3.large"),
-        ("sg-web", "ingress", ["80/tcp:0.0.0.0/0", "443/tcp:0.0.0.0/0", "22/tcp:0.0.0.0/0"]),
-        ("app-logs", "public_access_blocked", False),
-        ("db-prod", "multi_az", True),
-        ("role-app", "policies", ["AmazonS3FullAccess"]),
-    ]
-    for resource_id, field, value in mutations:
-        if random.random() < drift:
-            for it in items:
-                if it["resource_id"] == resource_id:
-                    it["attributes"][field] = value
-
-    # 리소스가 생기거나 사라지는 경우
-    if random.random() < drift:
-        items.append({
-            "resource_id": f"i-0new{random.randint(1000, 9999)}",
-            "resource_type": "ec2:instance",
-            "attributes": {"instance_type": "t3.micro", "state": "running",
-                           "security_groups": ["sg-app"], "tags": {"Name": "worker", "Env": "prod"}},
-        })
-    if random.random() < drift and len(items) > 3:
-        items = [it for it in items if it["resource_id"] != "i-0e4f5a6b"]
-
-    return items, account_id
-
-
-def _now_iso():
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _aws_resources(region):
-    """실제 AWS 에서 리소스를 읽어온다.
-
-    읽기 전용 호출만 한다(describe/list/get).
-    필요한 권한은 ReadOnlyAccess 수준이면 충분하다.
-
-    주의: 이 경로는 검증되지 않았다. 자격증명이 있는 환경에서 직접 확인해야 한다.
-    """
-    try:
-        import boto3
-        from botocore.exceptions import BotoCoreError, ClientError
-    except ImportError:
-        raise click.ClickException("boto3 가 설치되어 있지 않습니다.")
-
-    items = []
-    try:
-        account_id = boto3.client("sts", region_name=region).get_caller_identity()["Account"]
-
-        ec2 = boto3.client("ec2", region_name=region)
-
-        # paginator 를 쓴다. 리소스가 많으면 한 번에 다 오지 않는다.
-        for page in ec2.get_paginator("describe_instances").paginate():
-            for reservation in page["Reservations"]:
-                for inst in reservation["Instances"]:
-                    items.append({
-                        "resource_id": inst["InstanceId"],
-                        "resource_type": "ec2:instance",
-                        "attributes": {
-                            "instance_type": inst.get("InstanceType"),
-                            "state": inst.get("State", {}).get("Name"),
-                            "security_groups": [g["GroupId"] for g in inst.get("SecurityGroups", [])],
-                            "tags": {t["Key"]: t["Value"] for t in inst.get("Tags", [])},
-                            "subnet": inst.get("SubnetId"),
-                        },
-                    })
-
-        for page in ec2.get_paginator("describe_security_groups").paginate():
-            for sg in page["SecurityGroups"]:
-                items.append({
-                    "resource_id": sg["GroupId"],
-                    "resource_type": "ec2:security_group",
-                    "attributes": {
-                        "name": sg.get("GroupName"),
-                        "vpc": sg.get("VpcId"),
-                        "ingress": [
-                            f'{p.get("FromPort")}/{p.get("IpProtocol")}:{r.get("CidrIp")}'
-                            for p in sg.get("IpPermissions", [])
-                            for r in p.get("IpRanges", [])
-                        ],
-                    },
-                })
-
-        s3 = boto3.client("s3", region_name=region)
-        for bucket in s3.list_buckets().get("Buckets", []):
-            name = bucket["Name"]
-            attrs = {}
-            try:
-                blocked = s3.get_public_access_block(Bucket=name)
-                cfg = blocked["PublicAccessBlockConfiguration"]
-                attrs["public_access_blocked"] = all(cfg.values())
-            except ClientError:
-                # 설정 자체가 없는 경우. '차단 안 됨' 으로 본다.
-                attrs["public_access_blocked"] = False
-            try:
-                attrs["versioning"] = s3.get_bucket_versioning(Bucket=name).get("Status", "Disabled")
-            except ClientError:
-                attrs["versioning"] = "Unknown"
-            items.append({"resource_id": name, "resource_type": "s3:bucket", "attributes": attrs})
-
-    except (BotoCoreError, ClientError) as e:
-        raise click.ClickException(f"AWS 호출에 실패했습니다.\n  {e}")
-
-    return items, account_id

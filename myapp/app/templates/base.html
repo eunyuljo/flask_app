@@ -59,6 +59,9 @@
         <a href="{{ url_for('resources.index') }}" class="{% if ep.startswith('resources.') %}on{% endif %}">
           <span class="ico">▩</span>리소스 변경
         </a>
+        <a href="{{ url_for('work.index') }}" class="{% if ep.startswith('work.') %}on{% endif %}">
+          <span class="ico">✎</span>작업 기록
+        </a>
         <a href="{{ url_for('report.index') }}" class="{% if ep.startswith('report.') %}on{% endif %}">
           <span class="ico">▤</span>리포트
         </a>

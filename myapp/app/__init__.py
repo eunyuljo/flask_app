@@ -25,6 +25,7 @@ from app.views.explore import explore_bp
 from app.views.resources import resources_bp
 from app.views.report import report_bp
 from app.views.console import console_bp
+from app.views.work import work_bp
 
 
 def create_app(config_name=None):
@@ -138,6 +139,12 @@ def create_app(config_name=None):
     # console 블루프린트: url_prefix="/console"
     # 고객사 계정을 골라 AWS CLI 읽기 전용 명령을 실행한다. 관리자 전용.
     app.register_blueprint(console_bp, url_prefix="/console")
+
+    # work 블루프린트: url_prefix="/work"
+    # 작업 전후로 스냅샷을 찍어 "요청한 것만 바뀌었다" 를 증적으로 남긴다.
+    # resources 블루프린트가 '무엇이 바뀌었나' 를 보여준다면,
+    # 여기는 거기에 '누가, 왜, 어떤 요청으로' 를 붙인다.
+    app.register_blueprint(work_bp, url_prefix="/work")
 
     # ------------------------------------------------------------------
     # CLI 명령 등록

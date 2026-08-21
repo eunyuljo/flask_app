@@ -177,7 +177,11 @@ code {
    ================================================================== */
 label { display: block; margin-top: 14px; font-size: .9rem; color: var(--text-mute); }
 
-input[type=text], input[type=password] {
+/* select 와 textarea 도 같은 모양으로 맞춘다. 빠뜨리면 label 안에서
+   inline 으로 흘러서 라벨 글자와 한 줄에 붙어버린다.
+   .targets select, .diag-form select 처럼 클래스로 잡아둔 곳은
+   특정도가 높아 그대로 유지된다. */
+input[type=text], input[type=password], select, textarea {
   display: block;
   margin-top: 5px;
   padding: 9px 11px;
@@ -190,8 +194,12 @@ input[type=text], input[type=password] {
   font: inherit;
   font-size: .95rem;
 }
+/* 여러 줄 입력은 더 넓게, 세로로만 늘어나게. 가로로 늘리면 레이아웃이 깨진다. */
+textarea { width: 520px; resize: vertical; line-height: 1.55; }
+
 /* 키보드로 이동했을 때 지금 어디에 있는지 보이게 한다. 접근성상 중요하다. */
-input:focus-visible, button:focus-visible, a:focus-visible {
+input:focus-visible, select:focus-visible, textarea:focus-visible,
+button:focus-visible, a:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -559,8 +567,18 @@ table.fields td { border: 0; padding: 2px 6px 2px 0; vertical-align: top; width:
 table.fields .fname { color: var(--text-mute); white-space: nowrap; width: 1%; }
 /* 이전 값과 현재 값을 색으로도 구분한다. 값 자체는 글자로 다 보이므로
    색이 없어도 정보가 사라지지 않는다. */
+/* 값이 길면(보안그룹 ingress 목록 등) 표가 컨테이너를 밀어내 페이지 전체에
+   가로 스크롤이 생긴다. 표의 최소 너비는 '끊기지 않는 가장 긴 토큰' 이 정하는데,
+   "443/tcp:203.0.113.10/32" 같은 값이 그 토큰이다. 어디서든 끊을 수 있게 해서
+   좁은 화면에서는 여러 줄로 접히게 한다. */
+table.fields .before,
+table.fields .after { overflow-wrap: anywhere; }
 table.fields .before { color: var(--err-fg); font-family: ui-monospace, monospace; }
 table.fields .after  { color: var(--ok-fg);  font-family: ui-monospace, monospace; }
+
+/* 그래도 넘치는 경우(끊을 수 없는 아주 긴 값)를 대비한 마지막 방어선.
+   페이지가 아니라 카드 안에서만 스크롤되게 한다. */
+.chg { overflow-x: auto; }
 table.fields .arrow  { color: var(--text-mute); width: 1%; }
 
 table.mini2 { font-size: .84rem; }
@@ -655,3 +673,63 @@ pre.err { color: var(--err-fg); }
 
 /* 접어둔 meta. 펼치면 긴 JSON 이 나오므로 카드 안에서 스크롤시킨다. */
 .meta-fold > div { overflow-x: auto; margin-top: 4px; }
+
+/* ------------------------------------------------------------------
+   작업 기록 (변경 증적)
+   ------------------------------------------------------------------ */
+/* 진행 단계. 지금 해야 할 단계(now)와 끝난 단계(done)를 구분한다.
+   숫자 마커를 직접 그려서 done 에는 체크를 넣는다 - 색만으로 구분하면
+   흑백 출력이나 색각 이상에서 정보가 사라진다. */
+.steps { list-style: none; margin: 10px 0 18px; padding: 0; counter-reset: step; }
+.steps li {
+  position: relative;
+  padding: 9px 12px 9px 38px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 6px;
+  background: var(--panel);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  counter-increment: step;
+}
+.steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  color: var(--text-mute);
+  font-size: .72rem;
+  display: flex; align-items: center; justify-content: center;
+}
+.steps li.done::before {
+  content: "✓";
+  background: var(--ok-bg); color: var(--ok-fg); border-color: transparent;
+}
+.steps li.now { border-color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
+.steps li.now::before { border-color: var(--accent); color: var(--accent); }
+.steps .muted { font-size: .82rem; }
+
+/* 단계 안에 들어가는 버튼은 줄을 새로 만들지 않는다. */
+.inline-form { display: inline; margin: 0; }
+.inline-form button { margin: 0; padding: 4px 11px; font-size: .82rem; }
+
+/* 새 작업 폼. 입력칸 폭을 한 줄로 맞춘다 - 기본값대로 두면 텍스트 입력은
+   260px, textarea 는 520px 이라 왼쪽 정렬은 맞아도 오른쪽 끝이 들쭉날쭉해진다. */
+.wo-form { max-width: 520px; }
+.wo-form input[type=text], .wo-form select, .wo-form textarea { width: 100%; }
+
+/* 계정/리전은 한 줄에 둘씩. 화면이 좁으면 한 줄에 하나로 접힌다. */
+.row-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.row-2 label { margin-top: 14px; }
+
+/* 작업 상태별 좌측 띠 */
+.event.wo-open         { border-left-color: var(--text-mute); }
+.event.wo-before_taken { border-left-color: var(--sev-warning); }
+.event.wo-after_taken  { border-left-color: var(--accent); }
+.event.wo-closed       { border-left-color: var(--sev-info); }

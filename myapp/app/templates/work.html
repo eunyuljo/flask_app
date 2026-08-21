@@ -1,0 +1,111 @@
+{# templates/work.html
+   work 블루프린트의 index() 가 렌더링하는 작업 기록 목록 + 새 작업 폼. #}
+
+{% extends "base.html" %}
+
+{% block title %}작업 기록{% endblock %}
+{% block page_title %}작업 기록{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    고객 요청으로 작업할 때 <strong>작업 전후로 리소스를 한 벌씩 찍어두고</strong>,
+    그 차이를 증적으로 남깁니다. "요청한 것만 바뀌었다"를 나중에 증명하기 위한 기록입니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if grouped %}
+    <h2>새 작업</h2>
+    <form action="{{ url_for('work.new') }}" method="post" class="wo-form">
+      <label>
+        작업 제목
+        <input type="text" name="title" placeholder="예) 웹 보안그룹에 사무실 IP 허용 추가" required>
+      </label>
+      <label>
+        티켓 번호 <span class="muted">(선택)</span>
+        <input type="text" name="ticket" placeholder="예) OPS-1423">
+      </label>
+
+      <div class="row-2">
+        <label>
+          계정
+          <select name="account_id" id="wo-account" required>
+            {% for customer, accounts in grouped.items() %}
+              <optgroup label="{{ customer }}">
+                {% for a in accounts %}
+                  <option value="{{ a.account_id }}" data-regions="{{ a.regions|join(',') }}">
+                    {{ a.alias or a.account_id }} ({{ a.account_id }})
+                  </option>
+                {% endfor %}
+              </optgroup>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          리전
+          <select name="region" id="wo-region"></select>
+        </label>
+      </div>
+
+      <label>
+        고객 요청 <span class="muted">(원문 그대로 붙여넣으면 증적에 그대로 들어갑니다)</span>
+        <textarea name="request" rows="3"
+                  placeholder="예) 사무실 고정 IP 203.0.113.10 에서 web-sg 의 443 포트 접근을 허용해 주세요."></textarea>
+      </label>
+      <label>
+        예상한 변경 <span class="muted">(선택 — 나중에 실제 변경과 맞대보는 기준)</span>
+        <textarea name="expected" rows="2"
+                  placeholder="예) sg-web 의 ingress 에 443/tcp:203.0.113.10/32 한 줄 추가"></textarea>
+      </label>
+      <button type="submit">작업 기록 만들기</button>
+    </form>
+  {% else %}
+    <p class="muted">계정이 등록되어 있지 않습니다. <code>flask --app run add-account</code> 로 먼저 등록하세요.</p>
+  {% endif %}
+
+  <hr>
+  <h2>최근 작업 <span class="muted">({{ items|length }}건)</span></h2>
+
+  {% if not items %}
+    <p class="muted">아직 작업 기록이 없습니다.</p>
+  {% endif %}
+
+  {% for w in items %}
+    <div class="event wo-{{ w.status }}">
+      <div class="event-head">
+        <span class="badge">#{{ w.id }}</span>
+        <strong><a href="{{ url_for('work.detail', work_id=w.id) }}">{{ w.title }}</a></strong>
+      </div>
+      <div class="muted">
+        {% if w.ticket %}<code>{{ w.ticket }}</code> &middot; {% endif %}
+        {{ w.customer }} &middot; {{ w.account_id }} / {{ w.region }}
+        &middot; 작업자 {{ w.operator }}
+      </div>
+      <div class="muted">{{ labels[w.status] }} &middot; 생성 {{ w.created_at }}</div>
+    </div>
+  {% endfor %}
+
+  <script>
+    // 계정을 고르면 그 계정에 등록된 리전만 보여준다.
+    (function () {
+      var account = document.getElementById('wo-account');
+      var region = document.getElementById('wo-region');
+      if (!account || !region) return;
+
+      function fill() {
+        var opt = account.selectedOptions[0];
+        var regions = (opt && opt.dataset.regions || '').split(',').filter(Boolean);
+        region.innerHTML = '';
+        regions.forEach(function (r) {
+          var o = document.createElement('option');
+          o.value = r; o.textContent = r;
+          region.appendChild(o);
+        });
+      }
+      account.addEventListener('change', fill);
+      fill();
+    })();
+  </script>
+{% endblock %}
