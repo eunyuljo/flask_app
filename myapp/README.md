@@ -77,7 +77,7 @@ Lambda에 그대로 올릴 수 있고, 파이썬만 있으면 단독 실행됩�
 
 - **Python 3.9 이상** — `requirements.txt`의 핀 버전 기준 (검증은 3.11에서 진행)
 - 그 외에는 아무것도 필요 없습니다. DB, AWS 계정, API 키 **없이도 앱은 실행됩니다.**
-- (선택) **PostgreSQL 또는 컨테이너 런타임** — 로컬 DB를 띄울 때만 필요합니다.
+- (선택) **PostgreSQL 16** 또는 컨테이너 런타임 — 로컬 DB를 띄울 때만 필요합니다.
   회사에서 쓴다면 [선택 2 - 로컬 DB 띄우기](#선택-2--로컬-db-띄우기)의 라이선스 안내를 먼저 보세요.
 
 > **Windows 사용자에게**
@@ -232,7 +232,7 @@ DB 없이도 앱은 돌지만, DB를 붙이면 Lambda가 정규화한 이벤트�
 
 | 방법 | 라이선스 | Windows | 비고 |
 |---|---|---|---|
-| **PostgreSQL 직접 설치** | PostgreSQL License | [설치본](https://www.postgresql.org/download/windows/) | Docker 자체가 불필요. **가장 단순** |
+| **PostgreSQL 직접 설치** | PostgreSQL License | [설치본](https://www.postgresql.org/download/windows/) (16 권장) | Docker 자체가 불필요. **가장 단순** |
 | **Docker Engine on WSL2** | Apache-2.0 | WSL2 안에서 설치 | Desktop 없이 CLI만. 무료. ↓ 아래 상세 |
 | **Podman Desktop** | Apache-2.0 | 지원 | `docker compose` 호환 |
 | Docker Desktop | 조건부 유료 | 지원 | 위 라이선스 조건 확인 |
@@ -244,6 +244,17 @@ DB 없이도 앱은 돌지만, DB를 붙이면 Lambda가 정규화한 이벤트�
 #### 방법 A — PostgreSQL 직접 설치 (Windows 권장)
 
 **A-1.** [PostgreSQL Windows 설치본](https://www.postgresql.org/download/windows/)을 내려받아 실행합니다.
+
+> **버전은 16을 받으세요.** 다운로드 페이지의 버전 목록에서 16.x 를 고르고,
+> 플랫폼은 **Windows x86-64** 를 선택합니다.
+>
+> 이 프로젝트는 16에서 검증했고, `docker-compose.yml` 도 `postgres:16-alpine` 으로
+> 맞춰져 있습니다. 나중에 컨테이너로 옮기더라도 버전이 같아서 헷갈릴 일이 없습니다.
+>
+> 최신 버전(18.x)을 써도 동작에는 문제가 없습니다. 이 프로젝트가 쓰는 SQL 기능
+> (`JSONB`, `ON CONFLICT`, `CREATE INDEX IF NOT EXISTS`)은 PostgreSQL 9.5 이상이면
+> 모두 지원합니다. 다만 `db-check` 에 찍히는 버전 문자열이 아래 예시와 달라집니다.
+> **13 이하는 이미 지원이 끝났으니 피하세요.**
 
 설치 중 물어보는 것들:
 
