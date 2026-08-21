@@ -56,15 +56,101 @@
         &middot; 지문 <code>{{ item.record.fingerprint }}</code>
       </div>
       <div class="muted">발생 {{ item.record.occurred_at }}</div>
-      <div class="muted">
-        DB 적재:
-        {% if item.delivery.store.stored %}완료{% else %}건너뜀 ({{ item.delivery.store.reason }}){% endif %}
-        &nbsp;|&nbsp; 알람:
-        {% if item.delivery.alarm.alarmed %}발송{% else %}없음 ({{ item.delivery.alarm.reason }}){% endif %}
-      </div>
+      {# 감사 기록에는 적재/알람 결과가 없다. 빈 괄호만 찍히지 않게 건너뛴다. #}
+      {% if item.delivery and item.delivery.store %}
+        <div class="muted">
+          DB 적재:
+          {% if item.delivery.store.stored %}완료{% else %}건너뜀 ({{ item.delivery.store.reason }}){% endif %}
+          &nbsp;|&nbsp; 알람:
+          {% if item.delivery.alarm.alarmed %}발송{% else %}없음 ({{ item.delivery.alarm.reason }}){% endif %}
+        </div>
+      {% endif %}
       {% if item.record.meta %}
-        <div class="muted">표준 필드 외 값(meta): <code>{{ item.record.meta }}</code></div>
+        {# meta 가 길면(감사 기록 등) 한 줄로 쏟아내지 않고 접어둔다.
+           종류로 구분하지 않고 길이로 판단해서, 앞으로 어떤 이벤트가 들어와도
+           목록이 벽처럼 밀리지 않게 한다. #}
+        {% if item.record.meta|string|length > 200 %}
+          <details class="meta-fold">
+            <summary class="muted">표준 필드 외 값(meta)</summary>
+            <div><code>{{ item.record.meta }}</code></div>
+          </details>
+        {% else %}
+          <div class="muted">표준 필드 외 값(meta): <code>{{ item.record.meta }}</code></div>
+        {% endif %}
+      {% endif %}
+
+      {# 진단은 실제 알람에만 붙인다. 진단 기록 자체를 또 진단할 이유는 없다. #}
+      {% if grouped and item.record.event_type != 'diagnose' and item.record.event_type != 'console' %}
+        <form action="{{ url_for('alarm.diagnose') }}" method="post" class="diag-form">
+          <input type="hidden" name="event_id" value="{{ item.record.event_id }}">
+          <select name="account_id" required>
+            {% for customer, accounts in grouped.items() %}
+              <optgroup label="{{ customer }}">
+                {% for a in accounts %}
+                  <option value="{{ a.account_id }}"
+                          data-regions="{{ a.regions|join(',') }}">
+                    {{ a.alias or a.account_id }} ({{ a.account_id }})
+                  </option>
+                {% endfor %}
+              </optgroup>
+            {% endfor %}
+          </select>
+          <select name="region"></select>
+          <button type="submit">AI 진단</button>
+        </form>
+      {% endif %}
+
+      {% set d = diagnoses.get(item.record.event_id) %}
+      {% if d and diagnosed == item.record.event_id %}
+        <div class="diag-result">
+          <div class="muted">
+            진단 범위: {{ d.account.customer }} / {{ d.account.account_id }} / {{ d.region }}
+            {% if d.history %}
+              &middot; 같은 알람 전체 {{ d.history.total }}건,
+              최근 {{ d.history.hours }}시간 {{ d.history.recent }}건
+            {% else %}
+              &middot; 발생 이력 집계 불가
+            {% endif %}
+          </div>
+          <div class="diag-text">{{ d.text }}</div>
+          {% if d.commands %}
+            <details>
+              <summary class="muted">실행한 조회 {{ d.commands|length }}건</summary>
+              {% for c in d.commands %}
+                <div class="muted"><code>{{ c.command }}</code> &rarr; {{ c.outcome }}</div>
+              {% endfor %}
+            </details>
+          {% endif %}
+        </div>
       {% endif %}
     </div>
   {% endfor %}
+
+  {% if account_error %}
+    <p class="muted">AI 진단을 쓰려면 계정 등록이 필요합니다: {{ account_error }}</p>
+  {% endif %}
+
+  <script>
+    // 계정을 고르면 그 계정에 등록된 리전만 보여준다.
+    // 리전 목록은 계정마다 다르므로 서버가 내려준 data-regions 를 그대로 쓴다.
+    document.querySelectorAll('.diag-form').forEach(function (form) {
+      var accountSelect = form.querySelector('select[name="account_id"]');
+      var regionSelect = form.querySelector('select[name="region"]');
+
+      function fillRegions() {
+        var option = accountSelect.selectedOptions[0];
+        var regions = (option && option.dataset.regions || '').split(',').filter(Boolean);
+        regionSelect.innerHTML = '';
+        regions.forEach(function (r) {
+          var opt = document.createElement('option');
+          opt.value = r;
+          opt.textContent = r;
+          regionSelect.appendChild(opt);
+        });
+      }
+
+      accountSelect.addEventListener('change', fillRegions);
+      fillRegions();
+    });
+  </script>
 {% endblock %}

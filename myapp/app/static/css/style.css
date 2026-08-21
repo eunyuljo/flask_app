@@ -605,3 +605,53 @@ table.mini2 .no { color: var(--err-fg); }
 /* 명령 출력. 길어질 수 있으므로 상자 안에서만 스크롤시킨다. */
 pre.out, pre.err { max-height: 420px; overflow: auto; white-space: pre; }
 pre.err { color: var(--err-fg); }
+
+/* ------------------------------------------------------------------
+   알람 AI 진단
+   ------------------------------------------------------------------ */
+/* 진단 폼은 이벤트 카드 안에 들어가므로 한 줄로 눕히되,
+   화면이 좁으면 접히게 둔다(select 두 개 + 버튼이 가로로 넘치지 않도록). */
+.diag-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.diag-form select {
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+  padding: 4px 6px;
+  font-size: .85rem;
+}
+
+.diag-form button {
+  margin: 0;
+  padding: 5px 12px;
+  font-size: .85rem;
+}
+
+.diag-result {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* 모델 답변은 마크다운 표기가 섞인 여러 줄 텍스트다.
+   렌더링하지 않고 원문 그대로 보여주되 줄바꿈은 살린다. */
+.diag-text {
+  margin-top: 8px;
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
+/* 실행한 명령 목록. 길어질 수 있으므로 가로 스크롤을 카드 안에 가둔다. */
+.diag-result details { margin-top: 8px; }
+.diag-result details div { overflow-x: auto; }
+
+/* 접어둔 meta. 펼치면 긴 JSON 이 나오므로 카드 안에서 스크롤시킨다. */
+.meta-fold > div { overflow-x: auto; margin-top: 4px; }

@@ -3,6 +3,7 @@
 # 정규화 + DB 적재 + 알람 발송을 시키고, 그 결과를 화면에 보여준다. url_prefix="/alarm".
 
 import json
+from datetime import datetime, timezone
 
 from flask import (
     Blueprint,
@@ -17,9 +18,18 @@ from flask import (
 )
 
 from app import event_store
+from app.accounts import list_accounts, by_customer, get_account, AccountError
+from app.agent_core import diagnose as run_diagnose, AgentNotConfigured
 from app.lambda_client import invoke_normalizer, LambdaInvokeError
+from app.stats import fingerprint_history, StatsUnavailable
 
 alarm_bp = Blueprint("alarm", __name__)
+
+# 진단 결과 보관소. 화면에 보여주기 위한 것뿐이라 메모리에 둔다.
+#   event_id -> {"text": ..., "commands": [...], "account": ..., "region": ...}
+# POST 로 진단하고 GET 으로 결과를 보여준다(PRG). 새로고침이 진단을 다시
+# 실행하면 그때마다 모델 호출 비용이 나가기 때문이다.
+_DIAGNOSES = {}
 
 
 @alarm_bp.before_request
@@ -38,12 +48,26 @@ def require_login():
 @alarm_bp.route("/")
 def index():
     """이벤트 제출 폼과 최근 처리 결과를 보여준다."""
+    # 진단 대상 계정 목록. DB 가 없으면 진단 버튼을 숨긴다.
+    accounts, account_error = [], None
+    try:
+        accounts = list_accounts()
+    except AccountError as e:
+        account_error = str(e)
+
+    # 방금 진단한 결과가 있으면 그 이벤트에만 펼쳐서 보여준다.
+    diagnosed = request.args.get("diagnosed", "")
+
     return render_template(
         "alarm.html",
         events=event_store.recent(20),
         mode=current_app.config["LAMBDA_MODE"],
         function_name=current_app.config["LAMBDA_FUNCTION_NAME"],
         invocation_type=current_app.config["LAMBDA_INVOCATION_TYPE"],
+        grouped=by_customer(accounts),
+        account_error=account_error,
+        diagnosed=diagnosed,
+        diagnoses=_DIAGNOSES,
     )
 
 
@@ -121,3 +145,94 @@ def ingest():
         return jsonify({"ok": False, "error": str(e)}), 502
 
     return jsonify(result), (200 if result.get("ok") else 400)
+
+
+def _audit_diagnosis(event, account, region, commands, outcome):
+    """진단 한 건을 감사 기록으로 남긴다.
+
+    명령 하나하나가 아니라 '진단 한 번'을 한 건으로 남긴다. 고객사 계정을
+    건드린 행위이므로 콘솔에서 사람이 직접 친 명령과 같은 무게로 기록하되,
+    actor 로 사람과 모델을 구분한다. 이 구분이 없으면 나중에 감사 로그에서
+    "모델이 무엇을 조회했나" 를 분리해낼 수 없다.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    event_store.add(
+        {
+            "event_id": f"diagnose-{event.get('event_id', '')}-{outcome}",
+            "event_type": "diagnose",
+            "source": (account or {}).get("account_id", "unknown"),
+            "severity": "info" if outcome == "ok" else "warning",
+            "message": f"[{session.get('username')}] AI 진단: {event.get('message', '')[:80]}",
+            "occurred_at": now,
+            "received_at": now,
+            "fingerprint": outcome,
+            "meta": {
+                "actor": "agent",
+                "user": session.get("username"),
+                "customer": (account or {}).get("customer"),
+                "account_id": (account or {}).get("account_id"),
+                "region": region,
+                "target_event_id": event.get("event_id"),
+                "outcome": outcome,
+                "commands": commands,
+            },
+        },
+        {"store": {}, "alarm": {}},
+    )
+
+
+# 최종 URL: /alarm/diagnose
+@alarm_bp.route("/diagnose", methods=["POST"])
+def diagnose():
+    """알람 하나를 AI 로 진단한다.
+
+    조회 범위는 담당자가 고른 계정 하나뿐이다. 대화가 아니라 요청 한 번이므로
+    앞선 진단의 내용이 다음 진단에 남지 않는다.
+    """
+    event_id = request.form.get("event_id", "")
+    account_id = request.form.get("account_id", "")
+    region = request.form.get("region", "")
+
+    item = event_store.get(event_id)
+    if item is None:
+        flash("진단할 이벤트를 찾지 못했습니다. 목록이 밀려났을 수 있습니다.", "error")
+        return redirect(url_for("alarm.index"))
+    event = item["record"]
+
+    try:
+        account = get_account(account_id)
+    except AccountError as e:
+        flash(str(e), "error")
+        return redirect(url_for("alarm.index"))
+
+    if account is None:
+        flash("계정을 고르세요.", "error")
+        return redirect(url_for("alarm.index"))
+
+    # 리전은 그 계정에 등록된 것 중에서만 고를 수 있다.
+    regions = account.get("regions") or []
+    if region not in regions:
+        region = regions[0] if regions else ""
+
+    # 발생 이력. DB 가 없어도 진단 자체는 진행하되, 이력이 없다는 사실을 모델에 알린다.
+    try:
+        history = fingerprint_history(event["fingerprint"])
+    except StatsUnavailable:
+        history = None
+
+    try:
+        text, commands = run_diagnose(event, account, region, history)
+    except AgentNotConfigured as e:
+        flash(f"진단을 실행할 수 없습니다: {e}", "error")
+        return redirect(url_for("alarm.index"))
+
+    _DIAGNOSES[event_id] = {
+        "text": text,
+        "commands": commands,
+        "account": account,
+        "region": region,
+        "history": history,
+    }
+    _audit_diagnosis(event, account, region, commands, "ok")
+
+    return redirect(url_for("alarm.index", diagnosed=event_id))

@@ -230,3 +230,192 @@ def run_agent(history, user_message):
         reply = "(모델이 빈 응답을 반환했습니다.)"
 
     return reply, used_tools
+
+
+# ----------------------------------------------------------------------
+# 4) 알람 진단
+# ----------------------------------------------------------------------
+# 채팅과 달리 '요청 한 번'으로 끝나는 기능이다. 대화 기록을 남기지 않으므로
+# 앞서 본 다른 고객사의 조회 결과가 다음 진단에 섞일 여지가 없다.
+#
+# 조회 대상 계정은 화면에서 담당자가 고른 값 하나로 고정되고,
+# g(요청 컨텍스트)에 실려서 도구에 전달된다. 모델은 계정을 인자로 받지 않는다.
+# 계정을 도구 인자로 두면 모델이 다른 고객사 계정 번호를 지어내 조회할 수 있다.
+
+# 진단 도구가 한 번에 모델에게 넘길 수 있는 출력 크기.
+# 콘솔 화면용 상한(awscli.MAX_OUTPUT, 20만자)과 일부러 다르게 잡았다.
+# 사람은 긴 JSON 을 스크롤해서 보면 되지만, 모델에게 넘기면 그대로 컨텍스트를
+# 채우고 비용이 된다. 잘렸다는 사실을 알려주면 --query 로 좁혀서 다시 부른다.
+DIAG_MAX_OUTPUT = 12_000
+
+# 도구 호출을 몇 번까지 허용할지. 거부된 명령을 모델이 계속 변형해가며
+# 시도하는 상황을 여기서 끊는다.
+DIAG_MAX_ITERATIONS = 12
+
+
+@beta_tool
+def aws_read(command: str) -> str:
+    """이 알람이 발생한 AWS 계정에서 읽기 전용 aws CLI 명령을 실행하고 결과를 돌려준다.
+
+    계정과 리전은 담당자가 화면에서 이미 정했으므로 명령에 쓰지 않는다.
+    --region, --profile 같은 옵션을 붙이면 거부된다.
+    describe/list/get 으로 시작하는 조회 명령만 실행할 수 있다.
+    출력이 크면 --query 나 --max-items 로 좁혀서 다시 부를 것.
+
+    Args:
+        command: 실행할 명령. 예) aws ec2 describe-instances --instance-ids i-0abc123
+    """
+    from flask import g
+
+    from app.awscli import run, CommandRejected, ExecutionError
+    from app.aws_session import get_env, SessionError
+
+    account = g.diag_account
+    region = g.diag_region
+
+    try:
+        env = get_env(account, region)
+        result = run(command, env, timeout=20)
+    except CommandRejected as e:
+        # 예외로 던지지 않고 문자열로 돌려준다.
+        # 던지면 tool_runner 루프가 그대로 죽고, 모델은 왜 안 됐는지 알 수 없다.
+        # 문자열로 주면 허용되는 형태로 스스로 고쳐서 다시 부른다.
+        g.diag_commands.append({"command": command, "outcome": "rejected", "detail": str(e)})
+        return f"[거부됨] {e}"
+    except ExecutionError as e:
+        g.diag_commands.append({"command": command, "outcome": "exec_failed", "detail": str(e)})
+        return f"[실행 실패] {e}"
+    except SessionError as e:
+        g.diag_commands.append({"command": command, "outcome": "no_credentials", "detail": str(e)})
+        return f"[자격증명 없음] {e}"
+
+    out = result["stdout"] or result["stderr"] or "(출력 없음)"
+    truncated = len(out) > DIAG_MAX_OUTPUT
+    if truncated:
+        out = out[:DIAG_MAX_OUTPUT]
+
+    g.diag_commands.append({
+        "command": command,
+        "outcome": "ok" if result["returncode"] == 0 else "failed",
+        "detail": f"{result['elapsed']}초",
+    })
+
+    header = f"$ {' '.join(result['argv'])}\n(종료코드 {result['returncode']})\n"
+    if truncated:
+        header += (
+            f"[출력이 {DIAG_MAX_OUTPUT}자에서 잘렸습니다. "
+            "--query 나 --max-items 로 범위를 좁혀 다시 조회하세요.]\n"
+        )
+    return header + out
+
+
+DIAGNOSE_SYSTEM_PROMPT = """당신은 AWS 운영 담당자를 돕는 진단 도우미입니다.
+알람 하나를 받아서, 담당자가 다음에 무엇을 볼지 판단할 수 있게 짧은 진단을 씁니다.
+
+작업 방식:
+- 알람 메시지와 meta 에 리소스 ID(i-..., vol-..., 알람 이름 등)가 있으면
+  aws_read 도구로 그 리소스의 현재 상태를 직접 확인하세요. 추측하지 마세요.
+- 조회는 필요한 만큼만 하세요. 관련 없는 리소스를 훑지 마세요.
+- 도구가 [거부됨] 을 돌려주면 허용되는 읽기 전용 명령으로 바꿔서 다시 시도하세요.
+- 확인할 수 없는 것은 확인할 수 없다고 쓰세요. 지어내지 마세요.
+
+답변 형식(한국어, 각 항목 1~3줄):
+## 추정 원인
+## 확인한 것
+## 다음에 확인할 것
+
+발생 이력이 주어지면 반드시 반영하세요. 처음 발생인지 반복되는 알람인지에 따라
+봐야 할 곳이 달라집니다. 이력이 '집계 불가'로 표시되면 그 사실을 밝히세요."""
+
+
+def _format_event(event, history):
+    """모델에게 넘길 알람 설명을 만든다."""
+    lines = [
+        "다음 알람을 진단해 주세요.",
+        "",
+        f"- 심각도: {event.get('severity')}",
+        f"- 출처(source): {event.get('source')}",
+        f"- 종류(event_type): {event.get('event_type')}",
+        f"- 발생 시각: {event.get('occurred_at')}",
+        f"- 메시지: {event.get('message')}",
+    ]
+
+    meta = event.get("meta") or {}
+    if meta:
+        import json as _json
+        lines.append(f"- meta: {_json.dumps(meta, ensure_ascii=False, default=str)[:2000]}")
+
+    lines.append("")
+    if history is None:
+        lines.append("발생 이력: 집계 불가 (이벤트 DB 를 조회할 수 없음)")
+    else:
+        lines.append(
+            f"발생 이력: 같은 종류의 알람이 전체 {history['total']}건, "
+            f"최근 {history['hours']}시간 안에 {history['recent']}건."
+        )
+        if history.get("first_seen"):
+            lines.append(
+                f"  처음 발생 {history['first_seen']}, 마지막 발생 {history['last_seen']}"
+            )
+        for s in history.get("samples", [])[:5]:
+            lines.append(f"  - {s['occurred_at']} [{s['severity']}] {s['message']}")
+
+    return "\n".join(lines)
+
+
+def diagnose(event, account, region, history=None):
+    """알람 하나를 진단한다. (진단문, 실행한 명령 목록) 을 돌려준다.
+
+    event   : 정규화된 이벤트 레코드
+    account : app.accounts 가 돌려준 계정 dict (조회 범위는 이 계정 하나뿐)
+    region  : 조회할 리전
+    history : app.stats.fingerprint_history 결과. 없으면 None.
+    """
+    from flask import g
+
+    problem = check_config()
+    if problem:
+        raise AgentNotConfigured(problem)
+
+    cfg = current_app.config
+    provider = cfg["AGENT_PROVIDER"]
+    client = _build_client(provider, cfg)
+
+    # 도구가 볼 값을 요청 컨텍스트에 실어둔다. 모델이 고를 수 없는 자리다.
+    g.diag_account = account
+    g.diag_region = region
+    g.diag_commands = []
+
+    runner = client.beta.messages.tool_runner(
+        model=_resolve_model(provider, cfg["AGENT_MODEL"]),
+        max_tokens=cfg["AGENT_MAX_TOKENS"],
+        system=DIAGNOSE_SYSTEM_PROMPT,
+        tools=[aws_read],
+        messages=[{"role": "user", "content": _format_event(event, history)}],
+        max_iterations=DIAG_MAX_ITERATIONS,
+        thinking={"type": "adaptive"},
+        output_config={"effort": cfg["AGENT_EFFORT"]},
+        **_provider_kwargs(provider, cfg),
+    )
+
+    final_message = None
+    try:
+        for message in runner:
+            final_message = message
+    except Exception as e:
+        is_botocore = type(e).__module__.split(".")[0] == "botocore"
+        is_no_creds = isinstance(e, RuntimeError) and "AWS credentials" in str(e)
+        if is_botocore or is_no_creds:
+            raise AgentNotConfigured(f"AWS 자격증명을 확인할 수 없습니다: {e}") from e
+        raise
+
+    reply = ""
+    if final_message is not None:
+        reply = "\n".join(
+            block.text for block in final_message.content if block.type == "text"
+        ).strip()
+
+    if not reply:
+        reply = "(모델이 빈 응답을 반환했습니다.)"
+
+    return reply, g.diag_commands

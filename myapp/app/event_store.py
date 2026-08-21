@@ -30,6 +30,18 @@ def recent(limit=20):
         return list(_events)[:limit]
 
 
+def get(event_id):
+    """event_id 로 이벤트 하나를 찾는다. 없으면 None.
+
+    진단 화면이 '어느 알람을 진단할지' 를 event_id 로 넘겨받기 때문에 필요하다.
+    """
+    with _lock:
+        for item in _events:
+            if item["record"].get("event_id") == event_id:
+                return item
+    return None
+
+
 def stats():
     """관리자 화면에 쓸 간단한 집계."""
     with _lock:

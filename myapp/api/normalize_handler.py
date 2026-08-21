@@ -5,6 +5,7 @@
 import hashlib
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -81,13 +82,68 @@ def _normalize_timestamp(value):
     return parsed.astimezone(timezone.utc).isoformat()
 
 
-def _fingerprint(event_type, source, message):
+# 지문을 만들기 전에 메시지에서 '매번 달라지는 부분'을 지우는 규칙.
+# 위에서부터 순서대로 적용된다. 순서가 중요하다 - 숫자를 먼저 지우면
+# UUID 나 인스턴스 ID 가 조각나서 알아볼 수 없게 된다.
+MASK_RULES = (
+    (re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I), "<uuid>"),
+    (re.compile(r"\barn:aws[a-z0-9-]*:\S+", re.I), "<arn>"),
+    (re.compile(r"\b(?:i|vol|sg|subnet|eni|ami|snap|vpc|rtb|igw|acl|fs|db)-[0-9a-f]{6,}\b", re.I), "<id>"),
+    (re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"), "<ip>"),
+    (re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}\S*"), "<time>"),
+    (re.compile(r"\b[0-9a-f]{12,}\b", re.I), "<hex>"),
+    (re.compile(r"\b\d+(?:\.\d+)?"), "<n>"),
+)
+
+# meta 안에 '이 알람의 이름'이 들어 있으면 그걸 지문의 기준으로 삼는다.
+# CloudWatch 알람은 AlarmName 이, Prometheus/Alertmanager 는 alertname 이 그 역할을 한다.
+# 이름이 있으면 메시지 본문이 어떻게 흔들리든 같은 알람으로 묶인다.
+ALARM_NAME_KEYS = ("alarmname", "alarm_name", "alertname", "alert_name")
+
+
+def message_template(message):
+    """메시지에서 매번 달라지는 값을 자리표시자로 바꾼 '틀'을 만든다.
+
+        "CPU usage 92.4% on i-0abc123456789def0"
+        -> "cpu usage <n>% on <id>"
+
+    이 틀이 같으면 같은 종류의 사건으로 본다.
+    """
+    text = message.lower()
+    for pattern, placeholder in MASK_RULES:
+        text = pattern.sub(placeholder, text)
+    # 자리표시자로 바뀌면서 생긴 공백 차이를 없앤다.
+    return " ".join(text.split())
+
+
+def _fingerprint(event_type, source, message, meta=None):
     """같은 종류의 이벤트인지 판단하는 지문(해시).
 
-    같은 에러가 1분에 500번 들어와도 지문이 같으므로,
-    나중에 '같은 지문은 5분에 한 번만 알람' 같은 억제 규칙을 걸 수 있다.
+    같은 에러가 1분에 500번 들어와도 지문이 같아야, '같은 지문은 5분에 한 번만
+    알람' 같은 억제 규칙이나 '이 알람이 최근 몇 번 났나' 집계가 성립한다.
+
+    주의: 메시지를 그대로 해시하면 안 된다. 실제 알람 메시지에는 측정값이
+    섞여 있어서("CPU 92%" / "CPU 87%") 매번 다른 지문이 나오고,
+    그러면 모든 이벤트가 서로 다른 종류로 취급되어 억제도 집계도 무의미해진다.
+
+    한계: 숫자를 전부 지우므로 "HTTP 500" 과 "HTTP 404" 도 같은 지문이 된다.
+    상태 코드처럼 값 자체가 사건의 종류를 가르는 경우는 메시지 본문이 아니라
+    meta 에 담아 보내야 구분된다(위 ALARM_NAME_KEYS 참고).
     """
-    raw = f"{event_type}|{source}|{message}".lower()
+    meta = meta or {}
+    key = ""
+    for name in ALARM_NAME_KEYS:
+        for k, v in meta.items():
+            if str(k).strip().lower() == name and str(v).strip():
+                key = str(v).strip().lower()
+                break
+        if key:
+            break
+
+    if not key:
+        key = message_template(message)
+
+    raw = f"{event_type}|{source}|{key}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -120,7 +176,14 @@ def normalize(raw):
     raw_severity = str(data.get("severity") or "info").strip().lower()
     severity = SEVERITY_MAP.get(raw_severity, "info")
 
-    # 4) 표준 레코드 완성
+    # 4) 표준 필드에 없는 나머지는 meta 에 몰아넣어 버리지 않고 보관한다.
+    #    지문이 meta 를 보기 때문에(알람 이름) 레코드보다 먼저 만들어야 한다.
+    meta = {
+        k: v for k, v in data.items()
+        if k not in ("message", "event_type", "source", "severity", "occurred_at")
+    }
+
+    # 5) 표준 레코드 완성
     return {
         "event_id": uuid.uuid4().hex,
         "event_type": event_type,
@@ -129,12 +192,8 @@ def normalize(raw):
         "message": message[:1000],          # 너무 긴 메시지는 자른다
         "occurred_at": _normalize_timestamp(data.get("occurred_at")),
         "received_at": _now_iso(),
-        "fingerprint": _fingerprint(event_type, source, message),
-        # 표준 필드에 없는 나머지는 meta 에 몰아넣어 버리지 않고 보관한다.
-        "meta": {
-            k: v for k, v in data.items()
-            if k not in ("message", "event_type", "source", "severity", "occurred_at")
-        },
+        "fingerprint": _fingerprint(event_type, source, message, meta),
+        "meta": meta,
     }
 
 

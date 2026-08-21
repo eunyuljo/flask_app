@@ -132,12 +132,17 @@ def _delta_text(change):
 def _table(slide, left, top, width, rows, headers, col_widths=None, row_h=Inches(0.32)):
     """간단한 표. python-pptx 기본 표 스타일은 요란해서 직접 칠한다."""
     n_rows, n_cols = len(rows) + 1, len(headers)
-    shape = slide.shapes.add_table(n_rows, n_cols, left, top, width, row_h * n_rows)
+    # 길이(EMU)는 정수여야 한다. 호출부에서 나눗셈으로 폭을 계산하면
+    # 파이썬 / 는 float 를 돌려주고, python-pptx 는 그걸 그대로 거부한다
+    # (TypeError: value must be an integral type). 여기서 한 번 정리한다.
+    shape = slide.shapes.add_table(
+        n_rows, n_cols, int(left), int(top), int(width), int(row_h * n_rows)
+    )
     table = shape.table
 
     if col_widths:
         for i, cw in enumerate(col_widths):
-            table.columns[i].width = cw
+            table.columns[i].width = int(cw)
 
     for r in range(n_rows):
         table.rows[r].height = row_h

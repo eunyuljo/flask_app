@@ -133,3 +133,74 @@ def collect(hours=24, top_sources=6):
         "timeline": timeline,
         "hours": hours,
     }
+
+
+def fingerprint_history(fingerprint, hours=168, sample=5):
+    """같은 지문(= 같은 종류)의 이벤트가 최근에 얼마나 났는지 돌려준다.
+
+    진단할 때 제일 먼저 필요한 정보다. 같은 알람이 '처음 발생'인지
+    '사흘째 매시간'인지에 따라 봐야 할 곳이 완전히 달라지기 때문이다.
+
+    지문이 제 역할을 해야만 의미가 있는 집계다
+    (api/normalize_handler.py 의 _fingerprint 참고).
+    """
+    try:
+        import psycopg
+    except ImportError as e:
+        raise StatsUnavailable("psycopg 가 설치되어 있지 않습니다.") from e
+
+    try:
+        with psycopg.connect(_psycopg_uri()) as conn, conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.events')")
+            if cur.fetchone()[0] is None:
+                raise StatsUnavailable("events 테이블이 없습니다.")
+
+            # 전체 기간 기준 총 횟수와 처음/마지막 발생 시각
+            cur.execute(
+                """
+                SELECT count(*), min(occurred_at), max(occurred_at)
+                FROM events WHERE fingerprint = %s
+                """,
+                (fingerprint,),
+            )
+            total, first_seen, last_seen = cur.fetchone()
+
+            # 최근 N시간 안에서의 횟수
+            cur.execute(
+                """
+                SELECT count(*) FROM events
+                WHERE fingerprint = %s
+                  AND occurred_at >= now() - make_interval(hours => %s)
+                """,
+                (fingerprint, hours),
+            )
+            recent = cur.fetchone()[0]
+
+            # 최근 몇 건의 실제 메시지. 값이 어떻게 변해왔는지(악화 중인지)를 본다.
+            cur.execute(
+                """
+                SELECT occurred_at, severity, message
+                FROM events WHERE fingerprint = %s
+                ORDER BY occurred_at DESC LIMIT %s
+                """,
+                (fingerprint, sample),
+            )
+            recent_rows = [
+                {"occurred_at": r[0], "severity": r[1], "message": r[2]}
+                for r in cur.fetchall()
+            ]
+    except StatsUnavailable:
+        raise
+    except Exception as e:
+        if type(e).__module__.split(".")[0] == "psycopg":
+            raise StatsUnavailable(f"DB 에 접속하지 못했습니다: {e}") from e
+        raise
+
+    return {
+        "total": total,
+        "recent": recent,
+        "hours": hours,
+        "first_seen": first_seen,
+        "last_seen": last_seen,
+        "samples": recent_rows,
+    }
