@@ -21,6 +21,7 @@ from app.views.agent import agent_bp
 from app.views.alarm import alarm_bp
 from app.views.admin import admin_bp
 from app.views.dashboard import dashboard_bp
+from app.views.explore import explore_bp
 
 
 def create_app(config_name=None):
@@ -117,6 +118,10 @@ def create_app(config_name=None):
     # 지표 화면을 admin 에 밀어넣지 않고 따로 뺐다. 관심사가 다르면 블루프린트를 나누는 게
     # 나중에 권한을 다르게 주거나 떼어내기 쉽다.
     app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
+
+    # explore 블루프린트: url_prefix="/explore"
+    # 질의어로 이벤트를 뒤져보는 화면. 대시보드(정해진 지표)와 목적이 달라서 따로 뒀다.
+    app.register_blueprint(explore_bp, url_prefix="/explore")
 
     # ------------------------------------------------------------------
     # CLI 명령 등록

@@ -1,0 +1,149 @@
+{# app/templates/explore.html
+   질의어로 이벤트를 조회하는 탐색 화면. 입력한 질의어가 어떤 SQL 로 바뀌는지도
+   함께 보여줘서, 질의어와 SQL 의 대응을 눈으로 익힐 수 있게 했다. #}
+
+{% extends "base.html" %}
+
+{% block title %}이벤트 탐색{% endblock %}
+{% block page_title %}이벤트 탐색{% endblock %}
+
+{% block topbar %}
+  <div class="filters">
+    {% for h in allowed_hours %}
+      <a href="{{ url_for('explore.index', q=query, hours=h) }}"
+         class="chip {% if h == hours %}on{% endif %}">{{ h }}h</a>
+    {% endfor %}
+  </div>
+{% endblock %}
+
+{% block content %}
+
+  {# 질의어 입력. GET 으로 보내야 결과 화면 주소를 그대로 공유할 수 있다. #}
+  <form class="qbar" method="get" action="{{ url_for('explore.index') }}">
+    <input type="text" name="q" value="{{ query }}" spellcheck="false"
+           autocomplete="off" placeholder='{severity="critical"}'>
+    {# 기간 선택을 유지하기 위해 같이 넘긴다. #}
+    <input type="hidden" name="hours" value="{{ hours }}">
+    <button type="submit">실행</button>
+  </form>
+
+  {% if error %}
+    <div class="flash error qerror">{{ error }}</div>
+  {% endif %}
+
+  <div class="grid two">
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>결과</h2>
+        {% if result %}
+          <span class="hint">
+            {% if result.kind == 'scalar' %}집계
+            {% elif result.kind == 'grouped' %}{{ result.rows | length }}개 그룹
+            {% else %}{{ result.rows | length }}건{% if result.truncated %} (상한){% endif %}
+            {% endif %}
+          </span>
+        {% endif %}
+      </div>
+      <div class="panel-body">
+        {% if not result %}
+          <p class="muted">질의어를 실행하면 결과가 여기에 표시됩니다.</p>
+
+        {% elif result.kind == 'scalar' %}
+          {# 숫자 하나뿐이면 표로 만들지 않는다. 크게 보여주는 편이 낫다. #}
+          <div class="hero">{{ result.rows[0][0] }}</div>
+          <p class="muted">최근 {{ hours }}시간</p>
+
+        {% elif result.rows | length == 0 %}
+          <p class="muted">조건에 맞는 이벤트가 없습니다. 기간을 넓히거나 조건을 완화해 보세요.</p>
+
+        {% elif result.kind == 'grouped' %}
+          {% set gmax = result.rows | map(attribute=1) | max %}
+          <div class="barlist">
+            {% for label, count in result.rows %}
+              <div class="barrow">
+                <div class="barlabel"><code>{{ label }}</code></div>
+                <div class="bartrack">
+                  <div class="barfill accent"
+                       style="width: {{ (count / gmax * 100) | round(1) }}%"
+                       title="{{ label }}: {{ count }}건"></div>
+                </div>
+                <div class="barvalue">{{ count }}</div>
+              </div>
+            {% endfor %}
+          </div>
+
+        {% else %}
+          <div class="tablewrap">
+            <table class="rows">
+              <tr><th>시각</th><th>심각도</th><th>출처</th><th>종류</th><th>메시지</th></tr>
+              {% for r in result.rows %}
+                <tr>
+                  <td class="nowrap">{{ r[0].strftime('%m-%d %H:%M') }}</td>
+                  <td class="sev-{{ r[1] }}"><span class="badge">{{ r[1] }}</span></td>
+                  <td><code>{{ r[2] }}</code></td>
+                  <td class="muted">{{ r[3] }}</td>
+                  <td>{{ r[4] }}</td>
+                </tr>
+              {% endfor %}
+            </table>
+          </div>
+          {% if result.truncated %}
+            <p class="muted">상한(200건)까지만 표시했습니다. 조건을 좁혀보세요.</p>
+          {% endif %}
+        {% endif %}
+      </div>
+    </section>
+
+    <div>
+      <section class="panel">
+        <div class="panel-head"><h2>예시</h2><span class="hint">누르면 실행</span></div>
+        <div class="panel-body">
+          <ul class="examples">
+            {% for q, desc in examples %}
+              <li>
+                <a href="{{ url_for('explore.index', q=q, hours=hours) }}"><code>{{ q }}</code></a>
+                <span class="muted">{{ desc }}</span>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </section>
+
+      <section class="panel" style="margin-top:14px">
+        <div class="panel-head"><h2>문법</h2></div>
+        <div class="panel-body">
+          <p class="muted" style="margin-top:0">쓸 수 있는 라벨</p>
+          <p>{% for l in labels %}<code>{{ l }}</code>{% if not loop.last %} {% endif %}{% endfor %}</p>
+
+          <p class="muted">연산자</p>
+          <table class="mini">
+            <tr><td><code>=</code></td><td>같음</td></tr>
+            <tr><td><code>!=</code></td><td>다름</td></tr>
+            <tr><td><code>=~</code></td><td>정규식 일치</td></tr>
+            <tr><td><code>!~</code></td><td>정규식 불일치</td></tr>
+          </table>
+
+          <p class="muted">집계</p>
+          <p><code>| count</code> · <code>| count by 라벨</code></p>
+        </div>
+      </section>
+
+      {% if result %}
+        {# 질의어가 어떤 SQL 이 되는지 보여준다.
+           값이 %s 자리표시자로 빠져 있는 것이 핵심이다. 사용자가 입력한 글자는
+           SQL 문장에 들어가지 않고 따로 전달된다. #}
+        <section class="panel" style="margin-top:14px">
+          <div class="panel-head">
+            <h2>생성된 SQL</h2><span class="hint">값은 파라미터로 분리됨</span>
+          </div>
+          <div class="panel-body">
+            <pre class="sql">{{ result.sql }}</pre>
+            <p class="muted">파라미터: <code>{{ result.params }}</code></p>
+          </div>
+        </section>
+      {% endif %}
+    </div>
+
+  </div>
+{% endblock %}

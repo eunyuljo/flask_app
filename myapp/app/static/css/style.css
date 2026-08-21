@@ -485,3 +485,49 @@ svg.chart g:hover .bar { filter: brightness(1.15); }
 
 /* 본문 h2 는 패널 제목이 대신하므로 여백만 줄인다. */
 .content > h2 { font-size: 1rem; margin: 22px 0 10px; }
+
+/* ==================================================================
+   12) 이벤트 탐색 (질의어)
+   ================================================================== */
+.qbar { display: flex; gap: 8px; margin-bottom: 14px; }
+.qbar input[type=text] {
+  flex: 1; width: auto; margin-top: 0;
+  /* 질의어는 기호가 많아 고정폭 글꼴이 읽기 편하다. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .88rem;
+}
+.qbar button { margin-top: 0; }
+.qerror { white-space: pre-wrap; font-size: .86rem; }
+
+/* 숫자 하나만 나오는 결과 */
+.hero { font-size: 2.6rem; font-weight: 700; letter-spacing: -.03em; line-height: 1.1; }
+
+/* 결과 표는 열이 많아 좁은 화면에서 넘칠 수 있다.
+   페이지 전체가 가로로 밀리지 않도록 표만 따로 스크롤시킨다. */
+.tablewrap { overflow-x: auto; }
+table.rows { font-size: .84rem; }
+table.rows th { width: auto; white-space: nowrap; }
+table.rows td { padding: 7px 9px; }
+td.nowrap { white-space: nowrap; color: var(--text-mute); }
+
+table.mini { width: auto; margin: 0 0 4px; font-size: .84rem; }
+table.mini td { border: 0; padding: 2px 14px 2px 0; }
+
+.examples { list-style: none; padding: 0; margin: 0; }
+.examples li { padding: 5px 0; border-bottom: 1px solid var(--border); }
+.examples li:last-child { border-bottom: 0; }
+.examples a { text-decoration: none; }
+.examples a code { color: var(--accent); }
+.examples .muted { display: block; font-size: .76rem; margin-top: 1px; }
+
+pre.sql {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0 0 8px;
+  font-size: .78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

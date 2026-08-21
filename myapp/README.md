@@ -16,15 +16,16 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 4. [화면과 URL](#화면과-url)
 5. [블루프린트 구조 이해하기](#블루프린트-구조-이해하기)
 6. [AI 에이전트](#ai-에이전트)
-7. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
-8. [환경변수 전체 목록](#환경변수-전체-목록)
-9. [알려진 한계](#알려진-한계)
+7. [이벤트 질의어](#이벤트-질의어)
+8. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
+9. [환경변수 전체 목록](#환경변수-전체-목록)
+10. [알려진 한계](#알려진-한계)
 
 ---
 
 ## 무엇을 하는 앱인가
 
-여섯 개의 블루프린트로 이루어져 있습니다.
+일곱 개의 블루프린트로 이루어져 있습니다.
 
 | 블루프린트 | url_prefix | 하는 일 |
 |---|---|---|
@@ -34,6 +35,7 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 | `alarm` | `/alarm` | 이벤트 접수 → Lambda로 정규화 → 알람 |
 | `admin` | `/admin` | 설정·라우트 확인 (관리자 계정만 접근) |
 | `dashboard` | `/dashboard` | PostgreSQL 집계 지표와 차트 |
+| `explore` | `/explore` | 질의어로 이벤트 조회 (PromQL 스타일) |
 
 핵심은 **각 기능이 서로의 코드를 건드리지 않는다**는 점입니다.
 `agent`를 추가할 때 `main`과 `auth`는 한 줄도 수정하지 않았습니다.
@@ -58,12 +60,13 @@ myapp/
 │   ├── agent_core.py           AI 에이전트의 도구 정의와 실행 루프
 │   ├── event_store.py          이벤트 임시 보관소 (메모리)
 │   ├── stats.py                대시보드용 집계 질의 (SQL)
+│   ├── query.py                이벤트 질의어 파서 + SQL 컴파일러
 │   ├── lambda_client.py        Lambda 호출 계층 (local / aws 전환)
 │   ├── views/                  블루프린트별 라우트
-│   │   ├── main.py  auth.py  agent.py  alarm.py  admin.py  dashboard.py
+│   │   ├── main.py  auth.py  agent.py  alarm.py  admin.py  dashboard.py  explore.py
 │   ├── templates/              Jinja 템플릿
 │   │   └── base.html  index.html  login.html  agent.html  alarm.html
-│   │       admin.html  dashboard.html
+│   │       admin.html  dashboard.html  explore.html
 │   └── static/                 정적 파일 (Flask 가 /static/... 으로 자동 공개)
 │       └── css/style.css       전체 스타일. base.html 에서 link 로 연결
 │
@@ -534,10 +537,50 @@ AWS_REGION=ap-northeast-2
 | `/alarm/send` | POST | 필요 | 폼으로 이벤트 전송 |
 | `/alarm/api/events` | POST | **불필요** | JSON 수집 엔드포인트 |
 | `/dashboard/` | GET | 필요 | 지표 대시보드 (`?hours=6\|24\|72`) |
+| `/explore/` | GET | 필요 | 질의어로 이벤트 조회 (`?q=`, `?hours=`) |
 | `/admin/` | GET | 관리자 | 설정·라우트 확인 |
 | `/admin/events/clear` | POST | 관리자 | 이벤트 비우기 |
 
 관리자 계정은 `ADMIN_USERS` 환경변수로 정합니다(기본 `admin`, 쉼표로 여러 명).
+
+---
+
+## 이벤트 질의어
+
+`/explore/` 에서 PromQL 을 흉내 낸 질의어로 이벤트를 조회할 수 있습니다.
+
+```
+{}                                          전체
+{severity="critical"}                       심각도가 critical
+{severity=~"critical|error"}                critical 또는 error (정규식)
+{source="web-01", severity!="info"}         web-01 의 info 아닌 것
+{message=~"디스크.*"}                        메시지가 '디스크' 로 시작
+{} | count by severity                      심각도별 건수
+{severity=~"critical|error"} | count by source   알람 대상을 출처별로
+{source=~"web-.*"} | count                  총 건수 하나만
+```
+
+**라벨**: `severity` `source` `type` `message` `fingerprint`
+**연산자**: `=` `!=` `=~`(정규식) `!~`
+**집계**: `| count` · `| count by 라벨`
+
+### 왜 SQL 을 직접 입력받지 않았나
+
+화면에서 SQL 을 그대로 받으면 편하지만, 그 순간 `DROP TABLE` 부터 다른 테이블 열람까지
+전부 열립니다. 문자열에서 위험한 낱말을 걸러내는 방식은 우회가 쉬워 방어가 되지 않습니다.
+
+그래서 **전용 질의어를 만들고 파라미터 바인딩된 SQL 로 컴파일**합니다.
+사용자가 쓴 글자는 SQL 문장에 절대 들어가지 않습니다.
+
+| | 어디서 오나 |
+|---|---|
+| 컬럼 이름 | `app/query.py` 의 `LABELS` 허용 목록 (사용자 입력 아님) |
+| 연산자 | `OPERATORS` 허용 목록 |
+| **값** | 전부 `%s` 파라미터로 분리 전달 |
+
+여기에 질의당 5초 제한(`statement_timeout`)을 걸어, 무거운 정규식이 DB 를 붙잡는 것도 막습니다.
+탐색 화면 우측 하단에 **생성된 SQL 과 파라미터가 그대로 표시**되므로,
+질의어가 무엇으로 바뀌는지 직접 확인할 수 있습니다.
 
 ---
 
