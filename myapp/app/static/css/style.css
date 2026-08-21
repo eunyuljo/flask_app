@@ -28,7 +28,11 @@
   --sev-warning:  #ca8a04;
   --sev-info:     #2563eb;
 
-  --radius: 10px;
+  --sidebar:   #131720;   /* 사이드바는 항상 어둡게 (라이트 모드에서도) */
+  --sidebar-fg:#a7b0bd;
+  --panel:     #ffffff;   /* 패널 내부 */
+
+  --radius: 8px;
   --gap:    16px;
   --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 1px 8px rgba(0, 0, 0, .04);
 }
@@ -51,6 +55,7 @@
     --warn-bg: #3a3113;  --warn-fg: #fde047;
     --info-bg: #16305c;  --info-fg: #93c5fd;
 
+    --panel:     #1b1f25;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3);
   }
 }
@@ -62,13 +67,87 @@
 
 body {
   font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 32px 20px 64px;
-  line-height: 1.65;
+  margin: 0;
+  /* 문서형(중앙 640px)이 아니라 화면 전체를 쓴다. 관측 화면은 가로 폭이 곧 정보량이다. */
+  font-size: 14px;
+  line-height: 1.55;
   color: var(--text);
   background: var(--bg);
 }
+
+/* 사이드바 + 본문 2단. 사이드바 폭은 고정, 본문이 남는 폭을 전부 가져간다. */
+.shell { display: grid; grid-template-columns: 216px 1fr; min-height: 100vh; }
+
+/* ---------- 사이드바 ---------- */
+.sidebar {
+  background: var(--sidebar);
+  color: var(--sidebar-fg);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 10px;
+  /* 스크롤을 내려도 메뉴는 남아 있어야 한다. */
+  position: sticky; top: 0; height: 100vh;
+}
+.brand {
+  display: flex; align-items: center; gap: 9px;
+  text-decoration: none; color: #fff;
+  padding: 4px 8px 16px;
+  font-size: .95rem; letter-spacing: -.01em;
+}
+.brand-mark {
+  width: 20px; height: 20px; border-radius: 6px; flex: none;
+  background: linear-gradient(135deg, #6ea8fe, #2a78d6);
+}
+.brand-text b { font-weight: 700; }
+.brand-text { font-weight: 400; opacity: .95; }
+
+.side-label {
+  font-size: .68rem; text-transform: uppercase; letter-spacing: .08em;
+  color: #5f6a7a; padding: 14px 9px 5px;
+}
+.side-nav { display: flex; flex-direction: column; gap: 1px; flex: 1; }
+.side-nav a {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 9px; border-radius: 6px;
+  text-decoration: none; color: var(--sidebar-fg); font-size: .875rem;
+  /* 가로줄로 접혔을 때 글자가 한 자씩 세로로 쪼개지는 것을 막는다. */
+  white-space: nowrap;
+}
+.side-nav a:hover { background: #1e2430; color: #fff; }
+/* 현재 보고 있는 화면 표시. 왼쪽 색 막대로 위치를 알려준다. */
+.side-nav a.on { background: #232b39; color: #fff; box-shadow: inset 2px 0 0 var(--accent); }
+.side-nav .ico { width: 15px; text-align: center; opacity: .8; font-size: .9em; }
+
+.side-foot { border-top: 1px solid #232a36; padding-top: 11px; margin-top: 10px; }
+.side-user { display: flex; align-items: center; gap: 8px; padding: 0 9px 8px; }
+.avatar {
+  width: 24px; height: 24px; border-radius: 50%; flex: none;
+  background: var(--accent); color: #fff;
+  display: grid; place-items: center; font-size: .72rem; font-weight: 700;
+}
+.side-user-name { font-size: .85rem; color: #dfe4ea; }
+.side-quiet { display: block; padding: 5px 9px; border-radius: 6px;
+              color: #6d7787; text-decoration: none; font-size: .82rem; }
+.side-quiet:hover { background: #1e2430; color: #fff; }
+
+/* ---------- 본문 ---------- */
+.main { min-width: 0; display: flex; flex-direction: column; }
+
+/* 제목줄. 스크롤해도 지금 어느 화면인지 보이도록 붙여둔다. */
+.topbar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap;
+  padding: 13px 22px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.page-title { font-size: 1.15rem; margin: 0; letter-spacing: -.01em; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
+
+.content { padding: 20px 22px 56px; }
+/* 글이 주인 화면(로그인/홈)은 너무 넓으면 읽기 나쁘므로 폭을 제한한다. */
+.content.narrow { max-width: 680px; }
 
 h1 { font-size: 1.7rem; margin: 0 0 4px; letter-spacing: -.02em; }
 h2 { font-size: 1.15rem; margin: 28px 0 10px; }
@@ -80,30 +159,6 @@ code {
   padding: 1px 5px;
   font-size: .88em;
 }
-
-/* ==================================================================
-   3) 네비게이션
-   ================================================================== */
-nav {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 12px;
-  margin-bottom: 24px;
-}
-nav a {
-  text-decoration: none;
-  color: var(--text-mute);
-  padding: 6px 10px;
-  border-radius: 7px;
-  font-size: .93rem;
-  transition: background .15s, color .15s;
-}
-nav a:hover { background: var(--surface); color: var(--text); }
-/* 오른쪽 끝으로 밀어내는 사용자 표시 */
-nav .who-nav { margin-left: auto; color: var(--text-mute); font-size: .85rem; }
 
 /* ==================================================================
    4) flash 메시지
@@ -318,10 +373,10 @@ td.warn { color: var(--err-fg); font-weight: 500; }
 .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 
 /* KPI 행 */
-.kpis { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 26px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+         gap: 12px; margin-bottom: 14px; }
 .kpi {
-  flex: 1 1 110px;
-  background: var(--surface);
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px 16px;
@@ -332,7 +387,7 @@ td.warn { color: var(--err-fg); font-weight: 500; }
 .kpi .k { display: block; font-size: .78rem; color: var(--text-mute); margin-top: 2px; }
 
 /* 가로 막대 목록 */
-.barlist { margin: 10px 0 26px; }
+.barlist { margin: 0; }
 .barrow {
   display: grid;
   grid-template-columns: 108px 1fr 46px;
@@ -361,7 +416,9 @@ td.warn { color: var(--err-fg); font-weight: 500; }
 .barvalue { font-size: .85rem; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* SVG 세로 막대 */
-svg.chart { width: 100%; height: auto; display: block; margin: 10px 0 6px; }
+/* SVG 는 폭을 100% 로 늘리면 viewBox 비율만큼 높이도 함께 커진다.
+   넓은 화면에서 차트만 지나치게 커지지 않도록 상한을 둔다. */
+svg.chart { width: 100%; height: auto; max-height: 230px; display: block; margin: 2px 0 4px; }
 svg.chart .bar       { fill: var(--chart-accent); }
 svg.chart .bar-empty { fill: var(--chart-track); }
 svg.chart .axis      { stroke: var(--chart-axis); stroke-width: 1; }
@@ -369,7 +426,62 @@ svg.chart .tick      { fill: var(--text-mute); font-size: 11px;
                        font-family: system-ui, sans-serif; }
 svg.chart g:hover .bar { filter: brightness(1.15); }
 
+@media (max-width: 860px) {
+  /* 좁은 화면에서는 사이드바를 위쪽 가로줄로 접는다. */
+  .shell { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; flex-direction: row;
+             align-items: center; gap: 6px; overflow-x: auto; padding: 8px 10px; }
+  .brand { padding: 0 10px 0 4px; }
+  .side-nav { flex-direction: row; flex: 1; gap: 2px; }
+  /* 항목이 눌려서 찌그러지지 않게 한다. 넘치면 사이드바가 가로로 스크롤된다. */
+  .side-nav a, .brand, .side-foot { flex: none; }
+  .side-label { display: none; }
+  .side-foot { border-top: 0; border-left: 1px solid #232a36;
+               padding: 0 0 0 10px; margin: 0; display: flex; align-items: center; gap: 8px; }
+  .side-user { padding: 0; }
+  .side-user-name { display: none; }
+  .topbar, .content { padding-left: 14px; padding-right: 14px; }
+}
 @media (max-width: 520px) {
   .barrow { grid-template-columns: 84px 1fr 38px; }
   .kpi .n { font-size: 1.5rem; }
 }
+
+/* ==================================================================
+   11) 패널 — 관측 화면의 기본 단위
+   ------------------------------------------------------------------
+   차트 하나하나를 제목이 달린 상자에 담는다. 상자가 경계를 만들어 주기 때문에
+   여러 지표를 한 화면에 늘어놓아도 서로 섞여 보이지 않는다.
+   높이를 고정하지 않고 내용에 따라 늘어나게 두어, 상자 안에 또 스크롤이
+   생기는 일을 피한다.
+   ================================================================== */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;            /* 그리드 안에서 내용이 넘칠 때 줄어들 수 있게 */
+}
+.panel-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.panel-head h2 { font-size: .875rem; margin: 0; font-weight: 600; }
+.panel-head .hint { font-size: .74rem; color: var(--text-mute); }
+.panel-body { padding: 14px; }
+
+/* 패널을 늘어놓는 격자.
+   auto-fit + minmax 로, 화면이 좁아지면 자동으로 한 줄에 하나씩 내려간다.
+   미디어 쿼리를 따로 쓰지 않아도 되는 이유다. */
+.grid { display: grid; gap: 14px; margin-bottom: 14px; }
+.grid.two { grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); }
+/* 각 패널이 제 내용만큼만 높이를 갖게 한다. 기본값(stretch)이면 옆 패널에
+   높이가 끌려가서 짧은 쪽 아래에 빈 공간이 크게 남는다. */
+.grid { align-items: start; }
+
+/* 본문 h2 는 패널 제목이 대신하므로 여백만 줄인다. */
+.content > h2 { font-size: 1rem; margin: 22px 0 10px; }

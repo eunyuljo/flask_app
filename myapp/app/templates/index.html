@@ -5,9 +5,9 @@
 {% extends "base.html" %}
 
 {% block title %}메인 페이지{% endblock %}
+{% block page_title %}Flask Blueprint 학습용 샘플{% endblock %}
 
 {% block content %}
-  <h1>Flask Blueprint 학습용 샘플</h1>
 
   {# username 은 views/main.py 의 render_template(..., username=username) 으로 넘어온 값이다. #}
   {% if username %}

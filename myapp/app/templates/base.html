@@ -17,45 +17,96 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-  <nav>
+{# ====================================================================
+   레이아웃 뼈대 — 관측 도구(Datadog 등)에서 흔한 2단 구성.
+     .shell  : 좌측 사이드바 + 우측 본문을 나누는 그리드
+     .sidebar: 이동 메뉴. 화면을 옮겨도 그대로 남아 있어야 하므로 sticky
+     .main   : 상단 제목줄(.topbar) + 내용(.content)
+   메뉴를 위쪽 가로줄이 아니라 왼쪽에 두면 가로 폭을 데이터에 더 쓸 수 있고,
+   메뉴가 늘어나도 줄바꿈으로 무너지지 않는다.
+   ==================================================================== #}
+<div class="shell">
+
+  <aside class="sidebar">
+    <a class="brand" href="{{ url_for('main.index') }}">
+      <span class="brand-mark"></span>
+      <span class="brand-text">Flask<b>Blueprint</b></span>
+    </a>
+
     {# 링크는 절대 "/auth/login" 처럼 직접 쓰지 않고 url_for("블루프린트명.함수명") 으로 만든다.
-       - url_for("main.index")  -> "/"
-       - url_for("auth.login")  -> "/auth/login"   (url_prefix 가 자동으로 반영된다)
-       - url_for("auth.logout") -> "/auth/logout"
-       이렇게 하면 app.py 에서 url_prefix 를 바꿔도 템플릿은 손댈 필요가 없다. #}
-    <a href="{{ url_for('main.index') }}">홈</a>
+       url_prefix 를 바꿔도 템플릿은 손댈 필요가 없다. #}
+    <nav class="side-nav">
+      {# request.endpoint 로 지금 보고 있는 화면을 알 수 있다.
+         현재 메뉴에 표시를 해 주면 "내가 어디 있는지" 를 바로 알 수 있다. #}
+      {% set ep = request.endpoint or '' %}
 
-    {# session 은 템플릿 안에서 별도 전달 없이 바로 쓸 수 있다(Flask 가 기본 제공). #}
-    {% if session.get('username') %}
-      {# 에이전트 페이지는 로그인해야 쓸 수 있으므로 로그인했을 때만 메뉴에 보여준다. #}
-      <a href="{{ url_for('dashboard.index') }}">대시보드</a>
-      <a href="{{ url_for('agent.index') }}">AI 에이전트</a>
-      <a href="{{ url_for('alarm.index') }}">이벤트</a>
-      {# 관리자 메뉴는 관리자에게만 보여준다.
-         단, '메뉴를 숨기는 것'은 보안이 아니다. 실제 차단은 admin 블루프린트의
-         before_request 가 하고, 여기서는 보이지 않게만 할 뿐이다. #}
-      {% if session.get('username') in config['ADMIN_USERS'] %}
-        <a href="{{ url_for('admin.index') }}">관리자</a>
+      <a href="{{ url_for('main.index') }}" class="{% if ep == 'main.index' %}on{% endif %}">
+        <span class="ico">◇</span>홈
+      </a>
+
+      {# session 은 템플릿 안에서 별도 전달 없이 바로 쓸 수 있다(Flask 가 기본 제공). #}
+      {% if session.get('username') %}
+        <div class="side-label">관측</div>
+        <a href="{{ url_for('dashboard.index') }}" class="{% if ep.startswith('dashboard.') %}on{% endif %}">
+          <span class="ico">▤</span>대시보드
+        </a>
+        <a href="{{ url_for('alarm.index') }}" class="{% if ep.startswith('alarm.') %}on{% endif %}">
+          <span class="ico">◈</span>이벤트
+        </a>
+
+        <div class="side-label">도구</div>
+        <a href="{{ url_for('agent.index') }}" class="{% if ep.startswith('agent.') %}on{% endif %}">
+          <span class="ico">✦</span>AI 에이전트
+        </a>
+        {# 관리자 메뉴는 관리자에게만 보여준다.
+           단, '메뉴를 숨기는 것'은 보안이 아니다. 실제 차단은 admin 블루프린트의
+           before_request 가 하고, 여기서는 보이지 않게만 할 뿐이다. #}
+        {% if session.get('username') in config['ADMIN_USERS'] %}
+          <a href="{{ url_for('admin.index') }}" class="{% if ep.startswith('admin.') %}on{% endif %}">
+            <span class="ico">⚙</span>관리자
+          </a>
+        {% endif %}
       {% endif %}
-      <a href="{{ url_for('auth.logout') }}">로그아웃</a>
-      <span class="who-nav">{{ session.get('username') }}님</span>
-    {% else %}
-      <a href="{{ url_for('auth.login') }}">로그인</a>
-    {% endif %}
-  </nav>
+    </nav>
 
-  {# flash() 로 넣어둔 메시지를 꺼내서 출력한다.
-     with_categories=true 를 주면 (카테고리, 메시지) 튜플로 받아 스타일을 구분할 수 있다.
-     한 번 꺼내면 세션에서 사라지므로 새로고침하면 더 이상 보이지 않는다. #}
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-      {% for category, message in messages %}
-        <div class="flash {{ category }}">{{ message }}</div>
-      {% endfor %}
-    {% endif %}
-  {% endwith %}
+    <div class="side-foot">
+      {% if session.get('username') %}
+        <div class="side-user">
+          <span class="avatar">{{ session.get('username')[0] | upper }}</span>
+          <span class="side-user-name">{{ session.get('username') }}</span>
+        </div>
+        <a class="side-quiet" href="{{ url_for('auth.logout') }}">로그아웃</a>
+      {% else %}
+        <a class="side-quiet" href="{{ url_for('auth.login') }}">로그인</a>
+      {% endif %}
+    </div>
+  </aside>
 
-  {# 자식 템플릿(index.html, login.html)이 채워 넣을 자리 #}
-  {% block content %}{% endblock %}
+  <main class="main">
+    {# 상단 줄. 왼쪽은 화면 제목, 오른쪽은 그 화면 전용 조작(예: 기간 선택).
+       자식 템플릿이 block 두 개만 채우면 된다. #}
+    <header class="topbar">
+      <h1 class="page-title">{% block page_title %}{{ self.title() }}{% endblock %}</h1>
+      <div class="topbar-actions">{% block topbar %}{% endblock %}</div>
+    </header>
+
+    <div class="content">
+      {# flash() 로 넣어둔 메시지를 꺼내서 출력한다.
+         with_categories=true 를 주면 (카테고리, 메시지) 튜플로 받아 스타일을 구분할 수 있다.
+         한 번 꺼내면 세션에서 사라지므로 새로고침하면 더 이상 보이지 않는다. #}
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="flash {{ category }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      {# 자식 템플릿이 채워 넣을 자리 #}
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+</div>
 </body>
 </html>

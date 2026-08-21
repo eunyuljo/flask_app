@@ -5,9 +5,9 @@
 {% extends "base.html" %}
 
 {% block title %}이벤트 / 알람{% endblock %}
+{% block page_title %}이벤트 접수{% endblock %}
 
 {% block content %}
-  <h1>이벤트 접수</h1>
   <p class="muted">
     실행 모드: <code>{{ mode }}</code>
     {% if mode == 'aws' %}

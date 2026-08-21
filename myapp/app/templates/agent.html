@@ -4,9 +4,9 @@
 {% extends "base.html" %}
 
 {% block title %}AI 에이전트{% endblock %}
+{% block page_title %}AI 에이전트{% endblock %}
 
 {% block content %}
-  <h1>AI 에이전트</h1>
   {# provider 는 어느 경로로 모델을 부르는지를 보여준다: claude_api 또는 bedrock #}
   <p class="muted">
     경로: <code>{{ provider }}</code> &middot; 모델: <code>{{ model }}</code>
