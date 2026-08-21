@@ -8,52 +8,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   {# 자식 템플릿에서 {% block title %} 을 덮어쓰지 않으면 아래 기본값이 쓰인다. #}
   <title>{% block title %}Flask Blueprint 샘플{% endblock %}</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; line-height: 1.6; }
-    nav { border-bottom: 1px solid #ddd; padding-bottom: 12px; margin-bottom: 24px; }
-    nav a { margin-right: 12px; text-decoration: none; color: #2563eb; }
-    .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; }
-    .flash.success { background: #dcfce7; color: #166534; }
-    .flash.error   { background: #fee2e2; color: #991b1b; }
-    label { display: block; margin-top: 12px; }
-    input[type=text], input[type=password] { padding: 6px; width: 220px; }
-    button { margin-top: 16px; padding: 8px 16px; cursor: pointer; }
-    .muted { color: #666; font-size: 0.9em; }
-    .chat { margin: 20px 0; }
-    .msg { padding: 10px 14px; border-radius: 8px; margin-bottom: 10px; }
-    .msg.user { background: #eff6ff; }
-    .msg.assistant { background: #f5f5f5; }
-    .msg .who { font-size: 0.8em; color: #666; margin-bottom: 4px; }
-    /* 모델 답변의 줄바꿈을 그대로 살린다. */
-    .msg .body { white-space: pre-wrap; }
-    .msg .tools { margin-top: 8px; font-size: 0.8em; color: #666; }
-    form.ask { display: flex; gap: 8px; align-items: center; }
-    form.ask input { flex: 1; width: auto; padding: 8px; }
-    form.ask button, form.reset button { margin-top: 0; }
-    form.reset { margin-top: 12px; }
-    /* 이벤트 카드 */
-    .event { border-left: 4px solid #ddd; padding: 8px 12px; margin-bottom: 12px; background: #fafafa; }
-    .event.sev-critical { border-left-color: #dc2626; }
-    .event.sev-error    { border-left-color: #ea580c; }
-    .event.sev-warning  { border-left-color: #ca8a04; }
-    .event.sev-info     { border-left-color: #2563eb; }
-    .event-head { margin-bottom: 4px; }
-    .badge { display: inline-block; padding: 1px 8px; border-radius: 10px;
-             background: #e5e5e5; font-size: 0.75em; margin-right: 6px; }
-    .sev-critical .badge { background: #fee2e2; color: #991b1b; }
-    .sev-error .badge    { background: #ffedd5; color: #9a3412; }
-    .sev-warning .badge  { background: #fef9c3; color: #854d0e; }
-    .sev-info .badge     { background: #dbeafe; color: #1e40af; }
-    /* 관리자 대시보드 */
-    .stats { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
-    .stat { background: #f5f5f5; border-radius: 8px; padding: 10px 16px; text-align: center; min-width: 74px; }
-    .stat .n { font-size: 1.5em; font-weight: bold; }
-    table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
-    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee;
-             vertical-align: top; font-weight: normal; }
-    th { width: 34%; color: #444; }
-    td.warn { color: #991b1b; }
-  </style>
+  {# 스타일시트 연결.
+     - CSS 파일은 app/static/ 안에 둔다. Flask 가 이 폴더를 /static/... 경로로 자동 공개한다.
+     - 경로를 "/static/css/style.css" 라고 직접 쓰지 않고 url_for 를 쓰는 이유는
+       링크에 url_for 를 쓰는 이유와 같다. 앱을 다른 경로 아래에 붙여도 주소가 알아서 맞춰진다.
+     - 이 한 줄이 base.html 에만 있으면 된다. 나머지 템플릿은 전부 base.html 을
+       상속하므로 자동으로 같은 스타일을 물려받는다. #}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
   <nav>
@@ -76,7 +37,7 @@
         <a href="{{ url_for('admin.index') }}">관리자</a>
       {% endif %}
       <a href="{{ url_for('auth.logout') }}">로그아웃</a>
-      <span style="color:#666;">({{ session.get('username') }}님)</span>
+      <span class="who-nav">{{ session.get('username') }}님</span>
     {% else %}
       <a href="{{ url_for('auth.login') }}">로그인</a>
     {% endif %}

@@ -1,0 +1,275 @@
+/* app/static/css/style.css
+   앱 전체의 스타일. base.html 에서 <link> 한 줄로 불러오고,
+   나머지 템플릿은 base.html 을 상속하므로 자동으로 적용된다. */
+
+/* ==================================================================
+   1) 디자인 토큰
+   ------------------------------------------------------------------
+   색과 여백을 CSS 변수로 한곳에 모아둔다. 값을 바꿀 때 이 블록만 고치면
+   전체가 따라 바뀐다. 아래 규칙들은 색상 코드를 직접 쓰지 않고 var() 로만 참조한다.
+   ================================================================== */
+:root {
+  --bg:        #ffffff;
+  --surface:   #f7f8fa;   /* 카드처럼 살짝 떠 보이는 면 */
+  --border:    #e3e6ea;
+  --text:      #1a1d21;
+  --text-mute: #62696f;
+  --accent:    #2563eb;
+  --accent-fg: #ffffff;
+
+  --ok-bg:   #dcfce7;  --ok-fg:   #14532d;
+  --err-bg:  #fee2e2;  --err-fg:  #7f1d1d;
+  --orange-bg: #ffedd5; --orange-fg: #7c2d12;   /* error 전용. critical 과 구분하기 위함 */
+  --warn-bg: #fef9c3;  --warn-fg: #713f12;
+  --info-bg: #dbeafe;  --info-fg: #1e3a8a;
+
+  --sev-critical: #dc2626;
+  --sev-error:    #ea580c;
+  --sev-warning:  #ca8a04;
+  --sev-info:     #2563eb;
+
+  --radius: 10px;
+  --gap:    16px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 1px 8px rgba(0, 0, 0, .04);
+}
+
+/* 다크 모드. 사용자 OS 설정을 따라간다.
+   토큰만 다시 정의하면 되고, 아래 규칙들은 하나도 안 고쳐도 된다.
+   -- 이게 색을 변수로 뺀 가장 큰 이유다. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:        #16181c;
+    --surface:   #1e2126;
+    --border:    #2e333a;
+    --text:      #e8eaed;
+    --text-mute: #9aa3ad;
+    --accent:    #6ea8fe;
+
+    --ok-bg:   #14351f;  --ok-fg:   #86efac;
+    --err-bg:  #3d1a1a;  --err-fg:  #fca5a5;
+    --orange-bg: #4a2410; --orange-fg: #fdba74;
+    --warn-bg: #3a3113;  --warn-fg: #fde047;
+    --info-bg: #16305c;  --info-fg: #93c5fd;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+  }
+}
+
+/* ==================================================================
+   2) 기본 레이아웃
+   ================================================================== */
+* { box-sizing: border-box; }
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+  line-height: 1.65;
+  color: var(--text);
+  background: var(--bg);
+}
+
+h1 { font-size: 1.7rem; margin: 0 0 4px; letter-spacing: -.02em; }
+h2 { font-size: 1.15rem; margin: 28px 0 10px; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 28px 0; }
+code {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: .88em;
+}
+
+/* ==================================================================
+   3) 네비게이션
+   ================================================================== */
+nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+  margin-bottom: 24px;
+}
+nav a {
+  text-decoration: none;
+  color: var(--text-mute);
+  padding: 6px 10px;
+  border-radius: 7px;
+  font-size: .93rem;
+  transition: background .15s, color .15s;
+}
+nav a:hover { background: var(--surface); color: var(--text); }
+/* 오른쪽 끝으로 밀어내는 사용자 표시 */
+nav .who-nav { margin-left: auto; color: var(--text-mute); font-size: .85rem; }
+
+/* ==================================================================
+   4) flash 메시지
+   ================================================================== */
+.flash {
+  padding: 11px 14px;
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  font-size: .93rem;
+}
+.flash.success { background: var(--ok-bg);  color: var(--ok-fg); }
+.flash.error   { background: var(--err-bg); color: var(--err-fg); }
+
+/* ==================================================================
+   5) 폼
+   ================================================================== */
+label { display: block; margin-top: 14px; font-size: .9rem; color: var(--text-mute); }
+
+input[type=text], input[type=password] {
+  display: block;
+  margin-top: 5px;
+  padding: 9px 11px;
+  width: 260px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: .95rem;
+}
+/* 키보드로 이동했을 때 지금 어디에 있는지 보이게 한다. 접근성상 중요하다. */
+input:focus-visible, button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button {
+  margin-top: 18px;
+  padding: 9px 18px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: inherit;
+  font-size: .93rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter .15s;
+}
+button:hover { filter: brightness(1.08); }
+/* 보조 동작(대화 초기화, 이벤트 비우기)은 눈에 덜 띄게 */
+form.reset button, form.danger button {
+  background: transparent;
+  color: var(--text-mute);
+  border-color: var(--border);
+}
+form.reset button:hover, form.danger button:hover {
+  color: var(--err-fg);
+  border-color: var(--err-fg);
+  filter: none;
+}
+
+.muted { color: var(--text-mute); font-size: .88rem; }
+
+/* ==================================================================
+   6) 채팅 (agent)
+   ================================================================== */
+.chat { margin: 20px 0; }
+.msg {
+  padding: 11px 14px;
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+}
+.msg.user      { background: var(--info-bg); border-color: transparent; }
+.msg.assistant { background: var(--surface); }
+.msg .who  { font-size: .75rem; color: var(--text-mute); margin-bottom: 4px;
+             text-transform: uppercase; letter-spacing: .04em; }
+/* 모델 답변의 줄바꿈을 그대로 살린다. */
+.msg .body  { white-space: pre-wrap; }
+.msg .tools { margin-top: 9px; font-size: .78rem; color: var(--text-mute); }
+
+form.ask { display: flex; gap: 8px; align-items: stretch; margin-top: 18px; }
+form.ask input  { flex: 1; width: auto; margin-top: 0; }
+form.ask button { margin-top: 0; white-space: nowrap; }
+form.reset { margin-top: 12px; }
+
+/* ==================================================================
+   7) 이벤트 카드 (alarm)
+   ------------------------------------------------------------------
+   왼쪽 색 띠로 심각도를 구분한다. 색만으로 구분하면 색각 이상이 있는 사용자가
+   못 알아보므로, 옆에 심각도 이름(.badge)을 글자로도 표시한다.
+   ================================================================== */
+.event {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border);
+  border-radius: var(--radius);
+  padding: 11px 14px;
+  margin-bottom: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.event.sev-critical { border-left-color: var(--sev-critical); }
+.event.sev-error    { border-left-color: var(--sev-error); }
+.event.sev-warning  { border-left-color: var(--sev-warning); }
+.event.sev-info     { border-left-color: var(--sev-info); }
+
+.event-head { margin-bottom: 5px; display: flex; align-items: center;
+              gap: 6px; flex-wrap: wrap; }
+
+.badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--text-mute);
+  font-size: .72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+.sev-critical .badge { background: var(--err-bg);  color: var(--err-fg); }
+.sev-error .badge    { background: var(--orange-bg); color: var(--orange-fg); }
+.sev-warning .badge  { background: var(--warn-bg); color: var(--warn-fg); }
+.sev-info .badge     { background: var(--info-bg); color: var(--info-fg); }
+
+/* ==================================================================
+   8) 관리자 대시보드
+   ================================================================== */
+.stats { display: flex; gap: 10px; flex-wrap: wrap; margin: 16px 0 24px; }
+.stat {
+  flex: 1 1 88px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+.stat .n { display: block; font-size: 1.6rem; font-weight: 700; line-height: 1.2; }
+.stat     { font-size: .8rem; color: var(--text-mute); }
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 18px;
+  font-size: .92rem;
+}
+th, td {
+  text-align: left;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  font-weight: normal;
+}
+th { width: 34%; color: var(--text-mute); }
+tr:last-child th, tr:last-child td { border-bottom: 0; }
+td.warn { color: var(--err-fg); font-weight: 500; }
+
+/* ==================================================================
+   9) 좁은 화면
+   ================================================================== */
+@media (max-width: 520px) {
+  body { padding: 20px 14px 48px; }
+  nav .who-nav { margin-left: 0; width: 100%; }
+  form.ask { flex-direction: column; }
+  th { width: 42%; }
+}

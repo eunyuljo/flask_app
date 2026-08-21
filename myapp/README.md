@@ -59,8 +59,10 @@ myapp/
 │   ├── lambda_client.py        Lambda 호출 계층 (local / aws 전환)
 │   ├── views/                  블루프린트별 라우트
 │   │   ├── main.py  auth.py  agent.py  alarm.py  admin.py
-│   └── templates/              Jinja 템플릿
-│       └── base.html  index.html  login.html  agent.html  alarm.html  admin.html
+│   ├── templates/              Jinja 템플릿
+│   │   └── base.html  index.html  login.html  agent.html  alarm.html  admin.html
+│   └── static/                 정적 파일 (Flask 가 /static/... 으로 자동 공개)
+│       └── css/style.css       전체 스타일. base.html 에서 link 로 연결
 │
 └── api/                        ─── AWS Lambda 함수 ───
     └── normalize_handler.py    이벤트 정규화 → DB 적재 → 알람 발송

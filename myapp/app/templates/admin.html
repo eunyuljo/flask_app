@@ -45,12 +45,14 @@
     <table>
       {% for item in events %}
         <tr>
-          <th><span class="badge">{{ item.record.severity }}</span></th>
+          <th class="sev-{{ item.record.severity }}"><span class="badge">{{ item.record.severity }}</span></th>
           <td>{{ item.record.message }} <span class="muted">({{ item.record.source }})</span></td>
         </tr>
       {% endfor %}
     </table>
-    <form action="{{ url_for('admin.clear_events') }}" method="post">
+    {# 되돌릴 수 없는 동작이라 주요 버튼(파란색)이 아니라 보조 스타일을 준다.
+       실수로 누르는 것을 줄이려는 의도다. #}
+    <form action="{{ url_for('admin.clear_events') }}" method="post" class="danger">
       <button type="submit">목록 비우기</button>
     </form>
   {% endif %}
