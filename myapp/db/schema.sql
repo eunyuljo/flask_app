@@ -233,10 +233,31 @@ CREATE TABLE IF NOT EXISTS incidents (
 
     author      TEXT        NOT NULL,
 
-    -- draft     : 작성 중
-    -- published : 고객사에 낸 것. 더 고치지 않는다.
+    -- 내부 RCA 의 상태.
+    --   draft     : 작성 중
+    --   published : 내부 확정. 더 고치지 않는다.
+    -- 고객 제출본과 시점이 다르다. 보통 내부에서 먼저 정리하고 며칠 뒤 나간다.
     status      TEXT        NOT NULL DEFAULT 'draft'
                 CHECK (status IN ('draft', 'published')),
+
+    -- ---- 고객 제출본 -------------------------------------------------
+    -- 내부 RCA 와 독자가 다르다. 같은 사실을 쓰되 표현과 입도가 달라진다.
+    --   내부  : 알람 하나하나, i-0abc123 / sg-pay / #3 · admin · OPS-1600
+    --   고객  : 마일스톤 4~6줄, 내부 식별자와 사람 이름 없음
+    -- 그래서 칸을 따로 둔다. 다만 기록과 근거(타임라인 원본)는 하나다.
+    -- 두 벌로 관리하면 나중에 어긋났을 때 어느 쪽이 맞는지 알 수 없다.
+    customer_timeline   TEXT NOT NULL DEFAULT '',
+    customer_impact     TEXT NOT NULL DEFAULT '',
+    customer_cause      TEXT NOT NULL DEFAULT '',
+    customer_action     TEXT NOT NULL DEFAULT '',
+    customer_prevention TEXT NOT NULL DEFAULT '',
+
+    --   none  : 아직 안 만듦
+    --   draft : 작성 중
+    --   sent  : 고객사에 냄. 더 고치지 않는다.
+    customer_status TEXT NOT NULL DEFAULT 'none'
+                CHECK (customer_status IN ('none', 'draft', 'sent')),
+    customer_sent_at TIMESTAMPTZ,
 
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -248,3 +269,34 @@ CREATE TABLE IF NOT EXISTS incidents (
 
 CREATE INDEX IF NOT EXISTS idx_incidents_window
     ON incidents (started_at DESC);
+
+
+-- ======================================================================
+-- 나중에 추가된 열 보정
+-- ----------------------------------------------------------------------
+-- CREATE TABLE IF NOT EXISTS 는 테이블이 이미 있으면 아무 일도 하지 않는다.
+-- 그래서 위에서 열을 추가해도 기존 설치에는 반영되지 않는다.
+-- 이 프로젝트에는 마이그레이션 도구가 없으므로, init-db 를 다시 돌리면
+-- 따라잡을 수 있게 여기에 적어둔다. 전부 IF NOT EXISTS 라 여러 번 실행해도 된다.
+-- ======================================================================
+
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS sources TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS customer_timeline   TEXT NOT NULL DEFAULT '';
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS customer_impact     TEXT NOT NULL DEFAULT '';
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS customer_cause      TEXT NOT NULL DEFAULT '';
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS customer_action     TEXT NOT NULL DEFAULT '';
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS customer_prevention TEXT NOT NULL DEFAULT '';
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS customer_status TEXT NOT NULL DEFAULT 'none';
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS customer_sent_at TIMESTAMPTZ;
+
+-- 열만 추가하면 CHECK 이 따라오지 않는다. 제약이 반쪽만 걸린 상태가
+-- 제일 나쁘므로(새 설치에만 걸림) 이름을 지정해 조건부로 붙인다.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'incidents_customer_status_check'
+    ) THEN
+        ALTER TABLE incidents ADD CONSTRAINT incidents_customer_status_check
+            CHECK (customer_status IN ('none', 'draft', 'sent'));
+    END IF;
+END $$;

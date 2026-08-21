@@ -21,13 +21,16 @@
       <tr><td class="fname">계정 / 리전</td><td><code>{{ item.account_id }}</code> / <code>{{ item.region }}</code></td></tr>
     {% endif %}
     <tr><td class="fname">작성자</td><td>{{ item.author }}</td></tr>
-    <tr><td class="fname">상태</td><td>{{ labels[item.status] }}
+    <tr><td class="fname">내부 RCA</td><td>{{ labels[item.status] }}
       {% if item.published_at %}&middot; {{ item.published_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}
+    </td></tr>
+    <tr><td class="fname">고객 제출본</td><td>{{ customer_labels[item.customer_status] }}
+      {% if item.customer_sent_at %}&middot; {{ item.customer_sent_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}
     </td></tr>
   </table>
 
-  {# ---- 사람이 쓰는 칸 ---------------------------------------------- #}
-  <h2>보고서 내용</h2>
+  {# ---- 내부 RCA: 사람이 쓰는 칸 ------------------------------------ #}
+  <h2>내부 RCA</h2>
   <p class="muted">
     이 네 칸은 <strong>앱이 채우지 않습니다.</strong>
     아래 타임라인을 근거로 직접 작성하세요.
@@ -55,6 +58,67 @@
       <h3>{{ field_labels[field] }}</h3>
       <div class="msg assistant"><div class="body">{{ item[field] or '(작성되지 않음)' }}</div></div>
     {% endfor %}
+  {% endif %}
+
+  {# ---- 고객 제출본 ---------------------------------------------------- #}
+  {# 내부 RCA 와 기록은 공유하고 출력만 나눈다.
+     여기 들어가는 것에는 계정 번호·리소스 ID·티켓 번호·작업자 이름이
+     들어가면 안 된다. 그걸 빼는 게 이 문서를 따로 만드는 이유다. #}
+  <hr>
+  <h2>고객 제출본 <span class="muted">— {{ customer_labels[item.customer_status] }}</span></h2>
+  <p class="muted">
+    독자가 다릅니다. <strong>계정 번호·리소스 ID·티켓 번호·작업자 이름은 넣지 마세요.</strong>
+    경과는 알람 하나하나가 아니라 마일스톤 4~6줄로 씁니다.
+  </p>
+
+  {% if item.customer_status != 'sent' %}
+    <form action="{{ url_for('incident.customer_draft', incident_id=item.id) }}" method="post">
+      <button type="submit">초안 채우기</button>
+      <span class="muted">
+        기록에서 시각을 뽑아 경과 초안을 만들고, 내부 RCA 내용을 복사해 넣습니다.
+        이미 쓴 칸은 덮어쓰지 않습니다.
+      </span>
+    </form>
+
+    <form action="{{ url_for('incident.customer_save', incident_id=item.id) }}" method="post" class="wo-form">
+      <label>
+        {{ customer_field_labels['customer_impact'] }}
+        <textarea name="customer_impact" rows="3">{{ item.customer_impact }}</textarea>
+      </label>
+      <label>
+        {{ customer_field_labels['customer_timeline'] }}
+        <textarea name="customer_timeline" rows="8">{{ item.customer_timeline }}</textarea>
+      </label>
+      {% for field in ['customer_cause', 'customer_action', 'customer_prevention'] %}
+        <label>
+          {{ customer_field_labels[field] }}
+          <textarea name="{{ field }}" rows="3">{{ item[field] }}</textarea>
+        </label>
+      {% endfor %}
+      <button type="submit">저장</button>
+    </form>
+
+    {% if item.customer_status != 'none' %}
+      <form action="{{ url_for('incident.customer_send', incident_id=item.id) }}" method="post">
+        <p class="muted">
+          제출하면 더 이상 고칠 수 없습니다. 경과와 원인이 비어 있으면 제출되지 않습니다.
+        </p>
+        <button type="submit">고객사 제출 상태로 바꾸기</button>
+      </form>
+    {% endif %}
+  {% else %}
+    {% for field in ['customer_impact', 'customer_timeline', 'customer_cause',
+                     'customer_action', 'customer_prevention'] %}
+      <h3>{{ customer_field_labels[field] }}</h3>
+      <div class="msg assistant"><div class="body">{{ item[field] or '(작성되지 않음)' }}</div></div>
+    {% endfor %}
+  {% endif %}
+
+  {% if item.customer_status != 'none' %}
+    <p>
+      <a href="{{ url_for('incident.customer_report', incident_id=item.id) }}">고객 제출본 내려받기 (Markdown)</a>
+      <span class="muted">&mdash; 근거 표는 들어가지 않습니다</span>
+    </p>
   {% endif %}
 
   {# ---- 앱이 모은 근거 ------------------------------------------------ #}
@@ -214,6 +278,9 @@
     {% endif %}
 
     <hr>
-    <p><a href="{{ url_for('incident.report', incident_id=item.id) }}">사후 보고서 내려받기 (Markdown)</a></p>
+    <p>
+      <a href="{{ url_for('incident.report', incident_id=item.id) }}">내부 RCA 내려받기 (Markdown)</a>
+      <span class="muted">&mdash; 근거 표를 전부 포함합니다</span>
+    </p>
   {% endif %}
 {% endblock %}

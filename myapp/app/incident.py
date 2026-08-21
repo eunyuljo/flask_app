@@ -17,7 +17,10 @@ from flask import current_app
 LEAD_MINUTES = 30
 TAIL_MINUTES = 30
 
-STATUS_LABEL = {"draft": "작성 중", "published": "제출됨"}
+# 내부 RCA 상태. 고객 제출본과 시점이 다르므로 라벨도 구분한다.
+STATUS_LABEL = {"draft": "작성 중", "published": "내부 확정"}
+
+CUSTOMER_STATUS_LABEL = {"none": "미작성", "draft": "작성 중", "sent": "고객사 제출됨"}
 
 # 사람이 쓰는 칸. 앱은 절대 채우지 않는다.
 NARRATIVE_FIELDS = ("impact", "cause", "action", "prevention")
@@ -27,6 +30,21 @@ FIELD_LABEL = {
     "cause": "원인",
     "action": "조치",
     "prevention": "재발 방지",
+}
+
+# 고객 제출본의 칸. 내부 칸과 별도로 둔다 - 같은 사실을 쓰더라도
+# 표현과 입도가 달라지기 때문이다. 다만 기록과 근거는 하나다.
+CUSTOMER_FIELDS = (
+    "customer_timeline", "customer_impact", "customer_cause",
+    "customer_action", "customer_prevention",
+)
+
+CUSTOMER_FIELD_LABEL = {
+    "customer_timeline": "경과",
+    "customer_impact": "영향",
+    "customer_cause": "원인",
+    "customer_action": "조치",
+    "customer_prevention": "재발 방지",
 }
 
 
@@ -357,3 +375,111 @@ def assemble(item):
 def _has_table(cur, name):
     cur.execute("SELECT to_regclass(%s)", (f"public.{name}",))
     return cur.fetchone()[0] is not None
+
+
+# ----------------------------------------------------------------------
+# 고객 제출본
+# ----------------------------------------------------------------------
+# 내부 RCA 와 기록은 공유하고 출력만 나눈다. 새 테이블을 만들지 않는 이유는
+# 근거가 두 벌이 되면 나중에 어긋났을 때 어느 쪽이 맞는지 알 수 없어서다.
+# 고객 제출본은 내부 기록에서 '골라내고 다듬은 파생물' 이지 별개의 사실이 아니다.
+
+def update_customer(incident_id, fields):
+    """고객 제출본의 칸을 저장한다. 허용된 칸만 갱신한다."""
+    unknown = set(fields) - set(CUSTOMER_FIELDS)
+    if unknown:
+        raise IncidentError(f"고칠 수 없는 항목입니다: {', '.join(sorted(unknown))}")
+    if not fields:
+        return
+
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure_table(cur)
+        assignments = ", ".join(f"{k} = %s" for k in fields)
+        # 아직 안 만들었으면 작성 중으로 올린다.
+        cur.execute(
+            f"UPDATE incidents SET {assignments}, "
+            f"customer_status = CASE WHEN customer_status = 'none' THEN 'draft' "
+            f"                       ELSE customer_status END, "
+            f"updated_at = now() "
+            f"WHERE id = %s AND customer_status <> 'sent' RETURNING id",
+            list(fields.values()) + [incident_id],
+        )
+        if cur.fetchone() is None:
+            current = get(incident_id)
+            if current is None:
+                raise IncidentError("장애 기록을 찾지 못했습니다.")
+            raise IncidentError("이미 고객사에 제출된 보고서는 고칠 수 없습니다.")
+
+
+def send_customer(incident_id):
+    """고객 제출본을 제출 상태로 바꾼다.
+
+    내부 RCA 의 확정과 별개다. 보통 내부에서 먼저 정리하고 며칠 뒤 나간다.
+    """
+    item = get(incident_id)
+    if item is None:
+        raise IncidentError("장애 기록을 찾지 못했습니다.")
+
+    missing = [
+        CUSTOMER_FIELD_LABEL[f]
+        for f in ("customer_timeline", "customer_cause")
+        if not item[f].strip()
+    ]
+    if missing:
+        raise IncidentError(
+            f"{' / '.join(missing)} 칸이 비어 있습니다. "
+            "이 둘이 고객 보고서의 본체입니다."
+        )
+
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE incidents SET customer_status = 'sent', customer_sent_at = now() "
+            "WHERE id = %s AND customer_status <> 'sent' RETURNING id",
+            (incident_id,),
+        )
+        if cur.fetchone() is None:
+            raise IncidentError("이미 제출된 보고서입니다.")
+
+
+def draft_customer(item, data):
+    """고객 제출본 초안을 만든다. 저장하지 않고 값만 돌려준다.
+
+    타임라인은 원본을 마일스톤으로 접는다. 알람 17줄을 그대로 내보낼 수 없고,
+    그렇다고 사람이 빈 칸에서 시작하게 할 이유도 없다.
+
+    여기서 만드는 문장은 '시각 + 중립적인 사실' 까지다.
+    "원인 조사 착수" 같은 것은 앱이 알 수 없으므로 사람이 써넣어야 한다.
+    내부 식별자(i-..., sg-..., 티켓 번호, 작업자 이름)는 절대 넣지 않는다.
+    그걸 빼는 게 이 문서를 따로 만드는 이유이기 때문이다.
+    """
+    lines = []
+    events = data["events"]
+
+    if events:
+        first, last = events[0], events[-1]
+        lines.append((first["occurred_at"], "모니터링 알람 감지"))
+        if last["occurred_at"] != first["occurred_at"]:
+            lines.append((last["occurred_at"], "마지막 알람 발생"))
+
+    for w in data["works"]:
+        # 티켓 번호와 작업자는 뺀다. 작업이 있었다는 사실만 남긴다.
+        lines.append((w["created_at"], f"작업 수행: {w['title']}"))
+
+    if data["rdiff"] and data["snap_after"]:
+        lines.append((data["snap_after"]["collected_at"], "설정 변경 확인"))
+
+    lines.sort(key=lambda x: x[0])
+    timeline = "\n".join(f"{at:%H:%M}  {text}" for at, text in lines)
+    if timeline:
+        timeline += "\n\n(위는 기록에서 뽑은 시각입니다. 문장을 고치고, "
+        timeline += "조사 착수·복구 확인 같은 항목을 직접 채워 주세요.)"
+
+    # 서술은 내부 내용을 복사해 넣는다. 빈 칸에서 다시 쓰는 게 아니라
+    # 다듬는 일이 되도록. 내부 식별자가 섞여 있으므로 화면에서 경고한다.
+    return {
+        "customer_timeline": timeline,
+        "customer_impact": item["impact"],
+        "customer_cause": item["cause"],
+        "customer_action": item["action"],
+        "customer_prevention": item["prevention"],
+    }

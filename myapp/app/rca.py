@@ -6,7 +6,9 @@
 # 읽는 사람이 둘을 구분할 수 있어야 한다. 섞어놓으면 "앱이 원인을 판정했다" 로
 # 읽히고, 그건 이 문서가 절대 하면 안 되는 주장이다.
 
-from app.incident import FIELD_LABEL, STATUS_LABEL
+from app.incident import (
+    FIELD_LABEL, STATUS_LABEL, CUSTOMER_FIELD_LABEL, CUSTOMER_STATUS_LABEL,
+)
 
 KIND_MARK = {"alarm": "알람", "change": "변경", "work": "작업"}
 
@@ -144,5 +146,53 @@ def to_markdown(item, data):
     a("")
     a("타임라인·알람 요약·리소스 변경은 기록에서 자동으로 모았습니다.")
     a("영향·원인·조치·재발 방지는 작성자가 직접 쓴 것입니다.")
+
+    return "\n".join(L)
+
+
+# ----------------------------------------------------------------------
+# 고객 제출본
+# ----------------------------------------------------------------------
+# 내부 RCA 와 무엇이 다른지가 이 함수의 전부다.
+#   들어가지 않는 것: 계정 번호, 리소스 ID, 스냅샷 번호, 티켓 번호,
+#                     작업자 이름, 지문, 출처(내부 서비스 이름), 알람 원문
+#   들어가는 것     : 발생 구간, 심각도, 사람이 쓴 경과와 서술
+#
+# 근거 표(타임라인 원본, 알람 요약, 리소스 변경 목록)는 통째로 빠진다.
+# 그건 우리가 조사한 과정이지 고객이 받을 문서가 아니다.
+
+def to_customer_markdown(item):
+    """고객사에 낼 장애보고서를 Markdown 으로 만든다."""
+    L = []
+    a = L.append
+
+    a(f"# 장애 보고서 — {item['title']}")
+    a("")
+
+    a("| 항목 | 값 |")
+    a("|---|---|")
+    if item["customer"]:
+        a(f"| 고객사 | {item['customer']} |")
+    a(f"| 발생 구간 | {_fmt_window(item)} |")
+    a(f"| 심각도 | {item['severity']} |")
+    if item["customer_sent_at"]:
+        a(f"| 작성 | {item['customer_sent_at']:%Y-%m-%d} |")
+    a("")
+
+    a(f"## {CUSTOMER_FIELD_LABEL['customer_impact']}")
+    a("")
+    a(item["customer_impact"].strip() or "_(작성되지 않음)_")
+    a("")
+
+    a(f"## {CUSTOMER_FIELD_LABEL['customer_timeline']}")
+    a("")
+    a(item["customer_timeline"].strip() or "_(작성되지 않음)_")
+    a("")
+
+    for field in ("customer_cause", "customer_action", "customer_prevention"):
+        a(f"## {CUSTOMER_FIELD_LABEL[field]}")
+        a("")
+        a(item[field].strip() or "_(작성되지 않음)_")
+        a("")
 
     return "\n".join(L)

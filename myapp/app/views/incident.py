@@ -11,8 +11,11 @@ from flask import (
 
 from app import incident
 from app.accounts import list_accounts, get_account, by_customer, AccountError
-from app.incident import IncidentError, STATUS_LABEL, FIELD_LABEL, NARRATIVE_FIELDS
-from app.rca import to_markdown
+from app.incident import (
+    IncidentError, STATUS_LABEL, FIELD_LABEL, NARRATIVE_FIELDS,
+    CUSTOMER_FIELDS, CUSTOMER_FIELD_LABEL, CUSTOMER_STATUS_LABEL,
+)
+from app.rca import to_markdown, to_customer_markdown
 
 incident_bp = Blueprint("incident", __name__)
 
@@ -140,6 +143,8 @@ def detail(incident_id):
         "incident_detail.html",
         item=item, data=data, error=error,
         labels=STATUS_LABEL, field_labels=FIELD_LABEL,
+        customer_labels=CUSTOMER_STATUS_LABEL,
+        customer_field_labels=CUSTOMER_FIELD_LABEL,
     )
 
 
@@ -187,4 +192,90 @@ def report(incident_id):
         # charset 을 두 번 붙이지 않도록 mimetype 만 준다.
         mimetype="text/markdown",
         headers={"Content-Disposition": f'attachment; filename="rca-{item["id"]}.md"'},
+    )
+
+
+# ----------------------------------------------------------------------
+# 고객 제출본
+# ----------------------------------------------------------------------
+# 내부 RCA 와 기록은 공유하고 출력만 나눈다.
+
+# 최종 URL: /incident/<번호>/customer/draft
+@incident_bp.route("/<int:incident_id>/customer/draft", methods=["POST"])
+def customer_draft(incident_id):
+    """고객 제출본 초안을 채운다. 이미 쓴 내용은 덮어쓰지 않는다."""
+    try:
+        item, data, error = _load(incident_id)
+        if item is None:
+            raise IncidentError(error)
+        if data is None:
+            raise IncidentError(error or "타임라인을 모으지 못했습니다.")
+
+        draft = incident.draft_customer(item, data)
+        # 사람이 이미 손댄 칸은 건드리지 않는다. 초안 버튼을 잘못 눌렀다고
+        # 써둔 문장이 날아가면 안 된다.
+        fields = {k: v for k, v in draft.items() if not item[k].strip() and v.strip()}
+        if not fields:
+            flash("채울 빈 칸이 없습니다. 이미 작성된 내용은 덮어쓰지 않습니다.", "error")
+        else:
+            incident.update_customer(incident_id, fields)
+            flash(f"{len(fields)}개 칸에 초안을 채웠습니다. 내용을 다듬어 주세요.", "success")
+    except IncidentError as e:
+        flash(str(e), "error")
+
+    return redirect(url_for("incident.detail", incident_id=incident_id))
+
+
+# 최종 URL: /incident/<번호>/customer/save
+@incident_bp.route("/<int:incident_id>/customer/save", methods=["POST"])
+def customer_save(incident_id):
+    """고객 제출본을 저장한다."""
+    fields = {f: request.form.get(f, "").strip() for f in CUSTOMER_FIELDS}
+    try:
+        incident.update_customer(incident_id, fields)
+        flash("고객 제출본을 저장했습니다.", "success")
+    except IncidentError as e:
+        flash(str(e), "error")
+    return redirect(url_for("incident.detail", incident_id=incident_id))
+
+
+# 최종 URL: /incident/<번호>/customer/send
+@incident_bp.route("/<int:incident_id>/customer/send", methods=["POST"])
+def customer_send(incident_id):
+    """고객 제출본을 제출 상태로 바꾼다."""
+    try:
+        incident.send_customer(incident_id)
+        flash("고객사 제출 상태로 바꿨습니다. 이제 내용을 고칠 수 없습니다.", "success")
+    except IncidentError as e:
+        flash(str(e), "error")
+    return redirect(url_for("incident.detail", incident_id=incident_id))
+
+
+# 최종 URL: /incident/<번호>/customer.md
+@incident_bp.route("/<int:incident_id>/customer.md")
+def customer_report(incident_id):
+    """고객사에 낼 보고서를 Markdown 으로 내려받는다.
+
+    내부 RCA(report.md)와 달리 근거 표가 통째로 빠진다.
+    타임라인 원본·알람 요약·리소스 변경 목록은 우리가 조사한 과정이지
+    고객이 받을 문서가 아니다.
+    """
+    try:
+        item = incident.get(incident_id)
+    except IncidentError as e:
+        flash(str(e), "error")
+        return redirect(url_for("incident.index"))
+
+    if item is None:
+        flash("장애 기록을 찾지 못했습니다.", "error")
+        return redirect(url_for("incident.index"))
+
+    return Response(
+        to_customer_markdown(item),
+        # charset 을 두 번 붙이지 않도록 mimetype 만 준다.
+        mimetype="text/markdown",
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="incident-report-{item["id"]}.md"'
+        },
     )
