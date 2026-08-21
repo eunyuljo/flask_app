@@ -28,6 +28,7 @@
     {# session 은 템플릿 안에서 별도 전달 없이 바로 쓸 수 있다(Flask 가 기본 제공). #}
     {% if session.get('username') %}
       {# 에이전트 페이지는 로그인해야 쓸 수 있으므로 로그인했을 때만 메뉴에 보여준다. #}
+      <a href="{{ url_for('dashboard.index') }}">대시보드</a>
       <a href="{{ url_for('agent.index') }}">AI 에이전트</a>
       <a href="{{ url_for('alarm.index') }}">이벤트</a>
       {# 관리자 메뉴는 관리자에게만 보여준다.

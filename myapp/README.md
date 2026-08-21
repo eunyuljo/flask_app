@@ -24,7 +24,7 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 
 ## 무엇을 하는 앱인가
 
-다섯 개의 블루프린트로 이루어져 있습니다.
+여섯 개의 블루프린트로 이루어져 있습니다.
 
 | 블루프린트 | url_prefix | 하는 일 |
 |---|---|---|
@@ -32,7 +32,8 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 | `auth` | `/auth` | 로그인 / 로그아웃 (세션 기반, 하드코딩 계정 1개) |
 | `agent` | `/agent` | Claude 기반 채팅 에이전트 (도구 호출) |
 | `alarm` | `/alarm` | 이벤트 접수 → Lambda로 정규화 → 알람 |
-| `admin` | `/admin` | 관리자 대시보드 (관리자 계정만 접근) |
+| `admin` | `/admin` | 설정·라우트 확인 (관리자 계정만 접근) |
+| `dashboard` | `/dashboard` | PostgreSQL 집계 지표와 차트 |
 
 핵심은 **각 기능이 서로의 코드를 건드리지 않는다**는 점입니다.
 `agent`를 추가할 때 `main`과 `auth`는 한 줄도 수정하지 않았습니다.
@@ -56,11 +57,13 @@ myapp/
 │   ├── cli.py                  flask init-db / db-check 명령
 │   ├── agent_core.py           AI 에이전트의 도구 정의와 실행 루프
 │   ├── event_store.py          이벤트 임시 보관소 (메모리)
+│   ├── stats.py                대시보드용 집계 질의 (SQL)
 │   ├── lambda_client.py        Lambda 호출 계층 (local / aws 전환)
 │   ├── views/                  블루프린트별 라우트
-│   │   ├── main.py  auth.py  agent.py  alarm.py  admin.py
+│   │   ├── main.py  auth.py  agent.py  alarm.py  admin.py  dashboard.py
 │   ├── templates/              Jinja 템플릿
-│   │   └── base.html  index.html  login.html  agent.html  alarm.html  admin.html
+│   │   └── base.html  index.html  login.html  agent.html  alarm.html
+│   │       admin.html  dashboard.html
 │   └── static/                 정적 파일 (Flask 가 /static/... 으로 자동 공개)
 │       └── css/style.css       전체 스타일. base.html 에서 link 로 연결
 │
@@ -504,7 +507,8 @@ AWS_REGION=ap-northeast-2
 | `/alarm/` | GET | 필요 | 이벤트 목록 |
 | `/alarm/send` | POST | 필요 | 폼으로 이벤트 전송 |
 | `/alarm/api/events` | POST | **불필요** | JSON 수집 엔드포인트 |
-| `/admin/` | GET | 관리자 | 대시보드 |
+| `/dashboard/` | GET | 필요 | 지표 대시보드 (`?hours=6\|24\|72`) |
+| `/admin/` | GET | 관리자 | 설정·라우트 확인 |
 | `/admin/events/clear` | POST | 관리자 | 이벤트 비우기 |
 
 관리자 계정은 `ADMIN_USERS` 환경변수로 정합니다(기본 `admin`, 쉼표로 여러 명).

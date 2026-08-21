@@ -1,0 +1,167 @@
+{# app/templates/dashboard.html
+   이벤트 지표 대시보드. 차트는 외부 라이브러리 없이 Jinja 로 SVG 를 직접 그린다.
+   숫자 계산은 전부 app/stats.py 에서 끝내고, 여기서는 좌표로 옮기기만 한다. #}
+
+{% extends "base.html" %}
+
+{% block title %}대시보드{% endblock %}
+
+{% block content %}
+  <h1>이벤트 대시보드</h1>
+
+  {# 조회 범위 필터. 차트 위 한 줄에 둔다. #}
+  <div class="filters">
+    {% for h in allowed_hours %}
+      <a href="{{ url_for('dashboard.index', hours=h) }}"
+         class="chip {% if h == hours %}on{% endif %}">최근 {{ h }}시간</a>
+    {% endfor %}
+  </div>
+
+  {% if problem %}
+    <div class="flash error"><strong>{{ problem }}</strong></div>
+    <p class="muted">
+      DB 를 연결하면 이 화면에 집계가 표시됩니다.
+      README 의 "선택 2 — 로컬 DB 띄우기" 를 참고하세요.
+    </p>
+
+  {% elif data.total == 0 %}
+    <p class="muted">아직 적재된 이벤트가 없습니다.
+      <a href="{{ url_for('alarm.index') }}">이벤트 페이지</a>에서 몇 건 보내보세요.</p>
+
+  {% else %}
+
+    {# ============================================================
+       1) KPI 행 — 한 줄짜리 숫자는 차트로 만들지 않는다.
+       ============================================================ #}
+    <div class="kpis">
+      <div class="kpi">
+        <span class="n">{{ data.total }}</span>
+        <span class="k">전체 이벤트</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ data.recent_total }}</span>
+        <span class="k">최근 {{ data.hours }}시간</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ data.alarm_total }}</span>
+        <span class="k">알람 대상</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ data.source_count }}</span>
+        <span class="k">출처</span>
+      </div>
+    </div>
+
+    {# ============================================================
+       2) 심각도 분포 — 가로 막대
+       색은 status 팔레트를 쓴다. 다만 warning 과 error 는 색만으로는
+       구분이 어려운 조합이라, 이름과 건수를 항상 함께 표시하고
+       순서도 critical->info 로 고정한다. 색 외에 라벨과 위치가
+       같은 정보를 중복해서 전달하도록 하는 것이다.
+       ============================================================ #}
+    <h2>심각도 분포</h2>
+    {% set sev_max = data.by_severity | map(attribute='count') | max %}
+    <div class="barlist">
+      {% for row in data.by_severity %}
+        <div class="barrow">
+          <div class="barlabel sev-{{ row.name }}">
+            <span class="dot"></span>{{ row.name }}
+          </div>
+          <div class="bartrack">
+            {# 폭은 최대값 대비 비율. 0 건이면 막대를 그리지 않는다. #}
+            {% if row.count > 0 %}
+              <div class="barfill sev-{{ row.name }}"
+                   style="width: {{ (row.count / sev_max * 100) | round(1) }}%"
+                   title="{{ row.name }}: {{ row.count }}건"></div>
+            {% endif %}
+          </div>
+          <div class="barvalue">{{ row.count }}</div>
+        </div>
+      {% endfor %}
+    </div>
+
+    {# ============================================================
+       3) 출처별 상위 — 가로 막대
+       여기서는 색이 정보를 나르지 않는다(길이가 나른다). 그래서
+       한 가지 파랑만 쓴다. 출처마다 색을 다르게 주면 없는 의미를
+       만들어내는 셈이라 오히려 읽기 나빠진다.
+       ============================================================ #}
+    <h2>출처별 이벤트</h2>
+    {% set src_max = data.by_source | map(attribute='count') | max %}
+    <div class="barlist">
+      {% for row in data.by_source %}
+        <div class="barrow">
+          <div class="barlabel"><code>{{ row.name }}</code></div>
+          <div class="bartrack">
+            <div class="barfill accent"
+                 style="width: {{ (row.count / src_max * 100) | round(1) }}%"
+                 title="{{ row.name }}: {{ row.count }}건"></div>
+          </div>
+          <div class="barvalue">{{ row.count }}</div>
+        </div>
+      {% endfor %}
+    </div>
+
+    {# ============================================================
+       4) 시간대별 추이 — 세로 막대 (SVG)
+       viewBox 로 좌표계를 고정하고 CSS 로 크기를 맞춘다.
+       그래서 화면 폭이 바뀌어도 비율이 유지된다.
+       ============================================================ #}
+    <h2>최근 {{ data.hours }}시간 추이</h2>
+    {% set tl = data.timeline %}
+    {% set tl_max = tl | map(attribute='count') | max %}
+    {% set W = 720 %}{% set H = 160 %}
+    {% set gap = 3 %}
+    {% set bw = ((W - gap * (tl|length - 1)) / (tl|length)) %}
+
+    <svg class="chart" viewBox="0 0 {{ W }} {{ H + 22 }}"
+         role="img" aria-label="시간대별 이벤트 건수">
+      {# 기준선. 축은 눈에 띄면 안 되므로 옅게. #}
+      <line x1="0" y1="{{ H }}" x2="{{ W }}" y2="{{ H }}" class="axis"/>
+
+      {% for t in tl %}
+        {% set bh = 0 if tl_max == 0 else (t.count / tl_max * (H - 8)) %}
+        {% set x = loop.index0 * (bw + gap) %}
+        <g>
+          {# title 은 브라우저 기본 툴팁으로 뜬다. 자바스크립트 없이 값을 확인할 수 있다. #}
+          <title>{{ t.label }}시 — {{ t.count }}건</title>
+          {# 값이 0 이어도 자리를 알 수 있게 옅은 바닥 막대를 깔아둔다. #}
+          <rect x="{{ x | round(2) }}" y="{{ (H - 2) }}"
+                width="{{ bw | round(2) }}" height="2" class="bar-empty"/>
+          {% if t.count > 0 %}
+            {# rx 로 위쪽 끝만 둥글게. 아래는 기준선에 붙어 있어야 한다. #}
+            <rect x="{{ x | round(2) }}" y="{{ (H - bh) | round(2) }}"
+                  width="{{ bw | round(2) }}" height="{{ bh | round(2) }}"
+                  rx="2" class="bar"/>
+          {% endif %}
+          {# 라벨은 3시간 간격으로만 찍는다. 전부 찍으면 겹쳐서 못 읽는다. #}
+          {% if loop.index0 % 3 == 0 %}
+            <text x="{{ (x + bw / 2) | round(2) }}" y="{{ H + 16 }}"
+                  text-anchor="middle" class="tick">{{ t.label }}</text>
+          {% endif %}
+        </g>
+      {% endfor %}
+    </svg>
+    <p class="muted">막대에 마우스를 올리면 시각과 건수가 표시됩니다. 최대 {{ tl_max }}건/시간.</p>
+
+    {# ============================================================
+       5) 표 — 차트로 본 것을 숫자로도 확인할 수 있게 한다.
+       색을 구분하기 어려운 경우의 대비책이기도 하다.
+       ============================================================ #}
+    <h2>집계 표</h2>
+    <table>
+      <tr><th>구분</th><th>값</th></tr>
+      {% for row in data.by_severity %}
+        <tr>
+          <th class="sev-{{ row.name }}"><span class="badge">{{ row.name }}</span></th>
+          <td>{{ row.count }}건
+            ({{ (row.count / data.total * 100) | round(1) }}%)</td>
+        </tr>
+      {% endfor %}
+      {% for row in data.by_source %}
+        <tr><th><code>{{ row.name }}</code></th><td>{{ row.count }}건</td></tr>
+      {% endfor %}
+    </table>
+
+  {% endif %}
+{% endblock %}

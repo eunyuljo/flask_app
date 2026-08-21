@@ -273,3 +273,103 @@ td.warn { color: var(--err-fg); font-weight: 500; }
   form.ask { flex-direction: column; }
   th { width: 42%; }
 }
+
+/* ==================================================================
+   10) 대시보드
+   ------------------------------------------------------------------
+   차트 색은 여기서만 정한다. 심각도는 status 색(고정 의미)을 쓰고,
+   그 외 막대는 정보를 나르지 않으므로 파랑 한 가지만 쓴다.
+   ================================================================== */
+:root {
+  --chart-accent: #2a78d6;   /* 크기를 나타내는 막대 (단일 색) */
+  --chart-axis:   #d6dae0;
+  --chart-track:  #edf0f3;   /* 막대 배경 트랙 */
+
+  /* status 팔레트 — 심각도 전용. 다른 용도로 재사용하지 않는다. */
+  --st-critical: #d03b3b;
+  --st-error:    #ec835a;
+  --st-warning:  #fab219;
+  /* info 는 status 팔레트에 없는 등급이다. 파랑을 쓰면 아래 크기 막대(--chart-accent)와
+     같은 색이 되어, 색이 의미를 나르지 않는 차트에서 "파랑=info" 로 오해를 준다.
+     중립 회색을 써서 색 충돌을 없애고, "조치 불필요" 라는 뜻도 함께 전한다. */
+  --st-info:     #6b7480;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --chart-accent: #3987e5;
+    --chart-axis:   #3a4048;
+    --chart-track:  #262b31;
+    /* 어두운 표면에서 3:1 대비를 넘도록 한 단계 밝게 잡는다. */
+    --st-info:      #98a2ae;
+  }
+}
+
+/* 필터 칩 */
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 22px; }
+.chip {
+  text-decoration: none;
+  font-size: .85rem;
+  padding: 5px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-mute);
+}
+.chip:hover { background: var(--surface); color: var(--text); }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* KPI 행 */
+.kpis { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 26px; }
+.kpi {
+  flex: 1 1 110px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+}
+.kpi .n { display: block; font-size: 1.9rem; font-weight: 700; line-height: 1.15;
+          letter-spacing: -.02em; }
+.kpi .k { display: block; font-size: .78rem; color: var(--text-mute); margin-top: 2px; }
+
+/* 가로 막대 목록 */
+.barlist { margin: 10px 0 26px; }
+.barrow {
+  display: grid;
+  grid-template-columns: 108px 1fr 46px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+.barlabel { font-size: .85rem; color: var(--text-mute); display: flex;
+            align-items: center; gap: 6px; }
+/* 라벨 옆 점. 색을 글자와 나란히 두어 색-이름 대응을 만든다. */
+.barlabel .dot { width: 9px; height: 9px; border-radius: 50%;
+                 background: var(--border); flex: none; }
+.barlabel.sev-critical .dot { background: var(--st-critical); }
+.barlabel.sev-error .dot    { background: var(--st-error); }
+.barlabel.sev-warning .dot  { background: var(--st-warning); }
+.barlabel.sev-info .dot     { background: var(--st-info); }
+
+.bartrack { background: var(--chart-track); border-radius: 5px; height: 18px; }
+.barfill  { height: 18px; border-radius: 5px; background: var(--chart-accent); }
+.barfill.sev-critical { background: var(--st-critical); }
+.barfill.sev-error    { background: var(--st-error); }
+.barfill.sev-warning  { background: var(--st-warning); }
+.barfill.sev-info     { background: var(--st-info); }
+
+/* 수치는 색이 아니라 글자 색을 쓴다. 숫자에 계열색을 입히면 읽기 어렵다. */
+.barvalue { font-size: .85rem; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* SVG 세로 막대 */
+svg.chart { width: 100%; height: auto; display: block; margin: 10px 0 6px; }
+svg.chart .bar       { fill: var(--chart-accent); }
+svg.chart .bar-empty { fill: var(--chart-track); }
+svg.chart .axis      { stroke: var(--chart-axis); stroke-width: 1; }
+svg.chart .tick      { fill: var(--text-mute); font-size: 11px;
+                       font-family: system-ui, sans-serif; }
+svg.chart g:hover .bar { filter: brightness(1.15); }
+
+@media (max-width: 520px) {
+  .barrow { grid-template-columns: 84px 1fr 38px; }
+  .kpi .n { font-size: 1.5rem; }
+}

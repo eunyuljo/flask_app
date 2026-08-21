@@ -20,6 +20,7 @@ from app.views.auth import auth_bp
 from app.views.agent import agent_bp
 from app.views.alarm import alarm_bp
 from app.views.admin import admin_bp
+from app.views.dashboard import dashboard_bp
 
 
 def create_app(config_name=None):
@@ -111,6 +112,11 @@ def create_app(config_name=None):
     #   agent -> 로그인한 사람
     #   admin -> 관리자 계정만
     app.register_blueprint(admin_bp, url_prefix="/admin")
+
+    # dashboard 블루프린트: url_prefix="/dashboard"
+    # 지표 화면을 admin 에 밀어넣지 않고 따로 뺐다. 관심사가 다르면 블루프린트를 나누는 게
+    # 나중에 권한을 다르게 주거나 떼어내기 쉽다.
+    app.register_blueprint(dashboard_bp, url_prefix="/dashboard")
 
     # ------------------------------------------------------------------
     # CLI 명령 등록
