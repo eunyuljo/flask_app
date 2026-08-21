@@ -232,7 +232,7 @@ DB 없이도 앱은 돌지만, DB를 붙이면 Lambda가 정규화한 이벤트�
 | 방법 | 라이선스 | Windows | 비고 |
 |---|---|---|---|
 | **PostgreSQL 직접 설치** | PostgreSQL License | [설치본](https://www.postgresql.org/download/windows/) | Docker 자체가 불필요. **가장 단순** |
-| **Docker Engine on WSL2** | Apache-2.0 | WSL2 안에서 설치 | Desktop 없이 CLI만. 무료 |
+| **Docker Engine on WSL2** | Apache-2.0 | WSL2 안에서 설치 | Desktop 없이 CLI만. 무료. ↓ 아래 상세 |
 | **Podman Desktop** | Apache-2.0 | 지원 | `docker compose` 호환 |
 | Docker Desktop | 조건부 유료 | 지원 | 위 라이선스 조건 확인 |
 
@@ -248,6 +248,89 @@ CREATE DATABASE flask_app OWNER flask_user;
 > 이 계정 정보는 `app/config.py` 기본값과 같아서 `.env` 를 건드릴 필요가 없습니다.
 > 이 경로(PostgreSQL 직접 설치 → 위 SQL → `init-db`)는 Linux에서 실제로 검증했습니다.
 > `docker compose` 경로는 설정값 대조만 했고 실행 검증은 하지 못했습니다.
+
+<details>
+<summary><b>Windows에서 Docker Desktop 없이 컨테이너를 쓰려면 (WSL2 + Docker Engine)</b></summary>
+
+컨테이너는 Linux 커널 기능이라 Windows에서 그냥 돌지 않습니다. Docker Desktop이 하는 일이
+바로 그 Linux 환경을 제공하는 것인데, **WSL2가 이미 Linux 커널**이므로 Desktop 없이
+WSL2 안에 Docker Engine을 직접 설치하면 됩니다. Engine과 Compose는 둘 다 Apache-2.0입니다.
+
+> Windows용 Docker 설치 프로그램을 돌리는 게 아니라, **WSL2 안에 들어가서
+> Ubuntu용 Docker를 설치**하는 것입니다.
+
+**1. WSL2와 Ubuntu 설치** (PowerShell을 관리자로 실행)
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+재부팅 후 Ubuntu가 시작되며 사용자 이름과 비밀번호를 만듭니다.
+이미 WSL을 쓰고 있다면 버전이 2인지 확인하세요.
+
+```powershell
+wsl -l -v      # VERSION 열이 2 여야 합니다
+```
+
+**2. Ubuntu 안에서 Docker Engine 설치**
+
+WSL2의 Ubuntu 터미널에서 실행합니다. 아래는 Docker 공식 설치 스크립트입니다.
+
+```bash
+curl -fsSL https://get.docker.com | sh
+```
+
+> 스크립트를 파이프로 실행하는 게 꺼려진다면 apt 저장소를 직접 등록하는 방법을 쓰세요.
+> 명령이 버전마다 바뀌므로 [공식 문서](https://docs.docker.com/engine/install/ubuntu/)의
+> 최신 절차를 그대로 따르는 것이 안전합니다. 이때 `docker-compose-plugin` 패키지를
+> 반드시 포함해야 `docker compose` 명령이 생깁니다.
+
+**3. sudo 없이 쓰도록 설정**
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+적용하려면 Ubuntu 터미널을 닫았다가 다시 엽니다.
+
+**4. 데몬 시작 및 확인**
+
+```bash
+sudo service docker start     # systemd 가 켜져 있다면 자동 시작됩니다
+docker compose version
+```
+
+**5. ⚠️ Flask 앱도 WSL2 안에서 실행하세요**
+
+여기가 가장 헷갈리는 부분입니다.
+
+| 구성 | 결과 |
+|---|---|
+| DB는 WSL2, Flask는 Windows | WSL2의 localhost 포워딩에 의존. 대체로 되지만 WSL 재시작이나 네트워크 설정에 따라 깨질 수 있음 |
+| **DB도 WSL2, Flask도 WSL2** | 같은 Linux 안이라 문제 없음. **이쪽을 권장** |
+
+즉 WSL2 경로를 택한다는 것은 "Docker만 WSL2에 깐다"가 아니라
+**"개발 환경을 WSL2로 옮긴다"**에 가깝습니다. 소스도 WSL2 파일시스템
+(`/home/사용자/...`)에 두는 편이 빠릅니다. Windows 경로(`/mnt/c/...`)는
+파일 접근이 느립니다.
+
+VS Code의 **WSL 확장**을 쓰면 Windows에서 편집하면서 실행만 WSL2에서 하도록
+연결할 수 있습니다.
+
+이후로는 이 문서의 모든 Linux 명령을 WSL2 터미널에서 그대로 쓰면 됩니다
+(`python3 -m venv`, `source .venv/bin/activate`, `cp` 등 — PowerShell 버전이 아니라
+**macOS / Linux 쪽 명령**을 쓰세요).
+
+---
+
+**이 절차는 검증되지 않았습니다.** 이 프로젝트를 개발한 환경은 Linux 컨테이너라
+WSL2가 없습니다. 명령이 맞지 않으면 Docker 공식 문서를 기준으로 삼으세요.
+
+**이 프로젝트만 놓고 보면 WSL2까지 갈 이유는 크지 않습니다.** DB 한 대만 필요한데
+컨테이너로 얻는 이점이 거의 없기 때문입니다. 이미 WSL2를 쓰고 있거나 다른 이유로
+컨테이너가 필요한 경우에 선택하세요. 그 외에는 위의 PostgreSQL 직접 설치가 빠릅니다.
+
+</details>
 
 **2-1. DB 켜기**
 
