@@ -7,3 +7,6 @@ python-dotenv==1.0.1
 # Claude API 만 쓸 거면 anthropic==0.125.0 로 줄여도 된다.
 anthropic[bedrock]==0.125.0
 boto3==1.35.99
+
+# DB 접속용. Lambda 로컬 모드와 flask init-db 가 사용한다.
+psycopg[binary]==3.2.3

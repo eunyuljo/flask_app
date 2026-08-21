@@ -46,10 +46,14 @@ myapp/
 ├── run.py                      진입점. create_app() 을 호출해 앱 객체를 만든다
 ├── requirements.txt
 ├── .env.example                환경변수 견본 (복사해서 .env 로 사용)
+├── docker-compose.yml          로컬 개발용 PostgreSQL
+├── db/
+│   └── schema.sql              events 테이블 DDL
 │
 ├── app/                        ─── Flask 애플리케이션 ───
 │   ├── __init__.py             create_app() 팩토리 + 블루프린트 등록
 │   ├── config.py               환경별 설정 (개발/테스트/운영)
+│   ├── cli.py                  flask init-db / db-check 명령
 │   ├── agent_core.py           AI 에이전트의 도구 정의와 실행 루프
 │   ├── event_store.py          이벤트 임시 보관소 (메모리)
 │   ├── lambda_client.py        Lambda 호출 계층 (local / aws 전환)
@@ -73,6 +77,7 @@ Lambda에 그대로 올릴 수 있고, 파이썬만 있으면 단독 실행됩�
 
 - **Python 3.9 이상** — `requirements.txt`의 핀 버전 기준 (검증은 3.11에서 진행)
 - 그 외에는 아무것도 필요 없습니다. DB, AWS 계정, API 키 **없이도 앱은 실행됩니다.**
+- (선택) **Docker** — 로컬 DB를 띄울 때만 필요합니다.
 
 ### 1단계 — 소스 받기
 
@@ -120,7 +125,11 @@ pip install -r requirements.txt
 ### 4단계 — 환경변수 파일 만들기
 
 ```bash
+# macOS / Linux
 cp .env.example .env
+
+# Windows (PowerShell)
+Copy-Item .env.example .env
 ```
 
 **이 단계를 건너뛰어도 앱은 실행됩니다.** 기본값으로 동작하고, 설정이 필요한 기능만
@@ -187,7 +196,79 @@ AWS_REGION=ap-northeast-2
 # 키를 비워두면 ~/.aws/credentials 나 IAM 역할에서 자동으로 찾습니다
 ```
 
-### 선택 2 — 실제 Lambda 호출하기
+### 선택 2 — 로컬 DB 띄우기
+
+DB 없이도 앱은 돌지만, DB를 붙이면 Lambda가 정규화한 이벤트가 **실제로 테이블에 쌓입니다.**
+Docker만 있으면 됩니다.
+
+**2-1. DB 켜기**
+
+```bash
+docker compose up -d
+```
+
+`docker-compose.yml`의 계정 정보는 `app/config.py`의 기본값과 똑같이 맞춰두었으므로
+**`.env`를 건드릴 필요가 없습니다.**
+
+| 항목 | 값 |
+|---|---|
+| 호스트 / 포트 | `localhost` / `5432` |
+| 사용자 / 비밀번호 | `flask_user` / `flask_password` |
+| DB 이름 | `flask_app` |
+
+**2-2. 테이블 만들기**
+
+```bash
+flask --app run init-db
+```
+
+```
+완료: /경로/myapp/db/schema.sql 적용됨
+```
+
+여러 번 실행해도 안전합니다 (`CREATE TABLE IF NOT EXISTS`).
+
+**2-3. 확인**
+
+```bash
+flask --app run db-check
+```
+
+```
+접속 대상: postgresql://flask_user:***@localhost:5432/flask_app
+서버: PostgreSQL 16.13
+events 테이블: 있음 (0 건)
+```
+
+**2-4. Lambda가 DB에 쓰도록 켜기**
+
+`store_event()`는 `DATABASE_URL`이 있을 때만 적재합니다. `.env`에 추가하세요.
+
+```bash
+DATABASE_URL=postgresql://flask_user:flask_password@localhost:5432/flask_app
+```
+
+> `DB_*` 항목과 달리 여기엔 `+psycopg`를 **붙이지 않습니다.** Lambda 핸들러는
+> SQLAlchemy가 아니라 psycopg를 직접 쓰기 때문입니다.
+
+이제 이벤트를 보내면 `store` 결과가 `{"stored": true}`로 바뀝니다.
+
+```bash
+psql -h localhost -U flask_user -d flask_app -c "SELECT severity, source, message FROM events;"
+```
+
+**DB 끄기 / 초기화**
+
+```bash
+docker compose down        # 끄기 (데이터는 남음)
+docker compose down -v     # 데이터까지 삭제
+```
+
+> **Docker가 없다면?** PostgreSQL을 직접 설치한 뒤 DB와 계정을 만들고 `db/schema.sql`을
+> 적용해도 동일합니다. 포트가 겹치면 `docker-compose.yml`의 왼쪽 포트 번호와
+> `.env`의 `DB_PORT`를 함께 바꾸세요.
+
+### 선택 3 — 실제 Lambda 호출하기
 
 기본값 `LAMBDA_MODE=local`은 `api/normalize_handler.py`를 같은 프로세스에서 직접 부릅니다.
 실제 AWS Lambda를 호출하려면:
@@ -404,7 +485,7 @@ ALARM_SNS_TOPIC_ARN=arn:aws:sns:...
 
 두 값이 없으면 정규화만 하고 적재·알람은 조용히 건너뜁니다(에러가 아닙니다).
 
-> **주의:** `events` 테이블 DDL은 아직 이 저장소에 없습니다. 직접 만들어야 합니다.
+테이블 DDL은 `db/schema.sql`에 있습니다. 로컬에서는 `flask --app run init-db` 로 적용합니다.
 
 ---
 
@@ -427,7 +508,7 @@ ALARM_SNS_TOPIC_ARN=arn:aws:sns:...
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-### DB (현재 Flask에서 미사용 — [알려진 한계](#알려진-한계) 참고)
+### DB
 
 | 변수 | 기본값 |
 |---|---|
@@ -435,6 +516,10 @@ python -c "import secrets; print(secrets.token_hex(32))"
 | `DB_DRIVER` | `postgresql+psycopg` |
 | `DB_USER` / `DB_PASSWORD` | `flask_user` / `flask_password` |
 | `DB_HOST` / `DB_PORT` / `DB_NAME` | `localhost` / `5432` / `flask_app` |
+
+`DB_*` 항목은 `flask init-db` / `db-check` 가 사용합니다. Lambda 의 이벤트 적재는
+별도로 `DATABASE_URL` 을 봅니다(`+psycopg` 없이). 자세한 내용은
+[선택 2 - 로컬 DB 띄우기](#선택-2--로컬-db-띄우기)를 참고하세요.
 
 ### AI 에이전트
 
@@ -476,7 +561,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 | 문제 | 영향 |
 |---|---|
 | 로그아웃해도 에이전트 대화가 남음 | 같은 브라우저의 다음 사용자에게 이전 대화가 보일 수 있음 |
-| `production` 설정이 DB 값을 요구 | DB를 안 쓰는데도 운영 모드 기동이 실패함 |
+| `production` 설정이 DB 비밀번호를 요구 | `DATABASE_URL` 만 쓰는 배포에서도 `DB_PASSWORD` 를 요구할 수 있음 |
 | `WTF_CSRF_ENABLED` 설정이 실제로는 무의미 | Flask-WTF 미설치. CSRF 방어가 없는데 있는 것처럼 보임 |
 | 대화 길이 상한 없음 | 대화가 길어질수록 토큰 비용이 계속 증가 |
 | `/alarm/api/events`에 인증 없음 | 누구나 이벤트를 밀어넣을 수 있음 |

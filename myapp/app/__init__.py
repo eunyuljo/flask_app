@@ -10,6 +10,7 @@ import os
 from flask import Flask
 
 # 환경별 설정 클래스들이 담긴 딕셔너리. config["development"] 처럼 이름으로 꺼내 쓴다.
+from app.cli import register_cli
 from app.config import config
 
 # 블루프린트 객체를 import 한다.
@@ -110,6 +111,13 @@ def create_app(config_name=None):
     #   agent -> 로그인한 사람
     #   admin -> 관리자 계정만
     app.register_blueprint(admin_bp, url_prefix="/admin")
+
+    # ------------------------------------------------------------------
+    # CLI 명령 등록
+    # ------------------------------------------------------------------
+    # 블루프린트가 '웹 URL' 을 늘리는 것이라면, 이건 'flask 명령' 을 늘리는 것이다.
+    # 등록해두면 `flask --app run init-db` 처럼 쓸 수 있다.
+    register_cli(app)
 
     return app
 

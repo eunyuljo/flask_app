@@ -1,0 +1,34 @@
+# docker-compose.yml
+# 로컬 개발용 PostgreSQL 한 대를 띄운다. 설치 없이 DB 를 켰다 껐다 하기 위한 것으로,
+# 여기 적힌 계정 정보는 app/config.py 의 DB_* 기본값과 일부러 똑같이 맞춰두었다.
+# 그래서 .env 를 건드리지 않아도 바로 붙는다.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: flask_app_db
+    environment:
+      POSTGRES_USER: flask_user
+      POSTGRES_PASSWORD: flask_password
+      POSTGRES_DB: flask_app
+      # 한글 데이터를 다루므로 인코딩을 UTF8 로 고정한다.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      # 호스트 5432 -> 컨테이너 5432.
+      # 이미 로컬에 PostgreSQL 이 떠 있어 포트가 겹치면 왼쪽 숫자만 바꾸고
+      # .env 의 DB_PORT 도 같이 바꾸면 된다. (예: "5433:5432")
+      - "5432:5432"
+    volumes:
+      # 이름이 붙은 볼륨에 데이터를 보관한다. 컨테이너를 지워도 데이터는 남는다.
+      # 완전히 초기화하려면: docker compose down -v
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # DB 가 '실행 중'인 것과 '접속 가능'한 것은 다르다.
+      # pg_isready 로 실제 접속 가능 상태가 될 때까지 확인한다.
+      test: ["CMD-SHELL", "pg_isready -U flask_user -d flask_app"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
