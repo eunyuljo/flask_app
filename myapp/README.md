@@ -79,6 +79,15 @@ Lambda에 그대로 올릴 수 있고, 파이썬만 있으면 단독 실행됩�
 - 그 외에는 아무것도 필요 없습니다. DB, AWS 계정, API 키 **없이도 앱은 실행됩니다.**
 - (선택) **Docker** — 로컬 DB를 띄울 때만 필요합니다.
 
+> **Windows 사용자에게**
+>
+> 아래 명령은 **PowerShell** 기준으로 병기했습니다. 명령 프롬프트(cmd)가 아니라
+> PowerShell을 여세요.
+>
+> - `python3` 대신 **`python`** 을 쓰세요. (Windows 파이썬은 보통 `python3` 별칭이 없습니다)
+> - `pip`, `flask`, `docker` 명령은 양쪽이 동일합니다.
+> - 명령을 `&&` 로 이어 붙이는 예시가 있다면, 줄을 나눠서 하나씩 실행하세요.
+
 ### 1단계 — 소스 받기
 
 ```bash
@@ -93,7 +102,11 @@ cd flask_app/myapp
 프로젝트 전용 파이썬 공간을 만들어 시스템 파이썬을 더럽히지 않습니다.
 
 ```bash
+# macOS / Linux
 python3 -m venv .venv
+
+# Windows (PowerShell)
+python -m venv .venv
 ```
 
 활성화합니다. **터미널을 새로 열 때마다 다시 해야 합니다.**
@@ -201,6 +214,16 @@ AWS_REGION=ap-northeast-2
 DB 없이도 앱은 돌지만, DB를 붙이면 Lambda가 정규화한 이벤트가 **실제로 테이블에 쌓입니다.**
 Docker만 있으면 됩니다.
 
+> **Windows에서도 됩니다.** [Docker Desktop for Windows](https://docs.docker.com/desktop/setup/install/windows-install/)를
+> 설치하면 `docker compose` 명령이 PowerShell에서 그대로 동작합니다.
+> - 요구사항: Windows 10/11 64비트, **WSL2**, BIOS에서 가상화 활성화
+> - 설치 후 Docker Desktop을 **실행해 둔 상태**여야 합니다 (트레이 아이콘이 켜져 있어야 함)
+> - Docker Desktop은 규모가 큰 조직에서는 유료 구독이 필요합니다. 조건이 바뀔 수 있으니
+>   회사에서 쓴다면 현재 약관을 확인하세요. 대안으로 Podman Desktop, Rancher Desktop이 있습니다.
+>
+> Docker를 아예 안 쓰고 싶다면 [PostgreSQL Windows 설치본](https://www.postgresql.org/download/windows/)을
+> 직접 설치한 뒤 아래 2-2로 건너뛰어도 됩니다.
+
 **2-1. DB 켜기**
 
 ```bash
@@ -254,8 +277,15 @@ DATABASE_URL=postgresql://flask_user:flask_password@localhost:5432/flask_app
 이제 이벤트를 보내면 `store` 결과가 `{"stored": true}`로 바뀝니다.
 
 ```bash
+# psql 이 설치돼 있다면
 psql -h localhost -U flask_user -d flask_app -c "SELECT severity, source, message FROM events;"
+
+# psql 이 없다면 (Windows 에서 주로 이쪽) — 컨테이너 안의 psql 을 그대로 씁니다
+docker compose exec db psql -U flask_user -d flask_app -c "SELECT severity, source, message FROM events;"
 ```
+
+> Windows 에는 `psql` 이 기본으로 깔려 있지 않습니다. 두 번째 방법을 쓰면 따로 설치할 필요가 없습니다.
+> 앱에서 확인만 하려면 `flask --app run db-check` 로도 건수를 볼 수 있습니다.
 
 **DB 끄기 / 초기화**
 
@@ -419,10 +449,22 @@ Lambda가 이걸 하나의 형태로 맞춥니다.
 ### 입력과 출력 예시
 
 ```bash
+# macOS / Linux
 curl -X POST http://127.0.0.1:5000/alarm/api/events \
   -H 'Content-Type: application/json' \
   -d '{"msg":"결제 실패율 급증","priority":"p1","origin":"pay-api","host":"i-123"}'
 ```
+
+```powershell
+# Windows (PowerShell)
+$body = @{ msg = "결제 실패율 급증"; priority = "p1"; origin = "pay-api"; host = "i-123" } | ConvertTo-Json
+Invoke-RestMethod -Uri http://127.0.0.1:5000/alarm/api/events `
+  -Method Post -ContentType "application/json; charset=utf-8" `
+  -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
+```
+
+> PowerShell에서 `curl` 은 `Invoke-WebRequest` 의 별칭이라 위 bash 명령이 그대로 동작하지 않습니다.
+> 한글이 깨지지 않도록 본문을 UTF-8 바이트로 변환해서 보내는 점에 주의하세요.
 
 응답은 정규화 결과(`record`)와 후속 처리 결과(`store`, `alarm`)를 함께 돌려줍니다.
 
@@ -469,7 +511,13 @@ Lambda 핸들러는 결국 `(event, context)`를 받는 평범한 함수라서, 
 `api/` 디렉터리 내용만 zip으로 묶는 경우:
 
 ```bash
+# macOS / Linux
 cd api && zip -r ../function.zip . && cd ..
+```
+
+```powershell
+# Windows (PowerShell)
+Compress-Archive -Path api\* -DestinationPath function.zip -Force
 ```
 
 이때 핸들러 이름은 **`normalize_handler.lambda_handler`** 입니다.
