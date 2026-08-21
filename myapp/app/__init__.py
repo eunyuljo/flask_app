@@ -28,6 +28,7 @@ from app.views.console import console_bp
 from app.views.work import work_bp
 from app.views.runbook import runbook_bp
 from app.views.handover import handover_bp
+from app.views.incident import incident_bp
 
 
 def create_app(config_name=None):
@@ -159,6 +160,12 @@ def create_app(config_name=None):
     #   report   -> 고객사에 내는 것, 월 단위, 기간 대비 변화가 핵심
     #   handover -> 다음 당직자에게 넘기는 것, 시간 단위, 미해결 항목이 핵심
     app.register_blueprint(handover_bp, url_prefix="/handover")
+
+    # incident 블루프린트: url_prefix="/incident"
+    # 장애 사후 보고서. 이 앱에서 events / resource_snapshots / work_orders 가
+    # 처음으로 한 화면에서 만나는 곳이다. 셋 다 시각이 찍혀 있는데 지금까지
+    # 서로를 몰랐다 - 장애 조사는 그 셋을 한 시간축에 세워야 시작된다.
+    app.register_blueprint(incident_bp, url_prefix="/incident")
 
     # ------------------------------------------------------------------
     # CLI 명령 등록

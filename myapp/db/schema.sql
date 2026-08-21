@@ -190,3 +190,61 @@ CREATE TABLE IF NOT EXISTS runbooks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_runbooks_fingerprint ON runbooks (fingerprint);
+
+-- ======================================================================
+-- 장애 (사후 보고서 / RCA)
+-- ----------------------------------------------------------------------
+-- 장애 하나에 대해 "언제 무슨 일이 있었나" 를 앱이 모아주고,
+-- "왜 그랬고 무엇을 했나" 는 사람이 쓴다.
+--
+-- 이 구분이 이 테이블의 핵심이다. 타임라인은 데이터에서 나오지만
+-- 원인과 조치는 엔지니어 머릿속에만 있다. 앱이 원인을 지어내면
+-- 그건 잘못된 사후 보고서가 되고, 없느니만 못하다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS incidents (
+    id          BIGSERIAL   PRIMARY KEY,
+
+    title       TEXT        NOT NULL,
+    customer    TEXT        NOT NULL DEFAULT '',
+    account_id  TEXT        NOT NULL DEFAULT '',
+    region      TEXT        NOT NULL DEFAULT '',
+
+    -- 장애 구간. ended_at 이 비어 있으면 '아직 진행 중' 이다.
+    started_at  TIMESTAMPTZ NOT NULL,
+    ended_at    TIMESTAMPTZ,
+
+    severity    TEXT        NOT NULL DEFAULT 'error'
+                CHECK (severity IN ('critical', 'error', 'warning', 'info')),
+
+    -- 이 장애와 관련된 이벤트 출처(source). 비어 있으면 구간의 모든 이벤트를 본다.
+    --
+    -- events 에는 계정 정보가 없다. source 는 'pay-api' 같은 서비스 이름이라
+    -- 계정이나 고객사로 좁힐 수단이 없다. 그래서 무엇이 이 장애와 관련
+    -- 있는지는 사람이 지정해야 한다. 지정하지 않으면 그 시간대에 우연히
+    -- 같이 난 무관한 알람까지 타임라인에 들어와 읽을 수 없게 된다.
+    sources     TEXT[]      NOT NULL DEFAULT '{}',
+
+    -- 여기서부터는 전부 사람이 쓰는 칸이다. 앱은 채우지 않는다.
+    impact      TEXT        NOT NULL DEFAULT '',   -- 고객 관점의 영향
+    cause       TEXT        NOT NULL DEFAULT '',   -- 원인
+    action      TEXT        NOT NULL DEFAULT '',   -- 조치
+    prevention  TEXT        NOT NULL DEFAULT '',   -- 재발 방지
+
+    author      TEXT        NOT NULL,
+
+    -- draft     : 작성 중
+    -- published : 고객사에 낸 것. 더 고치지 않는다.
+    status      TEXT        NOT NULL DEFAULT 'draft'
+                CHECK (status IN ('draft', 'published')),
+
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    published_at TIMESTAMPTZ,
+
+    -- 끝이 시작보다 앞설 수는 없다. 타임라인 질의가 통째로 빈다.
+    CHECK (ended_at IS NULL OR ended_at >= started_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_window
+    ON incidents (started_at DESC);

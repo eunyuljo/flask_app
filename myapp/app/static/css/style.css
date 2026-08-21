@@ -767,3 +767,38 @@ pre.err { color: var(--err-fg); }
 .chg.sev-error    { border-left-color: var(--sev-error); }
 .chg.sev-warning  { border-left-color: var(--sev-warning); }
 .chg.sev-info     { border-left-color: var(--sev-info); }
+
+/* ------------------------------------------------------------------
+   장애 사후 보고서 (RCA)
+   ------------------------------------------------------------------ */
+/* 타임라인. 종류를 왼쪽 띠로 구분한다. 배지에 글자도 있으므로
+   색이 없어도 정보가 사라지지 않는다. */
+table.tl td { padding-top: 7px; padding-bottom: 7px; }
+table.tl tr { border-left: 3px solid transparent; }
+table.tl .tl-kind { width: 1%; white-space: nowrap; }
+table.tl tr.tl-alarm  td:first-child { box-shadow: inset 3px 0 0 var(--sev-error); }
+table.tl tr.tl-change td:first-child { box-shadow: inset 3px 0 0 var(--sev-warning); }
+table.tl tr.tl-work   td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+table.tl td:first-child { padding-left: 9px; }
+
+/* datetime-local 도 다른 입력칸과 같은 모양으로. */
+input[type=datetime-local] {
+  display: block;
+  margin-top: 5px;
+  padding: 9px 11px;
+  width: 260px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: .95rem;
+}
+.wo-form input[type=datetime-local] { width: 100%; }
+
+/* 상세 화면 상단 표의 심각도 배지 */
+.sev-badge-critical { background: var(--err-bg);    color: var(--err-fg); }
+.sev-badge-error    { background: var(--orange-bg); color: var(--orange-fg); }
+.sev-badge-warning  { background: var(--warn-bg);   color: var(--warn-fg); }
+.sev-badge-info     { background: var(--surface);   color: var(--text-mute); }

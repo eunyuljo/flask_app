@@ -1,0 +1,219 @@
+{# templates/incident_detail.html
+   incident 블루프린트의 detail() 이 렌더링하는 보고서 상세.
+   위쪽은 사람이 쓰는 칸, 아래쪽은 앱이 모은 근거. 이 경계를 화면에서도 지킨다. #}
+
+{% extends "base.html" %}
+
+{% block title %}보고서 #{{ item.id }}{% endblock %}
+{% block page_title %}#{{ item.id }} &mdash; {{ item.title }}{% endblock %}
+
+{% block content %}
+  <p class="muted"><a href="{{ url_for('incident.index') }}">&larr; 보고서 목록</a></p>
+
+  <table class="mini2">
+    <tr><td class="fname">심각도</td><td><span class="badge sev-badge-{{ item.severity }}">{{ item.severity }}</span></td></tr>
+    <tr><td class="fname">발생 구간</td><td>
+      {{ item.started_at.strftime('%Y-%m-%d %H:%M') }}
+      {% if item.ended_at %}~ {{ item.ended_at.strftime('%H:%M') }}{% else %}~ <em>진행 중</em>{% endif %} UTC
+    </td></tr>
+    {% if item.customer %}<tr><td class="fname">고객사</td><td>{{ item.customer }}</td></tr>{% endif %}
+    {% if item.account_id %}
+      <tr><td class="fname">계정 / 리전</td><td><code>{{ item.account_id }}</code> / <code>{{ item.region }}</code></td></tr>
+    {% endif %}
+    <tr><td class="fname">작성자</td><td>{{ item.author }}</td></tr>
+    <tr><td class="fname">상태</td><td>{{ labels[item.status] }}
+      {% if item.published_at %}&middot; {{ item.published_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}
+    </td></tr>
+  </table>
+
+  {# ---- 사람이 쓰는 칸 ---------------------------------------------- #}
+  <h2>보고서 내용</h2>
+  <p class="muted">
+    이 네 칸은 <strong>앱이 채우지 않습니다.</strong>
+    아래 타임라인을 근거로 직접 작성하세요.
+  </p>
+
+  {% if item.status == 'draft' %}
+    <form action="{{ url_for('incident.save', incident_id=item.id) }}" method="post" class="wo-form">
+      {% for field in ['impact', 'cause', 'action', 'prevention'] %}
+        <label>
+          {{ field_labels[field] }}
+          <textarea name="{{ field }}" rows="4">{{ item[field] }}</textarea>
+        </label>
+      {% endfor %}
+      <button type="submit">저장</button>
+    </form>
+
+    <form action="{{ url_for('incident.publish', incident_id=item.id) }}" method="post">
+      <p class="muted">
+        제출하면 더 이상 고칠 수 없습니다. 원인과 조치가 비어 있으면 제출되지 않습니다.
+      </p>
+      <button type="submit">제출 상태로 바꾸기</button>
+    </form>
+  {% else %}
+    {% for field in ['impact', 'cause', 'action', 'prevention'] %}
+      <h3>{{ field_labels[field] }}</h3>
+      <div class="msg assistant"><div class="body">{{ item[field] or '(작성되지 않음)' }}</div></div>
+    {% endfor %}
+  {% endif %}
+
+  {# ---- 앱이 모은 근거 ------------------------------------------------ #}
+  <hr>
+  <h2>근거 <span class="muted">— 기록에서 자동으로 모은 것</span></h2>
+
+  {% if error %}
+    <div class="flash error" style="white-space:pre-wrap">{{ error }}</div>
+  {% endif %}
+
+  {% if data %}
+    <p class="muted">
+      조사 구간 {{ data.window.start.strftime('%m-%d %H:%M') }} ~
+      {{ data.window.end.strftime('%m-%d %H:%M') }} UTC
+      (장애 구간 앞 {{ data.window.lead }}분, 뒤 {{ data.window.tail }}분 포함)
+      {% if data.sources %}
+        &middot; 출처 {{ data.sources|join(', ') }} 만
+      {% else %}
+        &middot; <strong>모든 출처</strong> — 무관한 알람이 섞여 있을 수 있습니다
+      {% endif %}
+    </p>
+
+    <div class="kpis">
+      <div class="kpi"><span class="n">{{ data.event_count }}</span><span class="k">알람</span></div>
+      <div class="kpi"><span class="n">{{ data.by_kind|length }}</span><span class="k">알람 종류</span></div>
+      <div class="kpi"><span class="n">{{ data.works|length }}</span><span class="k">이 구간의 작업</span></div>
+      <div class="kpi">
+        <span class="n">
+          {% if data.rdiff %}{{ data.rdiff.summary.added + data.rdiff.summary.removed + data.rdiff.summary.modified }}{% else %}—{% endif %}
+        </span>
+        <span class="k">리소스 변경</span>
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>타임라인</h2><span class="hint">{{ data.timeline|length }}건</span>
+      </div>
+      <div class="panel-body">
+        {% if not data.timeline %}
+          <p class="muted">이 구간에 기록된 알람·변경·작업이 없습니다.</p>
+        {% else %}
+          <table class="mini2 tl">
+            {% for t in data.timeline %}
+              <tr class="tl-{{ t.kind }}">
+                <td class="fname">{{ t.at.strftime('%m-%d %H:%M:%S') }}</td>
+                <td class="tl-kind">
+                  <span class="badge">
+                    {% if t.kind == 'alarm' %}알람{% elif t.kind == 'change' %}변경{% else %}작업{% endif %}
+                  </span>
+                </td>
+                <td>
+                  {{ t.text }}
+                  {% if t.detail %}<div class="muted">{{ t.detail }}</div>{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </table>
+        {% endif %}
+      </div>
+    </section>
+
+    <div class="grid two">
+      <section class="panel">
+        <div class="panel-head"><h2>알람 요약</h2><span class="hint">지문 기준</span></div>
+        <div class="panel-body">
+          {% if not data.by_kind %}
+            <p class="muted">이 구간에 알람이 없습니다.</p>
+          {% else %}
+            <table class="mini2">
+              {% for k in data.by_kind %}
+                <tr>
+                  <td class="fname">{{ k.c }}건</td>
+                  <td>
+                    {{ k.sample }}
+                    <div class="muted">
+                      {{ k.severity }} &middot; {{ k.source }} &middot;
+                      {{ k.first_seen.strftime('%H:%M') }} ~ {{ k.last_seen.strftime('%H:%M') }}
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </table>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>리소스 변경</h2></div>
+        <div class="panel-body">
+          {% if not data.rdiff %}
+            <p class="muted">{{ data.diff_note }}</p>
+          {% else %}
+            <p class="muted">
+              #{{ data.snap_before.snapshot_id }} &rarr; #{{ data.snap_after.snapshot_id }}
+              &middot; 생성 {{ data.rdiff.summary.added }}
+              / 삭제 {{ data.rdiff.summary.removed }}
+              / 변경 {{ data.rdiff.summary.modified }}
+            </p>
+            {% if not data.rdiff.changes %}
+              <p class="muted">두 스냅샷 사이에 변경이 없습니다.</p>
+            {% endif %}
+            {% for c in data.rdiff.changes %}
+              <div class="chg chg-{{ c.change }}">
+                <div class="chg-head">
+                  <span class="badge">
+                    {% if c.change == 'added' %}생성
+                    {% elif c.change == 'removed' %}삭제
+                    {% else %}변경{% endif %}
+                  </span>
+                  <code>{{ c.resource_id }}</code>
+                  <span class="muted">{{ c.resource_type }}</span>
+                </div>
+                {% if c.change == 'modified' %}
+                  <table class="fields">
+                    {% for f in c.fields %}
+                      <tr>
+                        <td class="fname">{{ f.field }}</td>
+                        <td class="before">{{ f.before | tojson(indent=None) }}</td>
+                        <td class="arrow">&rarr;</td>
+                        <td class="after">{{ f.after | tojson(indent=None) }}</td>
+                      </tr>
+                    {% endfor %}
+                  </table>
+                {% endif %}
+              </div>
+            {% endfor %}
+            <p class="muted">
+              스냅샷은 두 수집 시점 사이의 변경을 뭉뚱그립니다.
+              정확한 변경 시각은 이 기록으로 알 수 없습니다.
+            </p>
+          {% endif %}
+        </div>
+      </section>
+    </div>
+
+    {% if data.works %}
+      <section class="panel">
+        <div class="panel-head"><h2>이 구간의 작업</h2><span class="hint">{{ data.works|length }}건</span></div>
+        <div class="panel-body">
+          <table class="mini2">
+            {% for w in data.works %}
+              <tr>
+                <td class="fname">#{{ w.id }}</td>
+                <td>
+                  <a href="{{ url_for('work.detail', work_id=w.id) }}">{{ w.title }}</a>
+                  <div class="muted">
+                    {% if w.ticket %}{{ w.ticket }} &middot; {% endif %}
+                    {{ w.operator }} &middot; {{ w.created_at.strftime('%m-%d %H:%M') }}
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </table>
+        </div>
+      </section>
+    {% endif %}
+
+    <hr>
+    <p><a href="{{ url_for('incident.report', incident_id=item.id) }}">사후 보고서 내려받기 (Markdown)</a></p>
+  {% endif %}
+{% endblock %}

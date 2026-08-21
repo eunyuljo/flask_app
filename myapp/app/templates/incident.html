@@ -1,0 +1,131 @@
+{# templates/incident.html
+   incident 블루프린트의 index() 가 렌더링하는 사후 보고서 목록 + 새 보고서 폼. #}
+
+{% extends "base.html" %}
+
+{% block title %}사후 보고서{% endblock %}
+{% block page_title %}장애 사후 보고서{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    장애 구간을 지정하면 <strong>그 시간대의 알람·리소스 변경·작업을 한 시간축에 세워</strong>줍니다.
+    원인과 조치는 앱이 알 수 없으므로 직접 씁니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  <h2>새 보고서</h2>
+  <form action="{{ url_for('incident.new') }}" method="post" class="wo-form">
+    <label>
+      제목
+      <input type="text" name="title" required
+             placeholder="예) 결제 API 응답 지연 (2026-08-21)">
+    </label>
+
+    <div class="row-2">
+      <label>
+        시작 <span class="muted">(UTC)</span>
+        <input type="datetime-local" name="started_at" required>
+      </label>
+      <label>
+        종료 <span class="muted">(UTC, 진행 중이면 비움)</span>
+        <input type="datetime-local" name="ended_at">
+      </label>
+    </div>
+
+    <div class="row-2">
+      <label>
+        심각도
+        <select name="severity">
+          {% for s in severities %}
+            <option value="{{ s }}" {% if s == 'error' %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        계정 <span class="muted">(리소스 변경을 보려면 필요)</span>
+        <select name="account_id" id="ic-account">
+          <option value="">지정 안 함</option>
+          {% for customer, accounts in grouped.items() %}
+            <optgroup label="{{ customer }}">
+              {% for a in accounts %}
+                <option value="{{ a.account_id }}" data-regions="{{ a.regions|join(',') }}">
+                  {{ a.alias or a.account_id }} ({{ a.account_id }})
+                </option>
+              {% endfor %}
+            </optgroup>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <label>
+      리전
+      <select name="region" id="ic-region"></select>
+    </label>
+
+    <label>
+      관련 출처 <span class="muted">(쉼표로 구분, 비우면 구간의 모든 알람)</span>
+      <input type="text" name="sources" placeholder="예) pay-api, api-gw">
+    </label>
+    <p class="muted">
+      이벤트에는 계정 정보가 없어서 계정으로 좁힐 수 없습니다.
+      비워두면 그 시간대에 우연히 같이 난 무관한 알람까지 타임라인에 들어옵니다.
+    </p>
+
+    <button type="submit">보고서 만들기</button>
+  </form>
+
+  <hr>
+  <h2>보고서 <span class="muted">({{ items|length }}건)</span></h2>
+
+  {% if not items %}
+    <p class="muted">아직 작성한 보고서가 없습니다.</p>
+  {% endif %}
+
+  {% for i in items %}
+    <div class="event sev-{{ i.severity }}">
+      <div class="event-head">
+        <span class="badge">{{ i.severity }}</span>
+        <strong><a href="{{ url_for('incident.detail', incident_id=i.id) }}">{{ i.title }}</a></strong>
+      </div>
+      <div class="muted">
+        {{ i.started_at.strftime('%Y-%m-%d %H:%M') }}
+        {% if i.ended_at %}~ {{ i.ended_at.strftime('%H:%M') }}{% else %}~ (진행 중){% endif %} UTC
+        {% if i.customer %} &middot; {{ i.customer }}{% endif %}
+        {% if i.account_id %} &middot; {{ i.account_id }} / {{ i.region }}{% endif %}
+      </div>
+      <div class="muted">{{ labels[i.status] }} &middot; {{ i.author }}</div>
+    </div>
+  {% endfor %}
+
+  <script>
+    // 계정을 고르면 그 계정에 등록된 리전만 보여준다.
+    (function () {
+      var account = document.getElementById('ic-account');
+      var region = document.getElementById('ic-region');
+      if (!account || !region) return;
+
+      function fill() {
+        var opt = account.selectedOptions[0];
+        var regions = (opt && opt.dataset.regions || '').split(',').filter(Boolean);
+        region.innerHTML = '';
+        if (!regions.length) {
+          var none = document.createElement('option');
+          none.value = ''; none.textContent = '(계정을 먼저 고르세요)';
+          region.appendChild(none);
+          return;
+        }
+        regions.forEach(function (r) {
+          var o = document.createElement('option');
+          o.value = r; o.textContent = r;
+          region.appendChild(o);
+        });
+      }
+      account.addEventListener('change', fill);
+      fill();
+    })();
+  </script>
+{% endblock %}

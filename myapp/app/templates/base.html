@@ -62,6 +62,9 @@
         <a href="{{ url_for('handover.index') }}" class="{% if ep.startswith('handover.') %}on{% endif %}">
           <span class="ico">☾</span>당직 인계
         </a>
+        <a href="{{ url_for('incident.index') }}" class="{% if ep.startswith('incident.') %}on{% endif %}">
+          <span class="ico">⚑</span>사후 보고서
+        </a>
         <a href="{{ url_for('work.index') }}" class="{% if ep.startswith('work.') %}on{% endif %}">
           <span class="ico">✎</span>작업 기록
         </a>

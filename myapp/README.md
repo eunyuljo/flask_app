@@ -24,15 +24,16 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 12. [작업 기록 (변경 증적)](#작업-기록-변경-증적)
 13. [런북](#런북)
 14. [당직 인계](#당직-인계)
-15. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
-16. [환경변수 전체 목록](#환경변수-전체-목록)
-17. [알려진 한계](#알려진-한계)
+15. [장애 사후 보고서 (RCA)](#장애-사후-보고서-rca)
+16. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
+17. [환경변수 전체 목록](#환경변수-전체-목록)
+18. [알려진 한계](#알려진-한계)
 
 ---
 
 ## 무엇을 하는 앱인가
 
-열세 개의 블루프린트로 이루어져 있습니다.
+열네 개의 블루프린트로 이루어져 있습니다.
 
 | 블루프린트 | url_prefix | 하는 일 |
 |---|---|---|
@@ -49,6 +50,7 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 | `work` | `/work` | 작업 전후 스냅샷 비교로 변경 증적 남기기 |
 | `runbook` | `/runbook` | 알람 종류(지문)별 대응 절차 |
 | `handover` | `/handover` | 당직 인계 (지난 근무 구간 요약 + 미해결 작업) |
+| `incident` | `/incident` | 장애 사후 보고서 (타임라인 자동 조립 + RCA 문서) |
 
 핵심은 **각 기능이 서로의 코드를 건드리지 않는다**는 점입니다.
 `agent`를 추가할 때 `main`과 `auth`는 한 줄도 수정하지 않았습니다.
@@ -64,7 +66,8 @@ myapp/
 ├── .env.example                환경변수 견본 (복사해서 .env 로 사용)
 ├── docker-compose.yml          로컬 개발용 PostgreSQL
 ├── db/
-│   └── schema.sql              events / resources / accounts / work_orders / runbooks DDL
+│   └── schema.sql              events / resources / accounts / work_orders
+│                               / runbooks / incidents DDL
 │
 ├── app/                        ─── Flask 애플리케이션 ───
 │   ├── __init__.py             create_app() 팩토리 + 블루프린트 등록
@@ -80,6 +83,8 @@ myapp/
 │   ├── evidence.py             작업 증적 문서 생성
 │   ├── runbook.py              알람 대응 절차 (지문 기준)
 │   ├── handover.py             당직 인계 집계 + Markdown
+│   ├── incident.py             장애 기록 + 타임라인 조립
+│   ├── rca.py                  사후 보고서 문서 생성
 │   ├── report.py               기간 리포트 집계 / Markdown / AI 요약
 │   ├── report_pptx.py          리포트를 PowerPoint 슬라이드로
 │   ├── accounts.py             고객사 AWS 계정 목록
@@ -89,12 +94,13 @@ myapp/
 │   ├── views/                  블루프린트별 라우트
 │   │   ├── main.py  auth.py  agent.py  alarm.py  admin.py
 │   │       dashboard.py  explore.py  resources.py  report.py  console.py
-│   │       work.py  runbook.py  handover.py
+│   │       work.py  runbook.py  handover.py  incident.py
 │   ├── templates/              Jinja 템플릿
 │   │   └── base.html  index.html  login.html  agent.html  alarm.html
 │   │       admin.html  dashboard.html  explore.html  resources.html
 │   │       report.html  console.html  work.html  work_detail.html
 │   │       runbook.html  runbook_edit.html  handover.html
+│   │       incident.html  incident_detail.html
 │   └── static/                 정적 파일 (Flask 가 /static/... 으로 자동 공개)
 │       └── css/style.css       전체 스타일. base.html 에서 link 로 연결
 │
@@ -1082,6 +1088,76 @@ critical 과 warning 이 섞인 묶음이 `warning` 으로 보고됩니다. 실�
 
 대표 메시지도 `min(message)`(알파벳 순 아무거나) 대신, 가장 최근 메시지를
 씁니다. "처음 나타난 알람"에서는 반대로 첫 메시지를 씁니다.
+
+---
+
+## 장애 사후 보고서 (RCA)
+
+장애 구간을 지정하면 **그 시간대의 알람·리소스 변경·작업을 한 시간축에 세워**줍니다.
+`/incident/` 입니다.
+
+### 이 앱에서 세 데이터가 처음 만나는 곳입니다
+
+지금까지 이 앱의 데이터는 서로를 몰랐습니다.
+
+```
+events             무슨 일이 있었나    →  /alarm/,     /explore/
+resource_snapshots 무엇이 바뀌었나    →  /resources/
+work_orders        누가 무엇을 했나   →  /work/
+```
+
+셋 다 시각이 찍혀 있는데 한 화면에서 겹쳐본 적이 없었습니다. 장애를 조사할 때
+제일 먼저 묻는 **"장애 직전에 뭐가 바뀌었나"** 에 답하려면 이 셋을 한 시간축에
+세워야 합니다.
+
+```
+15:43:16  작업   작업 시작: 결제 DB 보안그룹 규칙 추가   #3 · OPS-1600
+15:58:16  알람   결제 API 응답 지연 2100ms 감지
+16:02:16  알람   결제 API 응답 지연 2230ms 감지
+16:10:16  알람   결제 API 응답 지연 2490ms 감지
+16:26:16  알람   결제 API 응답 지연 3010ms 감지
+16:33:16  변경   리소스 변경 1건 — sg-pay ingress 에 5432/tcp:0.0.0.0/0 추가
+```
+
+### 앱이 채우는 칸과 사람이 쓰는 칸을 나눕니다
+
+| 앱이 모음 | 사람이 씀 |
+|---|---|
+| 타임라인 | 영향 |
+| 알람 요약 (지문 기준) | **원인** |
+| 리소스 변경 (스냅샷 diff) | **조치** |
+| 이 구간의 작업 | 재발 방지 |
+
+이 경계가 이 기능의 핵심입니다. 타임라인은 데이터에서 나오지만 원인과 조치는
+엔지니어 머릿속에만 있습니다. **앱이 원인을 지어내면 그건 잘못된 사후 보고서가
+되고, 없느니만 못합니다.** 화면과 문서 양쪽에서 어느 쪽이 어느 쪽인지 표시합니다.
+
+원인과 조치가 비어 있으면 제출되지 않습니다. 그 두 칸이 사후 보고서의 본체이고,
+비어 있는 채로 나가면 타임라인만 붙인 문서가 됩니다.
+제출한 뒤에는 고칠 수 없습니다 — 고객사에 낸 문서가 조용히 바뀌면 안 됩니다.
+
+### 관련 출처를 지정해야 읽을 수 있습니다
+
+`events` 에는 **계정 정보가 없습니다.** `source` 는 `pay-api` 같은 서비스 이름이라
+계정이나 고객사로 좁힐 수단이 없습니다. 그래서 무엇이 이 장애와 관련 있는지는
+사람이 지정해야 합니다.
+
+```
+출처 전체  : 알람 35건 / 18종  타임라인 40줄   ← 무관한 알람이 섞여 읽을 수 없음
+pay-api 만 : 알람 14건 /  5종  타임라인 19줄   ← 장애의 이야기가 보임
+```
+
+작업 기록은 다릅니다. `work_orders` 에는 계정이 있으므로 지정한 계정의 작업만
+자동으로 걸러냅니다. 다른 고객사 계정에서 같은 시간에 한 작업이 이 타임라인에
+들어올 이유가 없습니다.
+
+### 스냅샷의 한계를 문서에 적습니다
+
+리소스 변경은 장애 구간을 감싸는 스냅샷 두 개를 비교해서 냅니다. 그래서
+**정확한 변경 시각을 모릅니다** — "두 수집 시점 사이"까지만 알 수 있습니다.
+수집 주기보다 장애 구간이 짧으면 아예 잡아내지 못합니다. 이 사실을 화면과
+문서 양쪽에 적어둡니다. 타임라인에 시각이 찍혀 있으면 정확한 시각으로
+읽히기 때문입니다.
 
 ---
 
