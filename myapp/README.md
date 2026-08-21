@@ -77,7 +77,8 @@ Lambda에 그대로 올릴 수 있고, 파이썬만 있으면 단독 실행됩�
 
 - **Python 3.9 이상** — `requirements.txt`의 핀 버전 기준 (검증은 3.11에서 진행)
 - 그 외에는 아무것도 필요 없습니다. DB, AWS 계정, API 키 **없이도 앱은 실행됩니다.**
-- (선택) **Docker** — 로컬 DB를 띄울 때만 필요합니다.
+- (선택) **PostgreSQL 또는 컨테이너 런타임** — 로컬 DB를 띄울 때만 필요합니다.
+  회사에서 쓴다면 [선택 2 - 로컬 DB 띄우기](#선택-2--로컬-db-띄우기)의 라이선스 안내를 먼저 보세요.
 
 > **Windows 사용자에게**
 >
@@ -212,17 +213,41 @@ AWS_REGION=ap-northeast-2
 ### 선택 2 — 로컬 DB 띄우기
 
 DB 없이도 앱은 돌지만, DB를 붙이면 Lambda가 정규화한 이벤트가 **실제로 테이블에 쌓입니다.**
-Docker만 있으면 됩니다.
 
-> **Windows에서도 됩니다.** [Docker Desktop for Windows](https://docs.docker.com/desktop/setup/install/windows-install/)를
-> 설치하면 `docker compose` 명령이 PowerShell에서 그대로 동작합니다.
-> - 요구사항: Windows 10/11 64비트, **WSL2**, BIOS에서 가상화 활성화
-> - 설치 후 Docker Desktop을 **실행해 둔 상태**여야 합니다 (트레이 아이콘이 켜져 있어야 함)
-> - Docker Desktop은 규모가 큰 조직에서는 유료 구독이 필요합니다. 조건이 바뀔 수 있으니
->   회사에서 쓴다면 현재 약관을 확인하세요. 대안으로 Podman Desktop, Rancher Desktop이 있습니다.
+> #### ⚠️ 회사에서 쓴다면: Docker Desktop 라이선스 확인 필요
 >
-> Docker를 아예 안 쓰고 싶다면 [PostgreSQL Windows 설치본](https://www.postgresql.org/download/windows/)을
-> 직접 설치한 뒤 아래 2-2로 건너뛰어도 됩니다.
+> **Docker Desktop**은 다음 중 **하나라도** 해당하는 조직에서 유료 구독이 필요합니다.
+>
+> - 직원 **250명 초과**
+> - 연 매출 **미화 1,000만 달러 초과**
+>
+> 개인 사용, 교육, 비상업적 오픈소스, 그리고 위 기준 미만의 소규모 사업체는 무료입니다.
+> (2026년 8월 기준 — 약관은 바뀔 수 있으니 반드시 현재 조건을 확인하세요.)
+>
+> **중요: 이 프로젝트는 Docker Desktop이 필요 없습니다.** 필요한 건 `docker compose` 명령뿐이고,
+> 이를 제공하는 무료·오픈소스 방법이 여러 가지 있습니다.
+
+로컬 DB를 띄우는 방법은 네 가지입니다. 회사 환경이라면 **2번 이하**를 권합니다.
+
+| 방법 | 라이선스 | Windows | 비고 |
+|---|---|---|---|
+| **PostgreSQL 직접 설치** | PostgreSQL License | [설치본](https://www.postgresql.org/download/windows/) | Docker 자체가 불필요. **가장 단순** |
+| **Docker Engine on WSL2** | Apache-2.0 | WSL2 안에서 설치 | Desktop 없이 CLI만. 무료 |
+| **Podman Desktop** | Apache-2.0 | 지원 | `docker compose` 호환 |
+| Docker Desktop | 조건부 유료 | 지원 | 위 라이선스 조건 확인 |
+
+**PostgreSQL을 직접 설치했다면** `docker compose up -d` 를 건너뛰고, 설치 시 만든 계정으로
+DB와 사용자를 생성한 뒤 아래 2-2로 가면 됩니다.
+
+```sql
+-- psql 에서 실행 (설치 시 지정한 postgres 계정으로 접속)
+CREATE USER flask_user WITH PASSWORD 'flask_password';
+CREATE DATABASE flask_app OWNER flask_user;
+```
+
+> 이 계정 정보는 `app/config.py` 기본값과 같아서 `.env` 를 건드릴 필요가 없습니다.
+> 이 경로(PostgreSQL 직접 설치 → 위 SQL → `init-db`)는 Linux에서 실제로 검증했습니다.
+> `docker compose` 경로는 설정값 대조만 했고 실행 검증은 하지 못했습니다.
 
 **2-1. DB 켜기**
 
@@ -294,8 +319,7 @@ docker compose down        # 끄기 (데이터는 남음)
 docker compose down -v     # 데이터까지 삭제
 ```
 
-> **Docker가 없다면?** PostgreSQL을 직접 설치한 뒤 DB와 계정을 만들고 `db/schema.sql`을
-> 적용해도 동일합니다. 포트가 겹치면 `docker-compose.yml`의 왼쪽 포트 번호와
+> 포트 5432가 이미 쓰이고 있다면 `docker-compose.yml`의 왼쪽 포트 번호와
 > `.env`의 `DB_PORT`를 함께 바꾸세요.
 
 ### 선택 3 — 실제 Lambda 호출하기
