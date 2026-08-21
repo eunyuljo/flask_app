@@ -8,6 +8,7 @@ from flask import (
 )
 
 from app.report import collect, to_markdown, resource_diff_summary, generate_summary, ReportError
+from app.report_pptx import build as build_pptx
 from app.agent_core import check_config as agent_check
 
 report_bp = Blueprint("report", __name__)
@@ -93,5 +94,27 @@ def download():
     return Response(
         text,
         mimetype="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@report_bp.route("/download.pptx")
+def download_pptx():
+    """리포트를 PowerPoint 파일로 내려받는다."""
+    days = _days()
+    want_summary = request.args.get("summary") == "1"
+
+    try:
+        data, rdiff, summary = _build(days, want_summary)
+    except ReportError as e:
+        flash(str(e), "error")
+        return redirect(url_for("report.index", days=days))
+
+    buf = build_pptx(data, rdiff, summary)
+    filename = f"report-{data['end'].strftime('%Y%m%d')}-{days}d.pptx"
+
+    return Response(
+        buf.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

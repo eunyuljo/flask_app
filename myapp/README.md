@@ -67,6 +67,7 @@ myapp/
 │   ├── query.py                이벤트 질의어 파서 + SQL 컴파일러
 │   ├── resources.py            리소스 스냅샷 저장 / 정규화 / diff
 │   ├── report.py               기간 리포트 집계 / Markdown / AI 요약
+│   ├── report_pptx.py          리포트를 PowerPoint 슬라이드로
 │   ├── lambda_client.py        Lambda 호출 계층 (local / aws 전환)
 │   ├── views/                  블루프린트별 라우트
 │   │   ├── main.py  auth.py  agent.py  alarm.py  admin.py
@@ -150,6 +151,8 @@ pip install -r requirements.txt
 | `Flask` | 웹 프레임워크 | 앱이 안 뜸 |
 | `python-dotenv` | `.env` 파일 읽기 | 환경변수를 직접 export 해야 함 |
 | `anthropic[bedrock]` | Claude 호출 + AWS SigV4 서명 | 에이전트 페이지만 못 씀 |
+| `psycopg[binary]` | PostgreSQL 접속 | DB 기능만 못 씀 |
+| `python-pptx` | 리포트 PowerPoint 내보내기 | pptx 내보내기만 못 씀 |
 
 ### 4단계 — 환경변수 파일 만들기
 
@@ -548,6 +551,7 @@ AWS_REGION=ap-northeast-2
 | `/resources/` | GET | 필요 | 리소스 스냅샷 비교 (`?base=`, `?target=`) |
 | `/report/` | GET | 필요 | 운영 리포트 (`?days=1\|7\|30`, `?summary=1`) |
 | `/report/download` | GET | 필요 | 리포트를 Markdown 파일로 |
+| `/report/download.pptx` | GET | 필요 | 리포트를 PowerPoint 파일로 |
 | `/admin/` | GET | 관리자 | 설정·라우트 확인 |
 | `/admin/events/clear` | POST | 관리자 | 이벤트 비우기 |
 
@@ -731,10 +735,18 @@ flask --app run collect-resources --demo --drift 1.0   # 두 번째 실행 (변�
 `/report/` 에서 기간별 리포트를 보고 Markdown 으로 내려받을 수 있습니다.
 
 ```
-/report/?days=7              화면
-/report/download?days=7      Markdown 파일
-/report/?days=7&summary=1    AI 요약 포함 (API 키 필요)
+/report/?days=7                 화면
+/report/download?days=7         Markdown 파일
+/report/download.pptx?days=7    PowerPoint 파일 (6장)
+/report/?days=7&summary=1       AI 요약 포함 (API 키 필요)
 ```
+
+PowerPoint 는 표지 · 요약 · 심각도 분포 · 출처별 비교 · 인프라 변경 ·
+읽을 때 주의할 점 순서로 만들어집니다. 차트는 이미지가 아니라 PowerPoint
+네이티브 차트라서 파일을 열어 직접 편집할 수 있고, 심각도 색은 화면과 같은 값을 씁니다.
+
+마지막 "읽을 때 주의할 점" 슬라이드를 넣은 이유는, 발표 자리에서 순위가 사실처럼
+굳어지는 것을 막기 위해서입니다. 표본이 적으면 그 경고가 맨 앞에 붙습니다.
 
 ### 설계에서 신경 쓴 것
 

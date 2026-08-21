@@ -16,7 +16,9 @@
   </div>
   {% if data %}
     <a class="chip" href="{{ url_for('report.download', days=days,
-                                     summary='1' if want_summary else None) }}">Markdown 내려받기</a>
+                                     summary='1' if want_summary else None) }}">Markdown</a>
+    <a class="chip" href="{{ url_for('report.download_pptx', days=days,
+                                     summary='1' if want_summary else None) }}">PowerPoint</a>
   {% endif %}
 {% endblock %}
 
