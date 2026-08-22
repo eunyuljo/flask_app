@@ -446,10 +446,21 @@ svg.chart g:hover .bar { filter: brightness(1.15); }
 @media (max-width: 860px) {
   /* 좁은 화면에서는 사이드바를 위쪽 가로줄로 접는다. */
   .shell { grid-template-columns: 1fr; }
+  /* min-width: 0 이 없으면 overflow 가 걸려도 소용이 없다.
+     그리드 항목의 기본값은 min-width: auto 라서 '내용보다 작아지지 않는다'.
+     그래서 사이드바가 줄어드는 대신 그리드 칸 자체가 넓어지고,
+     페이지 전체에 가로 스크롤이 생긴다. 메뉴가 늘어나면서 드러났다. */
   .sidebar { position: static; height: auto; flex-direction: row;
-             align-items: center; gap: 6px; overflow-x: auto; padding: 8px 10px; }
+             align-items: center; gap: 6px; padding: 8px 10px;
+             min-width: 0; overflow: hidden; }
   .brand { padding: 0 10px 0 4px; }
-  .side-nav { flex-direction: row; flex: 1; gap: 2px; }
+  /* 스크롤은 사이드바가 아니라 메뉴 줄이 맡는다. 사이드바를 통째로
+     스크롤시키면 로고와 사용자 칩까지 같이 밀려나간다.
+     min-width: 0 이 있어야 flex 항목이 내용보다 작아질 수 있고,
+     그래야 여기서 스크롤이 걸린다. */
+  .side-nav { flex-direction: row; flex: 1 1 0; gap: 2px;
+              min-width: 0; overflow-x: auto; }
+  .side-nav a { white-space: nowrap; }
   /* 항목이 눌려서 찌그러지지 않게 한다. 넘치면 사이드바가 가로로 스크롤된다. */
   .side-nav a, .brand, .side-foot { flex: none; }
   .side-label { display: none; }
@@ -458,10 +469,20 @@ svg.chart g:hover .bar { filter: brightness(1.15); }
   .side-user { padding: 0; }
   .side-user-name, .side-user-role { display: none; }
   .topbar, .content { padding-left: 14px; padding-right: 14px; }
+  /* 열이 많거나 내용이 긴 표는 좁은 화면에서 페이지 전체를 넓혀버린다.
+     display:block 으로 바꾸면 표가 자기 안에서 가로로 스크롤된다.
+     (table.rows 는 th 에 nowrap 이 걸려 있어 줄바꿈으로는 안 줄어들고,
+      관리자 화면의 라우트 표는 URL 이 길어서 줄어들지 않는다.) */
+  .content table { display: block; overflow-x: auto; }
 }
 @media (max-width: 520px) {
   .barrow { grid-template-columns: 84px 1fr 38px; }
   .kpi .n { font-size: 1.5rem; }
+  /* 로고 글자가 가로줄의 40% 를 먹는다. 표시는 마크만 남기고
+     그 자리를 메뉴에 준다 - 여기서는 메뉴가 로고보다 중요하다. */
+  .brand-text { display: none; }
+  .brand { padding: 0 6px 0 2px; }
+  .side-quiet { padding: 5px 6px; }
 }
 
 /* ==================================================================

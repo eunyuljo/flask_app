@@ -234,10 +234,21 @@ def create_app(config_name=None):
     # context_processor 로 등록한 함수가 돌려주는 딕셔너리는 모든 템플릿에서
     # 변수처럼 쓸 수 있다. 화면마다 render_template 에 같은 값을 넘기지 않아도 된다.
     @app.context_processor
-    def inject_roles():
-        from app import users
+    def inject_nav():
+        from flask import request, session
 
-        return {"role_names": users.ROLES}
+        from app import nav, users
+
+        # 앱에 실제로 등록된 endpoint 만 넘긴다. 메뉴에 적어둔 화면을
+        # 나중에 떼어냈을 때, 사이드바 하나 때문에 모든 페이지가
+        # url_for BuildError 로 500 이 나는 것을 막는다.
+        known = {r.endpoint for r in app.url_map.iter_rules()}
+        role = session.get("role")
+        return {
+            "role_names": users.ROLES,
+            "nav_groups": nav.menu(role, known),
+            "nav_active": nav.active_endpoint(request.endpoint),
+        }
 
     return app
 

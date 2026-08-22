@@ -44,63 +44,22 @@
         <span class="ico">◇</span>홈
       </a>
 
-      {# session 은 템플릿 안에서 별도 전달 없이 바로 쓸 수 있다(Flask 가 기본 제공). #}
-      {% if session.get('username') %}
-        <div class="side-label">관측</div>
-        <a href="{{ url_for('customer.index') }}" class="{% if ep.startswith('customer.') %}on{% endif %}">
-          <span class="ico">◉</span>고객사 현황
-        </a>
-        <a href="{{ url_for('dashboard.index') }}" class="{% if ep.startswith('dashboard.') %}on{% endif %}">
-          <span class="ico">▤</span>대시보드
-        </a>
-        <a href="{{ url_for('alarm.index') }}" class="{% if ep.startswith('alarm.') %}on{% endif %}">
-          <span class="ico">◈</span>이벤트
-        </a>
-        <a href="{{ url_for('noise.index') }}" class="{% if ep.startswith('noise.') %}on{% endif %}">
-          <span class="ico">≋</span>알람 노이즈
-        </a>
-        <a href="{{ url_for('explore.index') }}" class="{% if ep.startswith('explore.') %}on{% endif %}">
-          <span class="ico">⌕</span>탐색
-        </a>
-        <a href="{{ url_for('resources.index') }}" class="{% if ep.startswith('resources.') %}on{% endif %}">
-          <span class="ico">▩</span>리소스 변경
-        </a>
-        <a href="{{ url_for('compliance.index') }}" class="{% if ep.startswith('compliance.') %}on{% endif %}">
-          <span class="ico">✓</span>컴플라이언스
-        </a>
-        <a href="{{ url_for('handover.index') }}" class="{% if ep.startswith('handover.') %}on{% endif %}">
-          <span class="ico">☾</span>당직 인계
-        </a>
-        <a href="{{ url_for('incident.index') }}" class="{% if ep.startswith('incident.') %}on{% endif %}">
-          <span class="ico">⚑</span>사후 보고서
-        </a>
-        <a href="{{ url_for('work.index') }}" class="{% if ep.startswith('work.') %}on{% endif %}">
-          <span class="ico">✎</span>작업 기록
-        </a>
-        <a href="{{ url_for('runbook.index') }}" class="{% if ep.startswith('runbook.') %}on{% endif %}">
-          <span class="ico">▦</span>런북
-        </a>
-        <a href="{{ url_for('report.index') }}" class="{% if ep.startswith('report.') %}on{% endif %}">
-          <span class="ico">▤</span>리포트
-        </a>
-        {% if session.get('role') == 'admin' %}
-          <a href="{{ url_for('console.index') }}" class="{% if ep.startswith('console.') %}on{% endif %}">
-            <span class="ico">❯</span>콘솔
-          </a>
-        {% endif %}
+      {# 메뉴는 app/nav.py 에 있다. 예전에는 여기에 <a> 태그가 열여섯 개
+         박혀 있어서, 기능 하나 붙일 때마다 HTML 을 옳은 자리에 끼워
+         넣어야 했다. 지금은 그 파일에 한 줄 추가하면 된다.
 
-        <div class="side-label">도구</div>
-        <a href="{{ url_for('agent.index') }}" class="{% if ep.startswith('agent.') %}on{% endif %}">
-          <span class="ico">✦</span>AI 에이전트
-        </a>
-        {# 관리자 메뉴는 관리자에게만 보여준다.
-           단, '메뉴를 숨기는 것'은 보안이 아니다. 실제 차단은 admin 블루프린트의
-           before_request 가 하고, 여기서는 보이지 않게만 할 뿐이다. #}
-        {% if session.get('role') == 'admin' %}
-          <a href="{{ url_for('admin.index') }}" class="{% if ep.startswith('admin.') %}on{% endif %}">
-            <span class="ico">⚙</span>관리자
-          </a>
-        {% endif %}
+         session 은 템플릿 안에서 별도 전달 없이 바로 쓸 수 있다(Flask 가 기본 제공). #}
+      {% if session.get('username') %}
+        {% for group in nav_groups %}
+          <div class="side-label" title="{{ group.hint }}">{{ group.label }}</div>
+          {% for item in group['items'] %}
+            <a href="{{ url_for(item.endpoint) }}"
+               title="{{ item.hint }}"
+               class="{% if item.endpoint == nav_active %}on{% endif %}">
+              <span class="ico">{{ item.icon }}</span>{{ item.label }}
+            </a>
+          {% endfor %}
+        {% endfor %}
       {% endif %}
     </nav>
 
