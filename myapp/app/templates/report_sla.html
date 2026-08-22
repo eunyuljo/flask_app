@@ -52,6 +52,21 @@
       <div class="kpi"><span class="n">{{ data.unattributed }}</span><span class="k">계정 미상 이벤트</span></div>
     </div>
 
+    {# 대응 시각이 어디서 나왔는지 밝힌다. 추론이 많으면 이 지표를
+       그만큼 덜 믿어야 한다. #}
+    {% if data.measured %}
+      <p class="muted">
+        대응 시각 {{ data.measured }}건 중
+        <strong>{{ data.acked }}건은 확인 버튼</strong>,
+        {{ data.inferred }}건은 감사 로그에서 추론했습니다.
+        {% if data.inferred > data.acked %}
+          추론은 "그 계정을 들여다봤다" 이지 "이 알람을 처리했다" 가 아닙니다 &mdash;
+          <a href="{{ url_for('alarm.index', unacked=1) }}">확인 버튼</a>이
+          쌓일수록 이 지표가 정확해집니다.
+        {% endif %}
+      </p>
+    {% endif %}
+
     {% if data.unattributed %}
       <p class="muted">
         계정을 알 수 없는 이벤트가 {{ data.unattributed }}건 있습니다.

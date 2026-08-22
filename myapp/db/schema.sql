@@ -605,3 +605,26 @@ ALTER TABLE resource_snapshots
 -- 비어 있으면 아직 안 넘긴 것이다. 이 값이 있어야 같은 보고서로 이슈를
 -- 두 번 만드는 것을 막을 수 있다 - 버튼을 두 번 누르는 일은 반드시 생긴다.
 ALTER TABLE incidents ADD COLUMN IF NOT EXISTS jira_key TEXT NOT NULL DEFAULT '';
+
+
+-- ======================================================================
+-- 알람 확인(ack)
+-- ----------------------------------------------------------------------
+-- 이게 없어서 SLA 를 감사 로그로 추론하고 있었다.
+--
+--   추론:  "그 계정을 처음 들여다본 시각"
+--   사실:  "이 알람을 누가 언제 확인했는가"
+--
+-- 둘은 다르다. 콘솔에 들어가 다른 일을 해도 감사 기록이 남으므로, 추론은
+-- 실제보다 대응이 빨랐던 것처럼 보이게 만들 수 있다. 반대로 이 도구를
+-- 거치지 않고 대응하면 영원히 '미대응' 으로 남는다.
+--
+-- 그렇다고 추론을 버리면 지난 기록이 전부 미대응이 된다. 그래서 둘 다
+-- 쓰되, 어느 쪽에서 나온 값인지를 세어서 화면에 밝힌다. 확인 버튼이
+-- 자리를 잡을수록 추론 비중이 줄어드는 것이 보여야 한다.
+ALTER TABLE events ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS acknowledged_by TEXT NOT NULL DEFAULT '';
+
+-- "아직 아무도 안 본 알람" 을 찾는 질의가 화면의 기본값이 된다.
+CREATE INDEX IF NOT EXISTS idx_events_unacked
+    ON events (occurred_at DESC) WHERE acknowledged_at IS NULL;

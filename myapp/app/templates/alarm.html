@@ -44,8 +44,47 @@
     <div class="flash error">{{ store_error }}</div>
   {% endif %}
 
+  {# 미확인 알람을 목록 위에 크게 둔다. 목록만 보면 무엇이 아직 아무도
+     안 본 것인지 알 수 없고, 그게 SLA 가 깨지는 자리다. #}
+  {% if unacked %}
+    <div class="kpis">
+      <div class="kpi">
+        <span class="n">{{ unacked.total }}</span>
+        <span class="k">최근 {{ unacked.hours }}시간 미확인</span>
+      </div>
+      {% for sev in ['critical', 'error', 'warning'] %}
+        <div class="kpi">
+          <span class="n">{{ unacked.by_severity.get(sev, 0) }}</span>
+          <span class="k">{{ sev }} 미확인</span>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <p class="muted">
+    보기:
+    {% if not unacked_only %}<strong>전체</strong>
+    {% else %}<a href="{{ url_for('alarm.index', severity=severity) }}">전체</a>{% endif %}
+    &middot;
+    {% if unacked_only %}<strong>미확인만</strong>
+    {% else %}<a href="{{ url_for('alarm.index', unacked=1, severity=severity) }}">미확인만</a>{% endif %}
+    &nbsp;|&nbsp; 심각도:
+    {% if not severity %}<strong>전체</strong>
+    {% else %}<a href="{{ url_for('alarm.index', unacked=1 if unacked_only else None) }}">전체</a>{% endif %}
+    {% for sev in ['critical', 'error', 'warning', 'info'] %}
+      &middot;
+      {% if sev == severity %}<strong>{{ sev }}</strong>
+      {% else %}
+        <a href="{{ url_for('alarm.index', severity=sev, unacked=1 if unacked_only else None) }}">{{ sev }}</a>
+      {% endif %}
+    {% endfor %}
+  </p>
+
   {% if not events %}
-    <p class="muted">아직 적재된 이벤트가 없습니다.</p>
+    <p class="muted">
+      {% if unacked_only or severity %}조건에 맞는 이벤트가 없습니다.
+      {% else %}아직 적재된 이벤트가 없습니다.{% endif %}
+    </p>
   {% endif %}
 
   {% for item in events %}
@@ -60,6 +99,23 @@
         &middot; 지문 <code>{{ item.record.fingerprint }}</code>
       </div>
       <div class="muted">발생 {{ item.record.occurred_at }}</div>
+
+      {# 확인(ack). SLA 의 '최초 대응 시각' 이 여기서 나온다. #}
+      {% if item.record.acknowledged_at %}
+        <div class="muted">
+          확인 {{ item.record.acknowledged_at.strftime('%m-%d %H:%M') }}
+          &middot; {{ item.record.acknowledged_by or '누군가' }}
+          <form action="{{ url_for('alarm.unack', event_id=item.record.event_id) }}"
+                method="post" class="form inline">
+            <button type="submit" class="linkish">되돌리기</button>
+          </form>
+        </div>
+      {% else %}
+        <form action="{{ url_for('alarm.ack', event_id=item.record.event_id) }}"
+              method="post" class="form inline">
+          <button type="submit">확인</button>
+        </form>
+      {% endif %}
       {# 적재/알람 결과는 Lambda 응답에만 있고 DB 에는 없다. 목록에 있다는 것
          자체가 '적재됨' 이고, 알람 발송 여부는 알람 노이즈 화면에서 본다. #}
       {% if item.record.account_id %}

@@ -60,9 +60,19 @@ def index():
     # 방금 진단한 결과가 있으면 그 이벤트에만 펼쳐서 보여준다.
     diagnosed = request.args.get("diagnosed", "")
 
-    events, store_error = [], None
+    # 기본값을 '미확인만' 으로 두지 않는다. 목록을 열었는데 아무것도 없으면
+    # 알람이 안 들어오는 것과 구분이 안 된다. 대신 미확인 수를 위에 크게 띄운다.
+    unacked_only = request.args.get("unacked") == "1"
+    severity = request.args.get("severity", "")
+    if severity not in ("critical", "error", "warning", "info"):
+        severity = ""
+
+    events, store_error, unacked = [], None, None
     try:
-        events = event_store.recent(20)
+        events = event_store.recent(
+            20, unacked_only=unacked_only, severity=severity or None
+        )
+        unacked = event_store.unacked_count()
     except EventStoreError as e:
         # DB 가 없으면 목록은 못 보여주지만 제출 폼은 떠야 한다.
         store_error = str(e)
@@ -98,6 +108,9 @@ def index():
         store_error=store_error,
         diagnosed=diagnosed,
         diagnoses=_DIAGNOSES,
+        unacked=unacked,
+        unacked_only=unacked_only,
+        severity=severity,
     )
 
 
@@ -326,3 +339,31 @@ def diagnose():
     _audit_diagnosis(event, account, region, commands, "ok")
 
     return redirect(url_for("alarm.index", diagnosed=event_id))
+
+
+# 최종 URL: /alarm/<이벤트>/ack
+@alarm_bp.route("/<event_id>/ack", methods=["POST"])
+def ack(event_id):
+    """이 알람을 확인했다고 표시한다.
+
+    SLA 의 '최초 대응 시각' 이 여기서 나온다. 예전에는 감사 로그에서
+    추론했는데, 그건 '그 계정을 들여다봤다' 이지 '이 알람을 처리했다' 가
+    아니었다.
+    """
+    try:
+        event_store.acknowledge(event_id, session.get("username", ""))
+        flash("확인했습니다.", "success")
+    except EventStoreError as e:
+        flash(str(e), "error")
+    return redirect(request.referrer or url_for("alarm.index"))
+
+
+@alarm_bp.route("/<event_id>/unack", methods=["POST"])
+def unack(event_id):
+    """확인을 되돌린다. 잘못 눌렀을 때."""
+    try:
+        event_store.unacknowledge(event_id)
+        flash("확인을 되돌렸습니다.", "success")
+    except EventStoreError as e:
+        flash(str(e), "error")
+    return redirect(request.referrer or url_for("alarm.index"))

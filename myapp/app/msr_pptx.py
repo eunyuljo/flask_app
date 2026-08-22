@@ -161,6 +161,12 @@ def _slide_sla(prs, data):
             f"대응 기록이 없는 알람 {unanswered}건은 미대응으로 셉니다. "
             "실제로 대응했는데 감사 기록이 없으면 실제보다 나쁘게 나옵니다."
         )
+    if sla.get("inferred"):
+        notes.append(
+            f"대응 시각 {sla['measured']}건 중 {sla['acked']}건은 확인 기록, "
+            f"{sla['inferred']}건은 감사 로그에서 추론한 값입니다. "
+            "추론은 '그 계정을 들여다봤다' 이지 '이 알람을 처리했다' 가 아닙니다."
+        )
     if sla.get("unattributed"):
         notes.append(
             f"계정을 알 수 없는 이벤트가 {sla['unattributed']}건 있어 "

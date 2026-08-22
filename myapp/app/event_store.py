@@ -61,12 +61,29 @@ def _wrap(row):
     return {"record": row, "delivery": {}}
 
 
-def recent(limit=20, account_id=None):
-    """최근 이벤트를 새 것부터. account_id 를 주면 그 계정 것만."""
+FIELDS = """event_id, event_type, source, severity, message,
+            occurred_at, received_at, fingerprint, account_id, meta,
+            acknowledged_at, acknowledged_by"""
+
+
+def recent(limit=20, account_id=None, unacked_only=False, severity=None):
+    """최근 이벤트를 새 것부터.
+
+    account_id  : 그 계정 것만
+    unacked_only: 아직 아무도 확인하지 않은 것만
+    severity    : 이 심각도만
+
+    필터 값은 전부 %s 로 나간다. SQL 본문에 사용자 입력이 들어가지 않는다.
+    """
     where, params = [], []
     if account_id:
         where.append("account_id = %s")
         params.append(account_id)
+    if unacked_only:
+        where.append("acknowledged_at IS NULL")
+    if severity:
+        where.append("severity = %s")
+        params.append(severity)
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     params.append(limit)
 
@@ -74,8 +91,7 @@ def recent(limit=20, account_id=None):
         _ensure(cur)
         cur.execute(
             f"""
-            SELECT event_id, event_type, source, severity, message,
-                   occurred_at, received_at, fingerprint, account_id, meta
+            SELECT {FIELDS}
               FROM events {where_sql}
              ORDER BY occurred_at DESC
              LIMIT %s
@@ -83,6 +99,64 @@ def recent(limit=20, account_id=None):
             params,
         )
         return [_wrap(r) for r in _rows(cur)]
+
+
+def acknowledge(event_id, username):
+    """이 알람을 확인했다고 표시한다.
+
+    이미 확인된 것은 덮어쓰지 않는다. 최초 대응 시각이 바뀌면 SLA 지표가
+    나중 사람 기준으로 밀린다 - 먼저 본 사람이 최초 대응자다.
+    """
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure(cur)
+        cur.execute(
+            "UPDATE events SET acknowledged_at = now(), acknowledged_by = %s "
+            " WHERE event_id = %s AND acknowledged_at IS NULL "
+            " RETURNING acknowledged_at",
+            (username or "", event_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            # 없는 이벤트인지, 이미 확인된 것인지 구분해서 알려준다.
+            cur.execute(
+                "SELECT acknowledged_by FROM events WHERE event_id = %s", (event_id,)
+            )
+            existing = cur.fetchone()
+            if existing is None:
+                raise EventStoreError("그런 이벤트가 없습니다.")
+            raise EventStoreError(f"이미 {existing[0] or '누군가'} 님이 확인했습니다.")
+        return row[0]
+
+
+def unacknowledge(event_id):
+    """확인을 되돌린다. 잘못 눌렀을 때를 위한 것이다."""
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure(cur)
+        cur.execute(
+            "UPDATE events SET acknowledged_at = NULL, acknowledged_by = '' "
+            " WHERE event_id = %s RETURNING event_id",
+            (event_id,),
+        )
+        if cur.fetchone() is None:
+            raise EventStoreError("그런 이벤트가 없습니다.")
+
+
+def unacked_count(hours=24):
+    """최근 N시간 안에 아직 아무도 확인하지 않은 알람 수.
+
+    심각도별로 나눈다. info 100건보다 critical 1건이 급하다.
+    """
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure(cur)
+        cur.execute(
+            "SELECT severity, count(*) AS n FROM events "
+            " WHERE acknowledged_at IS NULL "
+            "   AND occurred_at > now() - make_interval(hours => %s) "
+            " GROUP BY severity",
+            (hours,),
+        )
+        counts = {r["severity"]: r["n"] for r in _rows(cur)}
+    return {"by_severity": counts, "total": sum(counts.values()), "hours": hours}
 
 
 def get(event_id):
@@ -94,11 +168,7 @@ def get(event_id):
     with _connect() as conn, conn.cursor() as cur:
         _ensure(cur)
         cur.execute(
-            """
-            SELECT event_id, event_type, source, severity, message,
-                   occurred_at, received_at, fingerprint, account_id, meta
-              FROM events WHERE event_id = %s
-            """,
+            f"SELECT {FIELDS} FROM events WHERE event_id = %s",
             (event_id,),
         )
         rows = _rows(cur)

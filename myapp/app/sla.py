@@ -164,15 +164,31 @@ def measure(customer, days=30, start=None, end=None):
         # LATERAL 을 쓰는 이유: 알람 행마다 audit_log 를 따로 뒤져야 한다.
         # 그냥 조인하면 알람 × 감사기록 만큼 행이 부풀고, 그 뒤에 min() 을
         # 걸어도 이벤트가 많아지면 감당하지 못한다.
+        # 대응 시각을 두 곳에서 찾는다.
+        #
+        #   1) 확인 버튼 (events.acknowledged_at)  - 사실
+        #   2) 감사 로그의 첫 기록                  - 추론
+        #
+        # 1번이 있으면 그걸 쓰고, 없을 때만 2번으로 떨어진다. 확인 버튼이
+        # 생기기 전 기록을 전부 '미대응' 으로 만들지 않기 위해서다.
+        #
+        # 대신 어느 쪽에서 나온 값인지를 함께 센다(acked / inferred).
+        # 추론 비중이 크면 이 지표를 그만큼 덜 믿어야 하고, 확인 버튼이
+        # 자리를 잡을수록 그 수가 줄어드는 것이 보여야 한다.
         cur.execute(
             """
             SELECT e.severity,
                    count(*)                                   AS total,
-                   count(a.at)                                AS answered,
+                   count(COALESCE(e.acknowledged_at, a.at))   AS answered,
+                   count(e.acknowledged_at)                   AS acked,
+                   count(a.at) FILTER (WHERE e.acknowledged_at IS NULL)
+                                                              AS inferred,
                    COALESCE(percentile_cont(0.5) WITHIN GROUP (
-                       ORDER BY EXTRACT(EPOCH FROM (a.at - e.occurred_at)) / 60
+                       ORDER BY EXTRACT(EPOCH FROM
+                           (COALESCE(e.acknowledged_at, a.at) - e.occurred_at)) / 60
                    ), 0)                                      AS median_minutes,
-                   COALESCE(max(EXTRACT(EPOCH FROM (a.at - e.occurred_at)) / 60), 0)
+                   COALESCE(max(EXTRACT(EPOCH FROM
+                       (COALESCE(e.acknowledged_at, a.at) - e.occurred_at)) / 60), 0)
                                                               AS worst_minutes
               FROM events e
               LEFT JOIN LATERAL (
@@ -218,6 +234,9 @@ def measure(customer, days=30, start=None, end=None):
             "unanswered": total - answered,
             "median_minutes": round(stat["median_minutes"]) if stat else 0,
             "worst_minutes": round(stat["worst_minutes"]) if stat else 0,
+            # 이 등급의 대응 시각이 어디서 나왔나.
+            "acked": stat["acked"] if stat else 0,
+            "inferred": stat["inferred"] if stat else 0,
             # 목표가 0 이면 집계하지 않는다. '목표 없음' 을 '항상 달성' 으로
             # 보여주면 지표가 거짓말을 한다.
             "tracked": bool(minutes),
@@ -234,6 +253,10 @@ def measure(customer, days=30, start=None, end=None):
         "by_severity": rows,
         "total": sum(r["total"] for r in rows),
         "measured": sum(r["answered"] for r in rows),
+        # 확인 버튼으로 잰 것과 감사 로그로 추론한 것의 비율.
+        # 추론이 많으면 이 지표를 그만큼 덜 믿어야 한다.
+        "acked": sum(r["acked"] for r in rows),
+        "inferred": sum(r["inferred"] for r in rows),
         "unattributed": unattributed,
     }
 

@@ -913,3 +913,13 @@ table.sla-table td { padding: 8px 12px 8px 0; white-space: nowrap; }
 .rd-unknown .badge { background: var(--info-bg); color: var(--info-fg); }
 .rd-how { margin-top: 6px; font-size: .84rem; }
 .rd-how code { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* --- 알람 확인 --- */
+/* 목록 안에서 폼이 줄을 차지하지 않게 한다. 확인 버튼 하나 때문에
+   이벤트 카드가 두 배로 길어지면 목록을 훑을 수가 없다. */
+form.inline { display: inline; margin: 0; }
+form.inline button { padding: 3px 10px; font-size: .8rem; }
+button.linkish { background: none; border: 0; padding: 0 0 0 4px;
+                 color: var(--text-mute); text-decoration: underline;
+                 font-size: .78rem; cursor: pointer; }
+button.linkish:hover { color: var(--accent); }
