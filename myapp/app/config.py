@@ -123,6 +123,23 @@ class Config:
     LAMBDA_INVOCATION_TYPE = os.environ.get("LAMBDA_INVOCATION_TYPE", "RequestResponse")
 
     # 관리자 계정 목록. 콤마로 구분해서 넣는다.
+    # ------------------------------------------------------------------
+    # Slack (Incoming Webhook)
+    # ------------------------------------------------------------------
+    # 비워두면 Slack 전송을 건너뛴다. 설정하지 않은 것은 오류가 아니다.
+    # 용도별 웹훅을 채우면 채널을 나눌 수 있고, 없으면 공통 웹훅으로 간다.
+    #   당직 인계  -> SLACK_HANDOVER_WEBHOOK
+    #   SLA 경고   -> SLACK_SLA_WEBHOOK
+    SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+    SLACK_HANDOVER_WEBHOOK = os.environ.get("SLACK_HANDOVER_WEBHOOK", "")
+    SLACK_SLA_WEBHOOK = os.environ.get("SLACK_SLA_WEBHOOK", "")
+
+    # SLA 경고를 같은 알람에 대해 다시 보내기까지 기다리는 시간(분).
+    # 20건이 같은 이유로 위반이면 20번 찌르는 게 아니라 한 번만 보낸다.
+    SLA_NOTICE_WINDOW_MINUTES = int(
+        os.environ.get("SLA_NOTICE_WINDOW_MINUTES", "60")
+    )
+
     # set 으로 만들어두면 "username in ADMIN_USERS" 검사가 빠르고 읽기도 쉽다.
     ADMIN_USERS = {
         u.strip() for u in os.environ.get("ADMIN_USERS", "admin").split(",") if u.strip()

@@ -428,3 +428,16 @@ CREATE TABLE IF NOT EXISTS sla_targets (
 
     PRIMARY KEY (customer, severity)
 );
+
+-- SLA 경고를 언제 보냈는지. 같은 알람에 반복해서 찌르지 않기 위한 기록이다.
+-- 20건이 같은 이유로 위반이면 20번 보내는 게 아니라 한 번만 보낸다.
+--
+-- alarm_state 와 같은 발상이고 같은 이유로 규칙(sla_targets)과 분리했다:
+-- 목표는 사람이 정하고 오래 남지만, 이 값은 보낼 때마다 바뀌는 실행 상태다.
+CREATE TABLE IF NOT EXISTS sla_notices (
+    account_id      TEXT        NOT NULL,
+    fingerprint     TEXT        NOT NULL,
+    last_notified_at TIMESTAMPTZ NOT NULL,
+    notice_count    BIGINT      NOT NULL DEFAULT 1,
+    PRIMARY KEY (account_id, fingerprint)
+);

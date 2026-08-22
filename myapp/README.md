@@ -32,9 +32,10 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 20. [감사 로그](#감사-로그)
 21. [최초 대응 시간 (SLA)](#최초-대응-시간-sla)
 22. [데이터 보존](#데이터-보존)
-23. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
-24. [환경변수 전체 목록](#환경변수-전체-목록)
-25. [알려진 한계](#알려진-한계)
+23. [Slack 연동](#slack-연동)
+24. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
+25. [환경변수 전체 목록](#환경변수-전체-목록)
+26. [알려진 한계](#알려진-한계)
 
 ---
 
@@ -99,6 +100,7 @@ myapp/
 │   ├── customer.py             고객사 현황 집계
 │   ├── audit.py                감사 로그 (고객사 계정을 건드린 기록)
 │   ├── sla.py                  최초 대응 시간 목표와 집계
+│   ├── slack.py                Slack Incoming Webhook 전송
 │   ├── report.py               기간 리포트 집계 / Markdown / AI 요약
 │   ├── report_pptx.py          리포트를 PowerPoint 슬라이드로
 │   ├── accounts.py             고객사 AWS 계정 목록
@@ -127,7 +129,7 @@ myapp/
     └── test_normalize.py  test_awscli.py  test_query.py
         test_resources.py  test_app.py  test_suppression.py
         test_noise_customer.py  test_account_audit.py
-        test_sla_prune.py
+        test_sla_prune.py  test_slack.py
 ```
 
 **의존 방향은 `app` → `api` 단방향입니다.** `api/`는 Flask를 전혀 import하지 않으므로
@@ -1343,8 +1345,8 @@ DB 없이도 뜨는 것을 전제로 하는데, DB 없는 개발자가 매번 �
 이유가 없습니다.
 
 ```
-195 passed                       (PostgreSQL 있을 때)
-159 passed, 36 skipped           (없을 때)
+212 passed                       (PostgreSQL 있을 때)
+173 passed, 39 skipped           (없을 때)
 ```
 
 ### 무엇을 덮었나
@@ -1362,6 +1364,7 @@ DB 없이도 뜨는 것을 전제로 하는데, DB 없는 개발자가 매번 �
 | `test_noise_customer.py` | 노이즈 집계, 심각도 정렬, 고객사 격리 |
 | `test_account_audit.py` | 계정 귀속(별칭·형식 검사), 감사 로그 |
 | `test_sla_prune.py` | SLA 목표 우선순위, 보존 정책의 보호 대상 |
+| `test_slack.py` | 전송 계층 (가짜 웹훅 서버로 실제 POST 경로 검증) |
 
 `test_app.py` 의 라우트 훑기는 `testing` 설정(= `sqlite://`)으로 돌기 때문에
 **DB 가 전혀 없는 상태에서 모든 화면이 200 을 내는지**까지 함께 확인합니다.
@@ -1535,6 +1538,96 @@ DB 가 거부합니다.
 있습니다.
 
 명령이 실행 전에 몇 건의 사후 보고서가 영향을 받는지 알려줍니다.
+
+---
+
+## Slack 연동
+
+Incoming Webhook 두 가지를 씁니다. **알람 발송은 넣지 않았습니다** &mdash;
+그건 대시보드와 [알람 노이즈](#알람-노이즈) 화면으로 충분합니다.
+
+```bash
+flask --app run handover --hours 12 --slack        # 당직 인계
+flask --app run sla-check --slack                  # SLA 목표 초과
+```
+
+### 왜 Incoming Webhook 인가
+
+URL 하나면 되고 OAuth 도 앱 설치도 필요 없습니다. 슬래시 커맨드나 봇 토큰은
+**공개 엔드포인트와 서명 검증**이 따라오는데, 이 앱은 인증이 하드코딩 계정
+하나라 그대로 열면 안 됩니다.
+
+전송은 표준 라이브러리(`urllib`)만 씁니다. JSON 한 번의 POST 라 `requests`
+를 끌어올 이유가 없고, Lambda 배포 패키지에도 영향이 없습니다.
+
+### 채널 나누기
+
+```bash
+SLACK_WEBHOOK_URL=...          # 공통 (이것만 있어도 됨)
+SLACK_HANDOVER_WEBHOOK=...     # 당직 인계  (예: #ops-daily)
+SLACK_SLA_WEBHOOK=...          # SLA 경고   (예: #ops-alert)
+```
+
+용도별 웹훅이 있으면 그것을, 없으면 공통을 씁니다.
+**비워두면 전송을 건너뜁니다** &mdash; 설정하지 않은 것은 오류가 아닙니다.
+그래서 `SlackNotConfigured` 를 `SlackError` 와 나눠 두었습니다.
+
+### 당직 인계는 따로 렌더링합니다
+
+`to_markdown` 을 그대로 보내면 안 됩니다. **Slack mrkdwn 은 표를 렌더링하지
+못해서** 파이프 문자가 잔뜩 찍힌 글덩어리가 됩니다. 문법도 다릅니다
+(`**굵게**` 가 아니라 `*굵게*`, `[링크](url)` 이 아니라 `<url|링크>`).
+
+같은 내용을 목록으로 다시 씁니다.
+
+```
+*당직 인계 — 지난 24시간*
+_2026-08-22 04:59 UTC_
+
+이벤트 138건 (critical 19 / error 26 / warning 33 / info 60)
+
+*이번 근무에 처음 나타난 알람*
+• `critical` CPU usage 92.4% on i-0abc123 — web-01, 11건
+...
+*진행 중인 작업*
+• #3 결제 DB 보안그룹 규칙 추가 — OPS-1600 · A커머스 · 증적 확정 대기 · admin  <…|열기>
+```
+
+`--base-url` 을 주면 작업과 인계 화면으로 가는 링크가 붙습니다.
+
+### SLA 경고에는 억제가 붙습니다
+
+```
+*SLA 목표 초과 — 아직 대응 기록이 없는 알람 16종*
+
+• `critical` *A커머스* CPU usage 94.5% on i-0abc123
+    11건 · web-01 · 계정 123456789013 · 목표 15분 / 경과 *772분*
+
+_대응 여부는 감사 로그(콘솔 조회·AI 진단) 기준입니다.
+ 다른 경로로 대응했다면 여기 잡히지 않습니다._
+```
+
+**같은 `(계정, 지문)` 은 `SLA_NOTICE_WINDOW_MINUTES`(기본 60분) 안에 한 번만
+보냅니다.** 이 억제가 없으면 10분마다 도는 cron 이 같은 위반을 계속 알리고,
+그러면 아무도 안 보게 됩니다 &mdash; 노이즈를 줄이려고 만든 기능이 노이즈가
+됩니다.
+
+`sla_notices` 를 `sla_targets` 와 분리한 것도 [알람 억제](#알람-노이즈)와
+같은 이유입니다. 목표는 사람이 정하고 오래 남지만, 알림 기록은 보낼 때마다
+바뀌는 실행 상태입니다.
+
+메시지에 **이 지표의 한계를 함께 싣습니다.** 화면에서만 밝히면 Slack 으로
+받은 사람은 그 맥락 없이 숫자만 봅니다.
+
+### cron 예시
+
+```cron
+# 매일 09:00 — 지난 12시간 인계
+0 9 * * *     cd /path/to/myapp && .venv/bin/flask --app run handover --hours 12 --slack
+
+# 10분마다 — SLA 목표 초과 확인
+*/10 * * * *  cd /path/to/myapp && .venv/bin/flask --app run sla-check --slack
+```
 
 ---
 

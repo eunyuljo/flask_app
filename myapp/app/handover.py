@@ -242,3 +242,76 @@ def to_markdown(data):
         a("")
 
     return "\n".join(L)
+
+
+def to_slack(data, base_url=""):
+    """인계 내용을 Slack mrkdwn 으로 만든다.
+
+    to_markdown 을 재사용하지 않는 이유: Slack mrkdwn 은 표를 렌더링하지
+    못한다. Markdown 표를 그대로 보내면 파이프 문자가 잔뜩 찍힌 글덩어리가
+    된다. 같은 내용을 목록으로 다시 쓴다.
+
+    Slack 문법도 다르다. **굵게** 가 아니라 *굵게*, [링크](url) 이 아니라
+    <url|링크> 다.
+    """
+    from app.slack import escape
+
+    L = []
+    a = L.append
+    sev = data["by_severity"]
+
+    a(f"*당직 인계 — 지난 {data['hours']}시간*")
+    a(f"_{data['generated_at']:%Y-%m-%d %H:%M} UTC_")
+    a("")
+    a(f"이벤트 {data['total']}건 "
+      f"(critical {sev.get('critical', 0)} / error {sev.get('error', 0)} / "
+      f"warning {sev.get('warning', 0)} / info {sev.get('info', 0)})")
+
+    # 처음 나타난 알람을 맨 위에 둔다. 반복되던 것보다 중요하다.
+    a("")
+    a("*이번 근무에 처음 나타난 알람*")
+    if not data["new_kinds"]:
+        a("• 없음 — 모두 이전에도 있던 종류입니다")
+    else:
+        for k in data["new_kinds"][:8]:
+            a(f"• `{k['severity']}` {escape(k['sample'])} "
+              f"— {escape(k['source'])}, {k['c']}건")
+        if len(data["new_kinds"]) > 8:
+            a(f"• … 외 {len(data['new_kinds']) - 8}종")
+
+    a("")
+    a("*많이 난 알람*")
+    if not data["top"]:
+        a("• 이 구간에 이벤트가 없습니다")
+    else:
+        for t in data["top"][:5]:
+            a(f"• {t['c']}건 `{t['severity']}` {escape(t['sample'])} "
+              f"— {escape(t['source'])}")
+
+    a("")
+    a("*진행 중인 작업*")
+    if not data["open_work"]:
+        a("• 확정되지 않은 작업이 없습니다")
+    else:
+        for w in data["open_work"]:
+            ticket = f"{escape(w['ticket'])} · " if w["ticket"] else ""
+            line = (f"• #{w['id']} {escape(w['title'])} — {ticket}"
+                    f"{escape(w['customer'])} · {WORK_LABEL.get(w['status'], w['status'])} "
+                    f"· {escape(w['operator'])}")
+            if base_url:
+                line += f"  <{base_url.rstrip('/')}/work/{w['id']}|열기>"
+            a(line)
+
+    if data["no_runbook"]:
+        a("")
+        a("*대응 절차가 없는 알람* — 인계받는 사람이 판단 근거 없이 마주칩니다")
+        for n in data["no_runbook"][:5]:
+            a(f"• {n['c']}건 `{n['severity']}` {escape(n['sample'])}")
+        if len(data["no_runbook"]) > 5:
+            a(f"• … 외 {len(data['no_runbook']) - 5}종")
+
+    if base_url:
+        a("")
+        a(f"<{base_url.rstrip('/')}/handover/?hours={data['hours']}|전체 보기>")
+
+    return "\n".join(L)

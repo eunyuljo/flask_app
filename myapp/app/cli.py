@@ -436,6 +436,105 @@ def register_cli(app):
                 raise click.ClickException(f"DB 작업에 실패했습니다.\n  {e}")
             raise
 
+    @app.cli.command("handover")
+    @click.option("--hours", default=12, type=click.Choice(["8", "12", "24"]),
+                  callback=lambda c, p, v: int(v), help="근무 구간 (기본 12)")
+    @click.option("--slack", is_flag=True, help="Slack 으로 보낸다")
+    @click.option("--base-url", default="", help="링크에 쓸 앱 주소")
+    def handover_cmd(hours, slack, base_url):
+        """당직 인계를 만든다. 기본은 Markdown 을 화면에 출력한다.
+
+        \b
+        cron 예시 (매일 09:00, 지난 12시간):
+          0 9 * * *  cd /path/to/myapp && \
+            .venv/bin/flask --app run handover --hours 12 --slack
+        """
+        from app.handover import collect, to_markdown, to_slack, HandoverError
+
+        try:
+            data = collect(hours)
+        except HandoverError as e:
+            raise click.ClickException(str(e))
+
+        if not slack:
+            click.echo(to_markdown(data))
+            return
+
+        from app import slack as slack_mod
+        from app.slack import SlackError, SlackNotConfigured
+
+        try:
+            slack_mod.post(to_slack(data, base_url), purpose="handover")
+        except SlackNotConfigured as e:
+            raise click.ClickException(
+                f"{e}\n  .env 에 SLACK_HANDOVER_WEBHOOK 또는 "
+                "SLACK_WEBHOOK_URL 을 넣으세요."
+            )
+        except SlackError as e:
+            raise click.ClickException(str(e))
+
+        click.echo(f"Slack 으로 보냈습니다 (지난 {hours}시간, 이벤트 {data['total']}건)")
+
+    @app.cli.command("sla-check")
+    @click.option("--hours", default=24, help="이 시간 안의 알람만 본다 (기본 24)")
+    @click.option("--slack", is_flag=True, help="Slack 으로 보낸다")
+    @click.option("--all", "send_all", is_flag=True,
+                  help="이미 알린 것도 다시 보낸다(억제 무시)")
+    def sla_check(hours, slack, send_all):
+        """목표를 넘겼는데 대응 기록이 없는 알람을 찾는다.
+
+        \b
+        cron 예시 (10분마다):
+          */10 * * * *  cd /path/to/myapp && \
+            .venv/bin/flask --app run sla-check --slack
+
+        같은 (계정, 지문) 은 SLA_NOTICE_WINDOW_MINUTES 안에 한 번만 보낸다.
+        이 억제가 없으면 주기 실행마다 같은 위반을 다시 알린다.
+        """
+        from app import sla
+        from app.sla import SlaError
+
+        try:
+            found = sla.breaches(hours)
+        except SlaError as e:
+            raise click.ClickException(str(e))
+
+        if not found:
+            click.echo("목표를 넘긴 알람이 없습니다.")
+            return
+
+        window = current_app.config["SLA_NOTICE_WINDOW_MINUTES"]
+        targets_ = found if send_all else sla.unnotified(found, window)
+
+        click.echo(f"목표 초과 {len(found)}종" +
+                   ("" if send_all else f", 이 중 새로 알릴 것 {len(targets_)}종"))
+        for i in (targets_ or found):
+            click.echo(
+                f"  [{i['severity']}] {i['customer']} · {i['sample'][:50]} "
+                f"— {i['count']}건, 목표 {i['minutes']}분 / 경과 {int(i['elapsed_minutes'])}분"
+            )
+
+        if not slack:
+            return
+        if not targets_:
+            click.echo("\n새로 알릴 것이 없습니다(억제 창 안).")
+            return
+
+        from app import slack as slack_mod
+        from app.slack import SlackError, SlackNotConfigured
+
+        try:
+            slack_mod.post(sla.to_slack(targets_), purpose="sla")
+        except SlackNotConfigured as e:
+            raise click.ClickException(
+                f"{e}\n  .env 에 SLACK_SLA_WEBHOOK 또는 SLACK_WEBHOOK_URL 을 넣으세요."
+            )
+        except SlackError as e:
+            raise click.ClickException(str(e))
+
+        sla.mark_notified(targets_)
+        click.echo(f"\nSlack 으로 보냈습니다 ({len(targets_)}종)")
+
     @app.cli.command("add-account")
     @click.option("--customer", required=True, help="고객사 이름")
     @click.option("--account-id", required=True, help="12자리 AWS 계정 번호")

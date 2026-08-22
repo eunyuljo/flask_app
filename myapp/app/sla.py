@@ -222,3 +222,132 @@ def measure(customer, days=30):
         "measured": sum(r["answered"] for r in rows),
         "unattributed": unattributed,
     }
+
+
+# ----------------------------------------------------------------------
+# 위반 감지 (알림용)
+# ----------------------------------------------------------------------
+# measure() 는 지나간 기간을 집계한다. 여기는 "지금 목표를 넘겼는데 아직
+# 아무도 안 본 알람" 을 찾는다. 목적이 달라서 질의도 다르다.
+
+def breaches(lookback_hours=24):
+    """지금 목표를 넘겼는데 대응 기록이 없는 알람을 찾는다.
+
+    (계정, 지문) 으로 묶는다. 같은 알람이 20건이면 20줄이 아니라 1줄이다.
+    """
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure(cur, "audit_log")
+        _ensure(cur, "sla_targets")
+
+        # 목표가 있는 심각도만 본다. 목표 0(=목표 없음)은 위반이 성립하지 않는다.
+        #
+        # 계정 -> 고객사 -> 목표 순으로 이어붙인다. 고객사 전용 목표가
+        # 있으면 그것을, 없으면 기본값(customer='')을 쓴다.
+        cur.execute(
+            """
+            WITH goal AS (
+                SELECT DISTINCT ON (a.account_id, t.severity)
+                       a.account_id, a.customer, t.severity,
+                       t.first_response_minutes AS minutes
+                  FROM aws_accounts a
+                  JOIN sla_targets t ON t.customer IN (a.customer, '')
+                 WHERE t.first_response_minutes > 0
+                 ORDER BY a.account_id, t.severity, (t.customer = '') ASC
+            )
+            SELECT e.account_id, g.customer, e.severity, e.fingerprint,
+                   g.minutes,
+                   count(*)                       AS count,
+                   min(e.occurred_at)             AS first_seen,
+                   (array_agg(e.message ORDER BY e.occurred_at DESC))[1] AS sample,
+                   (array_agg(e.source  ORDER BY e.occurred_at DESC))[1] AS source,
+                   round(EXTRACT(EPOCH FROM (now() - min(e.occurred_at))) / 60)
+                                                  AS elapsed_minutes
+              FROM events e
+              JOIN goal g
+                ON g.account_id = e.account_id AND g.severity = e.severity
+             WHERE e.occurred_at >= now() - make_interval(hours => %s)
+               -- 목표 시간이 이미 지난 것만
+               AND e.occurred_at < now() - make_interval(mins => g.minutes)
+               -- 그 계정을 그 시각 이후 들여다본 기록이 없는 것만
+               AND NOT EXISTS (
+                     SELECT 1 FROM audit_log al
+                      WHERE al.account_id = e.account_id
+                        AND al.at >= e.occurred_at
+                   )
+             GROUP BY e.account_id, g.customer, e.severity, e.fingerprint, g.minutes
+             ORDER BY g.minutes ASC, count DESC
+            """,
+            (lookback_hours,),
+        )
+        return _rows(cur)
+
+
+def unnotified(items, window_minutes):
+    """아직 알리지 않은 것만 골라낸다.
+
+    window_minutes 안에 이미 보낸 (계정, 지문) 은 건너뛴다.
+    이 걸러내기가 없으면 주기 실행마다 같은 위반을 다시 보낸다.
+    """
+    if not items:
+        return []
+
+    # (a, b) = ANY(%s) 로는 안 된다. psycopg 가 튜플 목록을 익명 복합 타입으로
+    # 넘기는데 PostgreSQL 이 그 입력을 지원하지 않는다
+    # ("input of anonymous composite types is not implemented").
+    # 배열 두 개를 unnest 로 짝지어 넘긴다.
+    accounts = [i["account_id"] for i in items]
+    fingerprints = [i["fingerprint"] for i in items]
+
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure(cur, "sla_notices")
+        cur.execute(
+            """
+            SELECT n.account_id, n.fingerprint
+              FROM sla_notices n
+              JOIN unnest(%s::text[], %s::text[]) AS k(account_id, fingerprint)
+                ON k.account_id = n.account_id AND k.fingerprint = n.fingerprint
+             WHERE n.last_notified_at > now() - make_interval(mins => %s)
+            """,
+            (accounts, fingerprints, window_minutes),
+        )
+        recent_keys = {(r[0], r[1]) for r in cur.fetchall()}
+
+    return [i for i in items
+            if (i["account_id"], i["fingerprint"]) not in recent_keys]
+
+
+def mark_notified(items):
+    """알린 것을 기록한다."""
+    if not items:
+        return
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure(cur, "sla_notices")
+        cur.executemany(
+            """
+            INSERT INTO sla_notices (account_id, fingerprint, last_notified_at)
+            VALUES (%s, %s, now())
+            ON CONFLICT (account_id, fingerprint) DO UPDATE
+                SET last_notified_at = now(),
+                    notice_count = sla_notices.notice_count + 1
+            """,
+            [(i["account_id"], i["fingerprint"]) for i in items],
+        )
+
+
+def to_slack(items):
+    """위반 목록을 Slack mrkdwn 으로 만든다."""
+    from app.slack import escape
+
+    L = []
+    a = L.append
+    a(f"*SLA 목표 초과 — 아직 대응 기록이 없는 알람 {len(items)}종*")
+    a("")
+    for i in items:
+        a(f"• `{i['severity']}` *{escape(i['customer'])}* "
+          f"{escape(i['sample'])}")
+        a(f"    {i['count']}건 · {escape(i['source'])} · 계정 {i['account_id']} · "
+          f"목표 {i['minutes']}분 / 경과 *{int(i['elapsed_minutes'])}분*")
+    a("")
+    a("_대응 여부는 감사 로그(콘솔 조회·AI 진단) 기준입니다. "
+      "다른 경로로 대응했다면 여기 잡히지 않습니다._")
+    return "\n".join(L)
