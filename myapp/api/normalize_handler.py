@@ -32,7 +32,19 @@ FIELD_ALIASES = {
     "timestamp": "occurred_at",
     "time": "occurred_at",
     "ts": "occurred_at",
+    # 계정 번호. 보내는 쪽마다 이름이 다르다.
+    #   recipientaccountid : CloudTrail
+    #   awsaccountid       : CloudWatch 알람이 SNS 로 보낼 때
+    "account": "account_id",
+    "accountid": "account_id",
+    "aws_account_id": "account_id",
+    "awsaccountid": "account_id",
+    "recipientaccountid": "account_id",
 }
+
+# AWS 계정 번호는 12자리 숫자다. 형식이 다르면 계정으로 쓰지 않는다.
+# 엉뚱한 값이 들어오면 이벤트가 없는 계정에 묶여 조용히 사라진다.
+ACCOUNT_ID_RE = re.compile(r"^\d{12}$")
 
 # 심각도 표기 흔들림을 4단계로 통일한다.
 SEVERITY_MAP = {
@@ -172,6 +184,11 @@ def normalize(raw):
     event_type = str(data.get("event_type") or "unknown").strip().lower()
     source = str(data.get("source") or "unknown").strip().lower()
 
+    # 계정 번호. 형식이 맞을 때만 표준 필드로 올린다.
+    account_id = str(data.get("account_id") or "").strip()
+    if not ACCOUNT_ID_RE.match(account_id):
+        account_id = ""
+
     # 3) 심각도를 4단계 중 하나로 맞춘다. 모르는 값이면 info 로 떨어뜨린다.
     raw_severity = str(data.get("severity") or "info").strip().lower()
     severity = SEVERITY_MAP.get(raw_severity, "info")
@@ -180,8 +197,13 @@ def normalize(raw):
     #    지문이 meta 를 보기 때문에(알람 이름) 레코드보다 먼저 만들어야 한다.
     meta = {
         k: v for k, v in data.items()
-        if k not in ("message", "event_type", "source", "severity", "occurred_at")
+        if k not in ("message", "event_type", "source", "severity",
+                     "occurred_at", "account_id")
     }
+    # 형식이 안 맞아 버린 값은 meta 에 남겨둔다. 보낸 쪽이 무엇을 줬는지
+    # 확인할 수 있어야 고칠 수 있다.
+    if data.get("account_id") and not account_id:
+        meta["account_id_raw"] = data["account_id"]
 
     # 5) 표준 레코드 완성
     return {
@@ -193,6 +215,7 @@ def normalize(raw):
         "occurred_at": _normalize_timestamp(data.get("occurred_at")),
         "received_at": _now_iso(),
         "fingerprint": _fingerprint(event_type, source, message, meta),
+        "account_id": account_id,
         "meta": meta,
     }
 
@@ -218,15 +241,16 @@ def store_event(record):
             cur.execute(
                 """
                 INSERT INTO events (
-                    event_id, event_type, source, severity,
-                    message, occurred_at, received_at, fingerprint, meta
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    event_id, event_type, source, severity, message,
+                    occurred_at, received_at, fingerprint, account_id, meta
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (event_id) DO NOTHING
                 """,
                 (
                     record["event_id"], record["event_type"], record["source"],
                     record["severity"], record["message"], record["occurred_at"],
                     record["received_at"], record["fingerprint"],
+                    record.get("account_id", ""),
                     json.dumps(record["meta"], ensure_ascii=False),
                 ),
             )

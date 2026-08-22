@@ -28,9 +28,11 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 16. [알람 노이즈](#알람-노이즈)
 17. [고객사 현황](#고객사-현황)
 18. [테스트](#테스트)
-19. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
-20. [환경변수 전체 목록](#환경변수-전체-목록)
-21. [알려진 한계](#알려진-한계)
+19. [이벤트의 계정 귀속](#이벤트의-계정-귀속)
+20. [감사 로그](#감사-로그)
+21. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
+22. [환경변수 전체 목록](#환경변수-전체-목록)
+23. [알려진 한계](#알려진-한계)
 
 ---
 
@@ -72,7 +74,8 @@ myapp/
 ├── docker-compose.yml          로컬 개발용 PostgreSQL
 ├── db/
 │   └── schema.sql              events / resources / accounts / work_orders
-│                               / runbooks / incidents / alarm_rules DDL
+│                               / runbooks / incidents / alarm_rules
+│                               / audit_log DDL
 │
 ├── app/                        ─── Flask 애플리케이션 ───
 │   ├── __init__.py             create_app() 팩토리 + 블루프린트 등록
@@ -92,6 +95,7 @@ myapp/
 │   ├── rca.py                  사후 보고서 문서 생성
 │   ├── noise.py                알람 노이즈 집계 + 억제 규칙
 │   ├── customer.py             고객사 현황 집계
+│   ├── audit.py                감사 로그 (고객사 계정을 건드린 기록)
 │   ├── report.py               기간 리포트 집계 / Markdown / AI 요약
 │   ├── report_pptx.py          리포트를 PowerPoint 슬라이드로
 │   ├── accounts.py             고객사 AWS 계정 목록
@@ -107,7 +111,7 @@ myapp/
 │   │   └── base.html  index.html  login.html  agent.html  alarm.html
 │   │       admin.html  dashboard.html  explore.html  resources.html
 │   │       report.html  console.html  work.html  work_detail.html
-│   │       runbook.html  runbook_edit.html  handover.html
+│   │       runbook.html  runbook_edit.html  handover.html  admin_audit.html
 │   │       incident.html  incident_detail.html  noise.html  customer.html
 │   └── static/                 정적 파일 (Flask 가 /static/... 으로 자동 공개)
 │       └── css/style.css       전체 스타일. base.html 에서 link 로 연결
@@ -118,7 +122,7 @@ myapp/
 └── tests/                      pytest. DB 없이 도는 것이 대부분
     └── test_normalize.py  test_awscli.py  test_query.py
         test_resources.py  test_app.py  test_suppression.py
-        test_noise_customer.py
+        test_noise_customer.py  test_account_audit.py
 ```
 
 **의존 방향은 `app` → `api` 단방향입니다.** `api/`는 Flask를 전혀 import하지 않으므로
@@ -1149,20 +1153,27 @@ work_orders        누가 무엇을 했나   →  /work/
 비어 있는 채로 나가면 타임라인만 붙인 문서가 됩니다.
 제출한 뒤에는 고칠 수 없습니다 — 고객사에 낸 문서가 조용히 바뀌면 안 됩니다.
 
-### 관련 출처를 지정해야 읽을 수 있습니다
-
-`events` 에는 **계정 정보가 없습니다.** `source` 는 `pay-api` 같은 서비스 이름이라
-계정이나 고객사로 좁힐 수단이 없습니다. 그래서 무엇이 이 장애와 관련 있는지는
-사람이 지정해야 합니다.
+### 범위를 두 겹으로 좁힙니다
 
 ```
-출처 전체  : 알람 35건 / 18종  타임라인 40줄   ← 무관한 알람이 섞여 읽을 수 없음
-pay-api 만 : 알람 14건 /  5종  타임라인 19줄   ← 장애의 이야기가 보임
+1) 계정   이 장애가 난 계정의 이벤트만        (자동)
+2) 출처   그 안에서도 관련 서비스만            (사람이 지정)
 ```
 
-작업 기록은 다릅니다. `work_orders` 에는 계정이 있으므로 지정한 계정의 작업만
-자동으로 걸러냅니다. 다른 고객사 계정에서 같은 시간에 한 작업이 이 타임라인에
-들어올 이유가 없습니다.
+계정 조건만으로도 크게 줄어듭니다.
+
+```
+범위 없음   : 알람 35건 / 18종
+계정만      : 알람 16건 /  7종   ← 사람이 아무것도 안 해도 여기까지
+계정 + 출처 : 알람 14건 /  5종
+```
+
+**계정을 지정했는데 그 계정 이벤트가 하나도 없으면 계정 조건을 풉니다.**
+계정을 실어 보내지 않는 환경일 수 있는데, 거기서 빈 타임라인을 내면
+사람은 "장애 때 아무 일도 없었다"로 읽습니다. 화면에는 계정으로 좁히지
+못했다고 표시합니다.
+
+작업 기록은 `work_orders.account_id` 로 항상 걸러냅니다.
 
 ### 스냅샷의 한계를 문서에 적습니다
 
@@ -1327,8 +1338,8 @@ DB 없이도 뜨는 것을 전제로 하는데, DB 없는 개발자가 매번 �
 이유가 없습니다.
 
 ```
-157 passed                       (PostgreSQL 있을 때)
-140 passed, 17 skipped           (없을 때)
+179 passed                       (PostgreSQL 있을 때)
+156 passed, 23 skipped           (없을 때)
 ```
 
 ### 무엇을 덮었나
@@ -1344,6 +1355,7 @@ DB 없이도 뜨는 것을 전제로 하는데, DB 없는 개발자가 매번 �
 | `test_app.py` | 팩토리, 인증 리다이렉트, **모든 GET 라우트** |
 | `test_suppression.py` | 억제 판정 (DB 없을 때 통과시키는 것 포함) |
 | `test_noise_customer.py` | 노이즈 집계, 심각도 정렬, 고객사 격리 |
+| `test_account_audit.py` | 계정 귀속(별칭·형식 검사), 감사 로그 |
 
 `test_app.py` 의 라우트 훑기는 `testing` 설정(= `sqlite://`)으로 돌기 때문에
 **DB 가 전혀 없는 상태에서 모든 화면이 200 을 내는지**까지 함께 확인합니다.
@@ -1355,6 +1367,89 @@ DB 없이도 뜨는 것을 전제로 하는데, DB 없는 개발자가 매번 �
 ```python
 @pytest.mark.db      # PostgreSQL 필요. 없으면 건너뜀
 ```
+
+---
+
+## 이벤트의 계정 귀속
+
+`events.account_id` 는 나중에 추가한 열입니다. 이게 없어서 **세 곳에서
+타협해야 했습니다.**
+
+| 어디서 | 어떻게 타협했나 |
+|---|---|
+| 사후 보고서 타임라인 | 무관한 알람이 섞여서 "관련 출처"를 사람이 치게 함 |
+| 고객사 현황 | 알람 칸을 통째로 비움 |
+| 알람 노이즈 | 고객사별로 나누지 못함 |
+
+`source` 가 `pay-api` 같은 서비스 이름이라 계정으로 쓸 수 없었기 때문입니다.
+
+### 받는 방법
+
+이벤트를 보낼 때 계정 번호를 함께 넣으면 됩니다. 보내는 쪽마다 이름이
+다르므로 별칭을 모아뒀습니다.
+
+```
+account_id · account · accountId · aws_account_id
+awsAccountId          ← CloudWatch 알람이 SNS 로 보낼 때
+recipientAccountId    ← CloudTrail
+```
+
+**12자리 숫자일 때만 표준 필드로 올립니다.** 형식이 다르면 계정으로 쓰지
+않고 `meta.account_id_raw` 에 남깁니다 &mdash; 엉뚱한 값이 들어오면 이벤트가
+없는 계정에 묶여 조용히 사라지고, 보낸 쪽은 뭘 잘못 줬는지 알 수 없습니다.
+
+계정은 **지문에 영향을 주지 않습니다.** 지문은 "무슨 알람인가"이고 계정은
+"어디서 났나"입니다. 섞으면 같은 알람이 계정마다 다른 종류가 됩니다.
+
+### 예전 이벤트
+
+```bash
+flask --app run backfill-account-ids --dry-run   # 몇 건인지만
+flask --app run backfill-account-ids             # meta 에서 끌어올림
+```
+
+열이 생기기 전에 들어온 이벤트는 계정이 `meta` 안에 문자열로만 남아 있습니다.
+12자리 숫자면 표준 열로 옮깁니다.
+
+---
+
+## 감사 로그
+
+`/admin/audit` &mdash; 관리자만 봅니다. **고객사 계정을 건드린 기록**입니다.
+
+콘솔 명령과 AI 진단이 여기 쌓입니다. `actor_kind` 로 사람과 모델을
+구분합니다. 이 구분이 없으면 나중에 "모델이 무엇을 조회했나"를 분리해낼
+수 없습니다.
+
+| outcome | 뜻 |
+|---|---|
+| `ok` / `failed` | 실행됨 (종료코드에 따라) |
+| `rejected` | **금지된 명령을 시도함** &mdash; 감사에서 눈여겨봐야 할 기록 |
+| `exec_failed` | 허용됐으나 실행 환경 문제 |
+| `no_credentials` | 자격증명을 얻지 못함 |
+
+### 처음에는 메모리에 넣었습니다 — 잘못이었습니다
+
+```python
+# 예전
+event_store.add(...)          # deque(maxlen=100)
+```
+
+재시작하면 사라지고 101건째부터 앞이 밀려납니다. **감사 로그의 요건은
+"지워지지 않는 것"인데 정반대였습니다.** `rejected` 와 `exec_failed` 를
+굳이 구분해놓고 정작 그 기록이 휘발성이라는 걸 놓쳤습니다.
+
+`events` 와 섞지 않고 따로 둡니다. `events` 는 "고객 인프라에서 일어난 일",
+감사 로그는 "우리가 고객 인프라에 한 일"입니다. 보존 기간도 조회 방식도
+다르고, 이벤트 정리 정책이 감사 기록을 지워버리면 안 됩니다.
+
+### 기록 실패가 작업을 막지는 않습니다
+
+감사 기록에 실패해도 예외를 밖으로 던지지 않고 앱 로그에 남깁니다.
+DB 가 잠깐 흔들릴 때 콘솔 전체가 멎으면 곤란하기 때문입니다.
+
+(감사 기록이 반드시 남아야 하는 환경이라면 반대로 막아야 합니다.
+그건 이 앱의 성격을 넘는 판단이라 여기서 정하지 않았습니다.)
 
 ---
 

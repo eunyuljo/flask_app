@@ -25,6 +25,14 @@ CREATE TABLE IF NOT EXISTS events (
     -- 같은 종류의 이벤트를 묶는 해시. 알람 억제 규칙에 쓴다.
     fingerprint  TEXT        NOT NULL,
 
+    -- 이 이벤트가 어느 AWS 계정에서 났는가. 모르면 빈 문자열.
+    --
+    -- 이게 없어서 세 곳에서 타협했다: 사후 보고서 타임라인은 무관한 알람이
+    -- 섞여 사람이 출처를 지정해야 했고, 고객사 현황은 알람 칸을 비웠고,
+    -- 노이즈 순위는 고객사별로 나누지 못했다.
+    -- source 는 'pay-api' 같은 서비스 이름이라 계정으로 쓸 수 없다.
+    account_id   TEXT        NOT NULL DEFAULT '',
+
     -- 표준 필드에 없는 나머지 값들. JSONB 라서 내부 키로도 조회할 수 있다.
     meta         JSONB       NOT NULL DEFAULT '{}'::jsonb
 );
@@ -341,3 +349,56 @@ CREATE TABLE IF NOT EXISTS alarm_state (
     sent_count      BIGINT      NOT NULL DEFAULT 1,
     suppressed_count BIGINT     NOT NULL DEFAULT 0
 );
+
+
+-- events 에 나중에 추가한 열. 기존 설치가 따라잡을 수 있게 여기에도 적어둔다.
+ALTER TABLE events ADD COLUMN IF NOT EXISTS account_id TEXT NOT NULL DEFAULT '';
+
+-- 고객사/계정으로 이벤트를 좁히는 질의가 많아진다.
+CREATE INDEX IF NOT EXISTS idx_events_account
+    ON events (account_id, occurred_at DESC);
+
+-- ======================================================================
+-- 감사 로그
+-- ----------------------------------------------------------------------
+-- 고객사 계정을 건드린 기록. 콘솔 명령과 AI 진단이 여기 쌓인다.
+--
+-- 처음에는 event_store(메모리 deque, 100건)에 넣었는데 잘못이었다.
+-- 재시작하면 사라지고 101건째부터 앞이 밀려난다. 감사 로그의 요건은
+-- '지워지지 않는 것' 인데 정반대였다.
+--
+-- events 와 섞지 않고 따로 두는 이유: events 는 '고객 인프라에서 일어난 일',
+-- 여기는 '우리가 고객 인프라에 한 일' 이다. 보존 기간도 조회 방식도 다르고,
+-- 이벤트 정리 정책이 감사 기록을 지워버리면 안 된다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id          BIGSERIAL   PRIMARY KEY,
+    at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    actor       TEXT        NOT NULL,              -- 로그인 사용자
+    -- human : 사람이 직접 한 것 (콘솔에서 명령을 침)
+    -- agent : 모델이 만든 것 (AI 진단이 조회를 실행)
+    -- 이 구분이 없으면 나중에 "모델이 무엇을 조회했나" 를 분리해낼 수 없다.
+    actor_kind  TEXT        NOT NULL DEFAULT 'human'
+                CHECK (actor_kind IN ('human', 'agent')),
+
+    action      TEXT        NOT NULL,              -- console_command / ai_diagnose ...
+    customer    TEXT        NOT NULL DEFAULT '',
+    account_id  TEXT        NOT NULL DEFAULT '',
+    region      TEXT        NOT NULL DEFAULT '',
+
+    -- ok           : 실행됨
+    -- failed       : 실행됐으나 종료코드가 0 이 아님
+    -- rejected     : 허용 목록에 걸려 실행하지 않음  <- 감사에서 눈여겨볼 것
+    -- exec_failed  : 허용됐으나 실행 환경 문제
+    -- no_credentials : 자격증명을 얻지 못함
+    outcome     TEXT        NOT NULL,
+    summary     TEXT        NOT NULL DEFAULT '',   -- 한 줄 요약(명령 등)
+    detail      TEXT        NOT NULL DEFAULT '',
+    meta        JSONB       NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log (at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_account ON audit_log (account_id, at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_outcome ON audit_log (outcome, at DESC);

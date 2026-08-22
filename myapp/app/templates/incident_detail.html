@@ -134,10 +134,17 @@
       조사 구간 {{ data.window.start.strftime('%m-%d %H:%M') }} ~
       {{ data.window.end.strftime('%m-%d %H:%M') }} UTC
       (장애 구간 앞 {{ data.window.lead }}분, 뒤 {{ data.window.tail }}분 포함)
+      {% if data.account_scoped %}
+        &middot; 계정 <code>{{ data.scope_account }}</code>
+      {% endif %}
       {% if data.sources %}
-        &middot; 출처 {{ data.sources|join(', ') }} 만
-      {% else %}
-        &middot; <strong>모든 출처</strong> — 무관한 알람이 섞여 있을 수 있습니다
+        &middot; 출처 {{ data.sources|join(', ') }}
+      {% endif %}
+      {% if not data.account_scoped and not data.sources %}
+        &middot; <strong>범위 없음</strong> — 무관한 알람이 섞여 있을 수 있습니다
+      {% elif not data.account_scoped and data.scope_account %}
+        &middot; <span class="nz-gap">계정으로 좁히지 못함</span>
+        (그 계정의 이벤트가 없습니다 &mdash; 계정을 실어 보내지 않는 환경)
       {% endif %}
     </p>
 

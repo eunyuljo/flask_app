@@ -258,6 +258,60 @@ def register_cli(app):
         click.echo(f"스냅샷 #{snapshot_id} 저장 ({source}, {region}, 리소스 {len(items)}개)")
         click.echo("차이 보기: http://127.0.0.1:5000/resources/")
 
+    @app.cli.command("backfill-account-ids")
+    @click.option("--dry-run", is_flag=True, help="바꾸지 않고 몇 건인지만 센다")
+    def backfill_account_ids(dry_run):
+        """예전 이벤트의 계정 번호를 meta 에서 끌어올린다.
+
+        account_id 열은 나중에 추가됐다. 그 전에 들어온 이벤트는 계정이
+        meta 안에 문자열로만 남아 있어서, 고객사별 집계에 잡히지 않는다.
+        meta 에 12자리 계정 번호가 있으면 표준 열로 옮긴다.
+        """
+        try:
+            import psycopg
+        except ImportError:
+            raise click.ClickException("psycopg 가 설치되어 있지 않습니다.")
+
+        # meta 안에서 계정으로 쓸 수 있는 키들. 정규화의 별칭 목록과 같다.
+        keys = ["account_id_raw", "account", "accountid", "aws_account_id",
+                "awsaccountid", "recipientaccountid"]
+
+        # COALESCE 로 처음 발견되는 값을 쓴다. 값이 12자리 숫자일 때만 옮긴다.
+        picked = " , ".join(f"meta ->> '{k}'" for k in keys)
+        sql_where = (
+            "account_id = '' AND COALESCE(" + picked + ") ~ '^[0-9]{12}$'"
+        )
+
+        uri = _psycopg_uri()
+        try:
+            with psycopg.connect(uri) as conn, conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.events')")
+                if cur.fetchone()[0] is None:
+                    raise click.ClickException(
+                        "events 테이블이 없습니다. flask --app run init-db 를 실행하세요."
+                    )
+
+                cur.execute(f"SELECT count(*) FROM events WHERE {sql_where}")
+                count = cur.fetchone()[0]
+
+                if dry_run:
+                    click.echo(f"옮길 수 있는 이벤트: {count}건 (--dry-run 이라 바꾸지 않음)")
+                    return
+
+                cur.execute(
+                    f"UPDATE events SET account_id = COALESCE({picked}) WHERE {sql_where}"
+                )
+                click.echo(f"이벤트 {cur.rowcount}건의 계정 번호를 채웠습니다.")
+
+                cur.execute("SELECT count(*) FROM events WHERE account_id = ''")
+                click.echo(f"아직 계정을 모르는 이벤트: {cur.fetchone()[0]}건")
+        except click.ClickException:
+            raise
+        except Exception as e:
+            if type(e).__module__.split(".")[0] == "psycopg":
+                raise click.ClickException(f"DB 작업에 실패했습니다.\n  {e}")
+            raise
+
     @app.cli.command("add-account")
     @click.option("--customer", required=True, help="고객사 이름")
     @click.option("--account-id", required=True, help="12자리 AWS 계정 번호")

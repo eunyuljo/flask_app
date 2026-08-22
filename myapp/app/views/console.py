@@ -9,7 +9,7 @@ from flask import (
 from app.accounts import list_accounts, get_account, by_customer, AccountError
 from app.aws_session import get_env, is_demo, SessionError, cache_state
 from app.awscli import run, parse, CommandRejected, ExecutionError, READ_ONLY_PREFIXES
-from app import event_store
+from app import audit
 
 console_bp = Blueprint("console", __name__)
 
@@ -40,28 +40,17 @@ def _audit(account, region, command, outcome, detail=""):
     """누가 어느 계정에 무슨 명령을 냈는지 남긴다.
 
     다중 고객사 환경에서는 이 기록이 선택이 아니다.
-    이벤트 저장소를 그대로 쓴다 - 명령 실행도 하나의 사건이기 때문이다.
+    audit_log 테이블에 남는다 - 예전에는 메모리 저장소에 넣었는데,
+    재시작하면 사라져서 감사 로그로 쓸 수 없었다.
     """
-    event_store.add(
-        {
-            "event_id": f"console-{id(command)}-{outcome}",
-            "event_type": "console",
-            "source": (account or {}).get("account_id", "unknown"),
-            "severity": "info" if outcome == "ok" else "warning",
-            "message": f"[{session.get('username')}] {command}",
-            "occurred_at": "",
-            "received_at": "",
-            "fingerprint": outcome,
-            "meta": {
-                "user": session.get("username"),
-                "customer": (account or {}).get("customer"),
-                "account_id": (account or {}).get("account_id"),
-                "region": region,
-                "outcome": outcome,
-                "detail": detail[:200],
-            },
-        },
-        False,
+    audit.record(
+        action="console_command",
+        outcome=outcome,
+        summary=command,
+        detail=detail,
+        account=account,
+        region=region,
+        actor_kind="human",
     )
 
 

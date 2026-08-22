@@ -203,11 +203,35 @@ def assemble(item):
     """장애 구간의 알람 / 리소스 변경 / 작업을 한 시간축에 세운다."""
     start, end = _window(item)
 
-    # 관련 출처가 지정되면 그것만 본다. events 에 계정 정보가 없어서
-    # 계정으로는 좁힐 수 없고, 이 목록이 유일한 좁히기 수단이다.
+    # 범위를 두 겹으로 좁힌다.
+    #   1) 계정 - 이 장애가 난 계정의 이벤트만 (events.account_id)
+    #   2) 출처 - 그 안에서도 관련 서비스만 (사람이 지정)
+    # 계정 조건이 생기기 전에는 2)만으로 좁혀야 했다. 이제 계정을 지정한
+    # 장애는 자동으로 다른 계정의 알람이 빠진다.
+    #
+    # 계정을 지정했는데 그 계정 이벤트가 하나도 없으면, 계정을 실어 보내지
+    # 않는 환경일 수 있다. 그때는 계정 조건을 풀고 출처만으로 좁힌다 -
+    # 여기서 빈 타임라인을 내면 사람은 '장애 때 아무 일도 없었다' 로 읽는다.
     sources = item.get("sources") or []
-    source_sql = " AND source = ANY(%s)" if sources else ""
-    source_arg = [sources] if sources else []
+    account_id = item.get("account_id") or ""
+
+    where, args = [], []
+    account_scoped = False
+    if account_id:
+        with _connect() as probe_conn, probe_conn.cursor() as probe:
+            probe.execute(
+                "SELECT 1 FROM events WHERE account_id = %s LIMIT 1", (account_id,)
+            )
+            account_scoped = probe.fetchone() is not None
+    if account_scoped:
+        where.append(" AND account_id = %s")
+        args.append(account_id)
+    if sources:
+        where.append(" AND source = ANY(%s)")
+        args.append(sources)
+
+    source_sql = "".join(where)
+    source_arg = args
 
     with _connect() as conn, conn.cursor() as cur:
         _ensure_table(cur)
@@ -360,6 +384,8 @@ def assemble(item):
         "window": {"start": start, "end": end,
                    "lead": LEAD_MINUTES, "tail": TAIL_MINUTES},
         "sources": sources,
+        "account_scoped": account_scoped,
+        "scope_account": account_id,
         "events": events,
         "event_count": len(events),
         "by_kind": by_kind,

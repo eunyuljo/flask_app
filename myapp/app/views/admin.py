@@ -11,6 +11,7 @@ from flask import (
     flash,
     current_app,
     abort,
+    request,
 )
 
 from app import event_store
@@ -82,3 +83,37 @@ def clear_events():
     event_store.clear()
     flash("이벤트 목록을 비웠습니다.", "success")
     return redirect(url_for("admin.index"))
+
+
+# 최종 URL: /admin/audit
+# 감사 로그는 관리자만 본다. 새 블루프린트를 만들지 않고 admin 에 붙인 이유는
+# 접근 정책이 이미 여기와 같기 때문이다 - before_request 하나를 그대로 쓴다.
+@admin_bp.route("/audit")
+def audit_log():
+    """고객사 계정을 건드린 기록."""
+    from app import audit
+    from app.audit import AuditError, OUTCOMES, ACTIONS, ACTOR_KINDS, ALERT_OUTCOMES
+
+    # 필터는 허용 목록 안의 값만 받는다. 그대로 SQL 로 가지는 않지만
+    # (%s 로 나간다), 알 수 없는 값으로 빈 화면을 내는 것보다 무시가 낫다.
+    outcome = request.args.get("outcome") or None
+    actor_kind = request.args.get("actor_kind") or None
+    if outcome not in OUTCOMES:
+        outcome = None
+    if actor_kind not in ACTOR_KINDS:
+        actor_kind = None
+
+    items, total, error = [], None, None
+    try:
+        items = audit.recent(200, outcome=outcome, actor_kind=actor_kind)
+        total = audit.summary()
+    except AuditError as e:
+        error = str(e)
+
+    return render_template(
+        "admin_audit.html",
+        items=items, total=total, error=error,
+        outcome=outcome, actor_kind=actor_kind,
+        outcomes=OUTCOMES, actions=ACTIONS, actor_kinds=ACTOR_KINDS,
+        alerts=ALERT_OUTCOMES,
+    )

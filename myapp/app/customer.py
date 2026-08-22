@@ -5,11 +5,11 @@
 # 작업은 작업끼리. 그런데 MSP 는 고객사 단위로 일하므로
 # "A커머스 지금 어떤 상태야?" 에 답하려면 화면 여섯 개를 돌아야 했다.
 #
-# 한계 하나를 미리 밝혀둔다: events 에는 계정이나 고객사 정보가 없다.
-# source 가 'pay-api' 같은 서비스 이름이라 고객사로 묶을 수단이 없다.
-# 그래서 이 화면은 알람 건수를 고객사별로 내지 못한다. 낼 수 있는 것만
-# 내고, 못 내는 이유를 화면에 적는다. 임의로 전체 수치를 고객사 것처럼
-# 보여주면 그게 제일 나쁘다.
+# 알람은 events.account_id 로 묶는다. 이 열이 생기기 전에는 고객사별 알람
+# 건수를 낼 수 없어서 칸을 비워뒀다. 지금도 계정을 실어 보내지 않은
+# 이벤트는 account_id 가 비어 있어 어느 고객사에도 잡히지 않는다.
+# 그 건수를 함께 돌려줘서, 화면이 '알람이 없다' 와 '계정을 몰라서 못 센다' 를
+# 구분해 보여줄 수 있게 한다.
 
 from flask import current_app
 
@@ -140,6 +140,31 @@ def overview(customer):
             )
             unsent = cur.fetchone()[0]
 
+        # ---- 알람 ----
+        # 이 고객사 계정들에서 난 이벤트만 센다.
+        alarms = {"total": 0, "by_severity": {}, "hours": 24}
+        account_ids = [a["account_id"] for a in accounts]
+        if account_ids:
+            cur.execute(
+                """
+                SELECT severity, count(*)
+                  FROM events
+                 WHERE account_id = ANY(%s)
+                   AND occurred_at >= now() - interval '24 hours'
+                 GROUP BY severity
+                """,
+                (account_ids,),
+            )
+            alarms["by_severity"] = dict(cur.fetchall())
+            alarms["total"] = sum(alarms["by_severity"].values())
+
+        # 계정을 모르는 이벤트. 이 값이 크면 위 숫자를 믿을 수 없다.
+        cur.execute(
+            "SELECT count(*) FROM events "
+            "WHERE account_id = '' AND occurred_at >= now() - interval '24 hours'"
+        )
+        alarms["unattributed"] = cur.fetchone()[0]
+
         # ---- 런북 ----
         runbooks = {"scoped": 0, "common": 0}
         if has_runbooks:
@@ -159,4 +184,5 @@ def overview(customer):
         "incidents": incidents,
         "unsent": unsent,
         "runbooks": runbooks,
+        "alarms": alarms,
     }

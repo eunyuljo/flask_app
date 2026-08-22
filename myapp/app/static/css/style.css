@@ -819,3 +819,7 @@ input[type=datetime-local] {
 /* 체크박스는 블록으로 떨어뜨리지 않고 글자 옆에 둔다. */
 .nz-check { display: flex; align-items: center; gap: 7px; }
 .nz-check input[type=checkbox] { width: auto; margin: 0; }
+
+/* 감사 로그. 차단된 시도만 눈에 띄게 한다 - 나머지는 정상 기록이다. */
+.event.au-normal { border-left-color: var(--border); }
+.event.au-alert  { border-left-color: var(--sev-critical); }

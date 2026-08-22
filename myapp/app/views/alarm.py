@@ -3,7 +3,6 @@
 # 정규화 + DB 적재 + 알람 발송을 시키고, 그 결과를 화면에 보여준다. url_prefix="/alarm".
 
 import json
-from datetime import datetime, timezone
 
 from flask import (
     Blueprint,
@@ -17,7 +16,7 @@ from flask import (
     jsonify,
 )
 
-from app import event_store
+from app import audit, event_store
 from app.accounts import list_accounts, by_customer, get_account, AccountError
 from app.agent_core import diagnose as run_diagnose, AgentNotConfigured
 from app.lambda_client import invoke_normalizer, LambdaInvokeError
@@ -162,34 +161,24 @@ def ingest():
 def _audit_diagnosis(event, account, region, commands, outcome):
     """진단 한 건을 감사 기록으로 남긴다.
 
-    명령 하나하나가 아니라 '진단 한 번'을 한 건으로 남긴다. 고객사 계정을
+    명령 하나하나가 아니라 '진단 한 번' 을 한 건으로 남긴다. 고객사 계정을
     건드린 행위이므로 콘솔에서 사람이 직접 친 명령과 같은 무게로 기록하되,
-    actor 로 사람과 모델을 구분한다. 이 구분이 없으면 나중에 감사 로그에서
-    "모델이 무엇을 조회했나" 를 분리해낼 수 없다.
+    actor_kind 로 사람과 모델을 구분한다. 이 구분이 없으면 나중에 감사
+    로그에서 "모델이 무엇을 조회했나" 를 분리해낼 수 없다.
     """
-    now = datetime.now(timezone.utc).isoformat()
-    event_store.add(
-        {
-            "event_id": f"diagnose-{event.get('event_id', '')}-{outcome}",
-            "event_type": "diagnose",
-            "source": (account or {}).get("account_id", "unknown"),
-            "severity": "info" if outcome == "ok" else "warning",
-            "message": f"[{session.get('username')}] AI 진단: {event.get('message', '')[:80]}",
-            "occurred_at": now,
-            "received_at": now,
-            "fingerprint": outcome,
-            "meta": {
-                "actor": "agent",
-                "user": session.get("username"),
-                "customer": (account or {}).get("customer"),
-                "account_id": (account or {}).get("account_id"),
-                "region": region,
-                "target_event_id": event.get("event_id"),
-                "outcome": outcome,
-                "commands": commands,
-            },
+    audit.record(
+        action="ai_diagnose",
+        outcome=outcome,
+        summary=f"AI 진단: {event.get('message', '')[:120]}",
+        detail=f"조회 {len(commands)}건",
+        account=account,
+        region=region,
+        actor_kind="agent",
+        meta={
+            "target_event_id": event.get("event_id"),
+            "fingerprint": event.get("fingerprint"),
+            "commands": commands,
         },
-        {"store": {}, "alarm": {}},
     )
 
 

@@ -140,25 +140,40 @@
       </section>
     </div>
 
-    {# 낼 수 없는 것을 분명히 적는다. 임의로 전체 수치를 고객사 것처럼
-       보여주면 그게 제일 나쁘다. #}
     <section class="panel">
-      <div class="panel-head"><h2>알람</h2></div>
+      <div class="panel-head">
+        <h2>알람</h2><span class="hint">최근 {{ data.alarms.hours }}시간</span>
+      </div>
       <div class="panel-body">
-        <p class="muted">
-          <strong>고객사별 알람 건수는 낼 수 없습니다.</strong>
-          <code>events</code> 에 계정이나 고객사 정보가 없기 때문입니다 &mdash;
-          <code>source</code> 가 <code>pay-api</code> 같은 서비스 이름이라
-          고객사로 묶을 수단이 없습니다.
-        </p>
-        <p class="muted">
-          이벤트를 보내는 쪽에서 계정 번호를 함께 넣어주면
-          (정규화가 표준 필드 외의 값을 <code>meta</code> 에 보존합니다)
-          그때부터 고객사별 집계가 가능해집니다. 전체 기준으로는
-          <a href="{{ url_for('noise.index') }}">알람 노이즈</a> 와
-          <a href="{{ url_for('dashboard.index') }}">대시보드</a> 에서 볼 수 있습니다.
-        </p>
+        {% if data.alarms.total %}
+          <table class="mini2">
+            {% for sev in ['critical', 'error', 'warning', 'info'] %}
+              {% if data.alarms.by_severity.get(sev) %}
+                <tr>
+                  <td class="fname">
+                    <span class="badge sev-badge-{{ sev }}">{{ sev }}</span>
+                  </td>
+                  <td>{{ data.alarms.by_severity[sev] }}건</td>
+                </tr>
+              {% endif %}
+            {% endfor %}
+          </table>
+        {% else %}
+          <p class="muted">이 고객사 계정에서 최근 24시간 이벤트가 없습니다.</p>
+        {% endif %}
+
+        {% if data.alarms.unattributed %}
+          <p class="muted">
+            계정을 알 수 없는 이벤트가 최근 24시간에
+            <strong>{{ data.alarms.unattributed }}건</strong> 있습니다.
+            보내는 쪽에서 계정 번호(<code>account_id</code>)를 함께 넣지 않으면
+            어느 고객사에도 잡히지 않습니다.
+            예전 이벤트는 <code>flask --app run backfill-account-ids</code> 로
+            meta 에서 끌어올릴 수 있습니다.
+          </p>
+        {% endif %}
       </div>
     </section>
+
   {% endif %}
 {% endblock %}

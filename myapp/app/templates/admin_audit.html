@@ -1,0 +1,95 @@
+{# templates/admin_audit.html
+   admin 블루프린트의 audit_log() 가 렌더링하는 감사 로그.
+   고객사 계정을 건드린 기록이라 관리자만 본다. #}
+
+{% extends "base.html" %}
+
+{% block title %}감사 로그{% endblock %}
+{% block page_title %}감사 로그{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    <a href="{{ url_for('admin.index') }}">&larr; 관리자</a>
+  </p>
+  <p class="muted">
+    콘솔 명령과 AI 진단 &mdash; <strong>고객사 계정을 건드린 기록</strong>입니다.
+    사람이 직접 친 것과 모델이 만든 것을 구분해 남깁니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if total %}
+    <div class="kpis">
+      <div class="kpi"><span class="n">{{ total.total }}</span><span class="k">최근 {{ total.hours }}시간</span></div>
+      <div class="kpi">
+        <span class="n">{{ total.alerts }}</span><span class="k">차단된 시도</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ total.by_actor.get('human', 0) }}</span><span class="k">사람</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ total.by_actor.get('agent', 0) }}</span><span class="k">모델</span>
+      </div>
+    </div>
+
+    {% if total.alerts %}
+      <div class="flash warn-flash">
+        허용 목록에 걸려 차단된 시도가 {{ total.alerts }}건 있습니다.
+        <a href="{{ url_for('admin.audit_log', outcome='rejected') }}">확인하기</a>
+      </div>
+    {% endif %}
+  {% endif %}
+
+  <p class="muted">
+    결과:
+    {% if not outcome %}<strong>전체</strong>{% else %}<a href="{{ url_for('admin.audit_log', actor_kind=actor_kind) }}">전체</a>{% endif %}
+    {% for key, label in outcomes.items() %}
+      &middot;
+      {% if key == outcome %}<strong>{{ label }}</strong>
+      {% else %}<a href="{{ url_for('admin.audit_log', outcome=key, actor_kind=actor_kind) }}">{{ label }}</a>{% endif %}
+    {% endfor %}
+  </p>
+  <p class="muted">
+    행위자:
+    {% if not actor_kind %}<strong>전체</strong>{% else %}<a href="{{ url_for('admin.audit_log', outcome=outcome) }}">전체</a>{% endif %}
+    {% for key, label in actor_kinds.items() %}
+      &middot;
+      {% if key == actor_kind %}<strong>{{ label }}</strong>
+      {% else %}<a href="{{ url_for('admin.audit_log', outcome=outcome, actor_kind=key) }}">{{ label }}</a>{% endif %}
+    {% endfor %}
+  </p>
+
+  <hr>
+  <h2>기록 <span class="muted">({{ items|length }}건)</span></h2>
+
+  {% if not items %}
+    <p class="muted">해당하는 기록이 없습니다.</p>
+  {% endif %}
+
+  {% for a in items %}
+    <div class="event {% if a.outcome in alerts %}au-alert{% else %}au-normal{% endif %}">
+      <div class="event-head">
+        <span class="badge">{{ outcomes.get(a.outcome, a.outcome) }}</span>
+        <strong>{{ a.summary }}</strong>
+      </div>
+      <div class="muted">
+        {{ a.at.strftime('%Y-%m-%d %H:%M:%S') }} UTC
+        &middot; {{ actions.get(a.action, a.action) }}
+        &middot; {{ a.actor }} ({{ actor_kinds.get(a.actor_kind, a.actor_kind) }})
+        {% if a.customer %} &middot; {{ a.customer }}{% endif %}
+        {% if a.account_id %} &middot; {{ a.account_id }} / {{ a.region }}{% endif %}
+      </div>
+      {% if a.detail %}
+        <div class="muted">{{ a.detail }}</div>
+      {% endif %}
+      {% if a.meta and a.meta != {} %}
+        <details class="meta-fold">
+          <summary class="muted">상세</summary>
+          <div><code>{{ a.meta }}</code></div>
+        </details>
+      {% endif %}
+    </div>
+  {% endfor %}
+{% endblock %}
