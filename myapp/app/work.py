@@ -6,15 +6,25 @@
 from flask import current_app
 
 # 상태 전이. 이 순서를 벗어나는 요청은 거부한다.
-#   open -> before_taken -> after_taken -> closed
-FLOW = ("open", "before_taken", "after_taken", "closed")
+#
+#   requested -> open(승인됨) -> before_taken -> after_taken -> closed
+#             -> rejected
+#
+# open 의 뜻은 바꾸지 않았다. 이미 쌓인 기록이 전부 open 이라, 이름을
+# 바꾸면 지난 작업이 미승인으로 보인다.
+FLOW = ("requested", "open", "before_taken", "after_taken", "closed")
 
 STATUS_LABEL = {
-    "open": "작업 전 스냅샷 대기",
+    "requested": "승인 대기",
+    "rejected": "반려됨",
+    "open": "승인됨 · 작업 전 스냅샷 대기",
     "before_taken": "작업 진행 가능",
     "after_taken": "차이 확인 / 증적 확정 대기",
     "closed": "증적 확정됨",
 }
+
+# 아직 손댈 수 있는 상태. 반려와 확정은 끝난 것이다.
+OPEN_STATES = ("requested", "open", "before_taken", "after_taken")
 
 
 class WorkError(Exception):
@@ -55,24 +65,152 @@ def _ensure_table(cur):
 
 
 def create(title, customer, account_id, region, operator,
-           ticket="", request="", expected=""):
-    """작업 기록을 만든다. 이 시점에는 스냅샷이 아직 없다(status=open)."""
+           ticket="", request="", expected="", requested_by="",
+           rollback="", window_start=None, window_end=None):
+    """작업을 요청한다. 승인 전에는 스냅샷도 못 찍는다(status=requested).
+
+    requested_by 를 따로 받는 이유: operator 는 '작업할 사람' 이고
+    요청자는 다를 수 있다. 그리고 자기 요청을 자기가 승인하지 못하게
+    하려면 누가 요청했는지를 알아야 한다.
+    """
     if not title.strip():
         raise WorkError("작업 제목을 입력하세요.")
+    if window_start and window_end and window_end <= window_start:
+        raise WorkError("작업창 종료가 시작보다 빠릅니다.")
 
     with _connect() as conn, conn.cursor() as cur:
         _ensure_table(cur)
         cur.execute(
             """
             INSERT INTO work_orders
-                (ticket, title, request, expected, customer, account_id, region, operator)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                (ticket, title, request, expected, customer, account_id, region,
+                 operator, requested_by, rollback, window_start, window_end, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'requested')
             RETURNING id
             """,
             (ticket.strip(), title.strip(), request.strip(), expected.strip(),
-             customer, account_id, region, operator),
+             customer, account_id, region, operator,
+             requested_by or operator, rollback.strip(), window_start, window_end),
         )
         return cur.fetchone()[0]
+
+
+def approve(work_id, approver, note=""):
+    """작업을 승인한다.
+
+    자기가 낸 요청은 자기가 승인할 수 없다. 승인이 형식만 남으면 없는 것과
+    같아서, 이 규칙 하나가 나머지를 지탱한다.
+
+    판정을 SQL 의 WHERE 로 한다. 두 사람이 거의 동시에 눌러도 한 번만
+    통과해야 하는데, 파이썬에서 상태를 읽고 판단한 뒤 UPDATE 하면 그
+    사이가 열려 있다.
+    """
+    approver = (approver or "").strip()
+    if not approver:
+        raise WorkError("승인자를 알 수 없습니다.")
+
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure_table(cur)
+        cur.execute(
+            """
+            UPDATE work_orders
+               SET status = 'open', approved_by = %s, approved_at = now(),
+                   decided_note = %s
+             WHERE id = %s AND status = 'requested' AND requested_by <> %s
+            RETURNING id
+            """,
+            (approver, note.strip(), work_id, approver),
+        )
+        if cur.fetchone() is None:
+            _explain_decision_failure(cur, work_id, approver, "승인")
+
+
+def reject(work_id, approver, note=""):
+    """작업을 반려한다. 사유가 없으면 요청자가 무엇을 고쳐야 할지 모른다."""
+    approver = (approver or "").strip()
+    if not note.strip():
+        raise WorkError("반려 사유를 적어야 합니다.")
+
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure_table(cur)
+        cur.execute(
+            """
+            UPDATE work_orders
+               SET status = 'rejected', approved_by = %s, approved_at = now(),
+                   decided_note = %s
+             WHERE id = %s AND status = 'requested' AND requested_by <> %s
+            RETURNING id
+            """,
+            (approver, note.strip(), work_id, approver),
+        )
+        if cur.fetchone() is None:
+            _explain_decision_failure(cur, work_id, approver, "반려")
+
+
+def _explain_decision_failure(cur, work_id, approver, action):
+    """왜 승인/반려가 안 됐는지 알려준다.
+
+    "안 됩니다" 만 하면 요청자도 승인자도 무엇을 해야 할지 모른다.
+    """
+    cur.execute(
+        "SELECT status, requested_by FROM work_orders WHERE id = %s", (work_id,)
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise WorkError("작업 기록을 찾지 못했습니다.")
+    status, requested_by = row
+    if status != "requested":
+        raise WorkError(
+            f"{action}할 수 있는 상태가 아닙니다(지금: {STATUS_LABEL.get(status, status)})."
+        )
+    raise WorkError(
+        "자기가 낸 요청은 자기가 승인할 수 없습니다. "
+        f"이 요청은 {requested_by} 님이 냈습니다."
+    )
+
+
+def pending(limit=50):
+    """승인 대기 중인 작업. 승인자가 가장 먼저 보는 목록이다."""
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure_table(cur)
+        cur.execute(
+            "SELECT * FROM work_orders WHERE status = 'requested' "
+            " ORDER BY created_at LIMIT %s",
+            (limit,),
+        )
+        return _rows(cur)
+
+
+def window_state(item, now=None):
+    """지금이 작업창 안인가.
+
+    벗어나도 막지 않는다. 막으면 급할 때 이 도구를 통째로 우회하고,
+    그러면 증적이 아예 안 남는다. 대신 벗어났다는 사실을 증적에 남긴다.
+    """
+    from datetime import datetime, timezone
+
+    start, end = item.get("window_start"), item.get("window_end")
+    if not start or not end:
+        return {"has_window": False, "inside": None, "note": "작업창을 정하지 않았습니다."}
+
+    now = now or datetime.now(timezone.utc)
+    if now < start:
+        return {"has_window": True, "inside": False,
+                "note": f"작업창은 {start:%m-%d %H:%M} 부터입니다(아직 이릅니다)."}
+    if now > end:
+        return {"has_window": True, "inside": False,
+                "note": f"작업창이 {end:%m-%d %H:%M} 에 끝났습니다."}
+    return {"has_window": True, "inside": True,
+            "note": f"작업창 안입니다({start:%m-%d %H:%M} ~ {end:%m-%d %H:%M})."}
+
+
+def mark_out_of_window(work_id):
+    """작업창을 벗어나서 시작했다고 표시한다. 되돌리지 않는다."""
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure_table(cur)
+        cur.execute(
+            "UPDATE work_orders SET out_of_window = true WHERE id = %s", (work_id,)
+        )
 
 
 def get(work_id):

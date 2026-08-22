@@ -759,6 +759,8 @@ pre.err { color: var(--err-fg); }
 .row-2 label { margin-top: 14px; }
 
 /* 작업 상태별 좌측 띠 */
+.event.wo-requested    { border-left-color: var(--sev-warning); }
+.event.wo-rejected     { border-left-color: var(--sev-critical); }
 .event.wo-open         { border-left-color: var(--text-mute); }
 .event.wo-before_taken { border-left-color: var(--sev-warning); }
 .event.wo-after_taken  { border-left-color: var(--accent); }

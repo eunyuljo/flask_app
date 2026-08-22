@@ -138,23 +138,17 @@ class TestSlaUsesAck:
 
 @pytest.mark.db
 class TestRoutes:
-    def test_ack_button_appears(self, db_app, db_uri):
-        c = db_app.test_client()
-        c.post("/auth/login", data={"username": "admin", "password": "1234"})
-        body = c.get("/alarm/").get_data(as_text=True)
+    def test_ack_button_appears(self, db_client):
+        body = db_client.get("/alarm/").get_data(as_text=True)
         assert "/ack" in body
 
-    def test_unacked_view(self, db_app, db_uri):
-        c = db_app.test_client()
-        c.post("/auth/login", data={"username": "admin", "password": "1234"})
-        assert c.get("/alarm/?unacked=1").status_code == 200
+    def test_unacked_view(self, db_client):
+        assert db_client.get("/alarm/?unacked=1").status_code == 200
 
-    def test_bad_severity_is_ignored_not_injected(self, db_app, db_uri):
+    def test_bad_severity_is_ignored_not_injected(self, db_client):
         """허용 목록 밖의 값은 조용히 무시한다. SQL 로는 어차피 %s 로 나가지만,
         알 수 없는 값으로 빈 화면을 내는 것보다 무시가 낫다."""
-        c = db_app.test_client()
-        c.post("/auth/login", data={"username": "admin", "password": "1234"})
-        r = c.get("/alarm/?severity=' OR 1=1 --")
+        r = db_client.get("/alarm/?severity=' OR 1=1 --")
         assert r.status_code == 200
 
     def test_ack_requires_login(self, db_app, db_uri):

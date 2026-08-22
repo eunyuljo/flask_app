@@ -26,6 +26,7 @@ ACTIONS = {
     "rca_draft": "사후 보고서 초안",
     "incident_jira": "사후 보고서 Jira 등록",
     "health_check": "연동 점검",
+    "work_approval": "작업 승인/반려",
 }
 
 ACTOR_KINDS = {"human": "사람", "agent": "모델"}

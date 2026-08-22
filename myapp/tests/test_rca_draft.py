@@ -247,7 +247,7 @@ class TestRoutes:
     """화면 흐름. 초안이 사람 확인 없이 저장되지 않는 것이 핵심이다."""
 
     @pytest.fixture
-    def logged(self, db_app, db_uri, monkeypatch):
+    def logged(self, db_client, monkeypatch):
         seen = {}
 
         class FakeMessages:
@@ -259,9 +259,7 @@ class TestRoutes:
         monkeypatch.setattr(agent_core, "_build_client", lambda p, c: client)
         monkeypatch.setattr(agent_core, "check_config", lambda: None)
 
-        c = db_app.test_client()
-        c.post("/auth/login", data={"username": "admin", "password": "1234"})
-        return c
+        return db_client
 
     @pytest.fixture
     def fresh(self, db_app, db_uri):

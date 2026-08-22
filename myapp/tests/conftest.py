@@ -68,3 +68,19 @@ def db_uri(db_app):
     except Exception as e:
         pytest.skip(f"PostgreSQL 에 붙지 못했습니다: {e}")
     return uri
+
+
+@pytest.fixture
+def db_client(db_app, db_uri):
+    """진짜 DB 를 보는 로그인된 클라이언트.
+
+    로그인 폼을 거치지 않고 세션을 직접 채운다. admin/1234 로 로그인하면
+    부트스트랩 계정에 기대게 되는데, 그건 users 테이블이 비어 있을 때만
+    통한다. 개발 DB 에 계정을 하나라도 만드는 순간 이 테스트들이 전부
+    깨졌다 - 앱은 정상인데 테스트만 깨지는, 가장 나쁜 종류다.
+    """
+    c = db_app.test_client()
+    with c.session_transaction() as s:
+        s["username"] = "테스트관리자"
+        s["role"] = "admin"
+    return c

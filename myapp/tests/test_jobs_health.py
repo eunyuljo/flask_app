@@ -211,24 +211,18 @@ class TestCliRecords:
 
 @pytest.mark.db
 class TestRoutes:
-    def test_page_opens(self, db_app, db_uri):
-        c = db_app.test_client()
-        c.post("/auth/login", data={"username": "admin", "password": "1234"})
-        assert c.get("/admin/health").status_code == 200
+    def test_page_opens(self, db_client):
+        assert db_client.get("/admin/health").status_code == 200
 
-    def test_check_runs_and_redirects(self, db_app, db_uri):
-        c = db_app.test_client()
-        c.post("/auth/login", data={"username": "admin", "password": "1234"})
-        r = c.post("/admin/health/check/db")
+    def test_check_runs_and_redirects(self, db_client):
+        r = db_client.post("/admin/health/check/db")
         assert r.status_code == 302
 
-    def test_result_shows_once_then_clears(self, db_app, db_uri):
+    def test_result_shows_once_then_clears(self, db_client):
         """Slack 에 메시지를 보내는 일이라, 새로고침이 재전송처럼 보이면 안 된다."""
-        c = db_app.test_client()
-        c.post("/auth/login", data={"username": "admin", "password": "1234"})
-        c.post("/admin/health/check/lambda")
-        first = c.get("/admin/health").get_data(as_text=True)
-        second = c.get("/admin/health").get_data(as_text=True)
+        db_client.post("/admin/health/check/lambda")
+        first = db_client.get("/admin/health").get_data(as_text=True)
+        second = db_client.get("/admin/health").get_data(as_text=True)
         assert "지문" in first
         assert "지문" not in second
 

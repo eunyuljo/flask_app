@@ -663,3 +663,44 @@ CREATE TABLE IF NOT EXISTS job_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs (job, started_at DESC);
+
+
+-- ======================================================================
+-- 변경 승인
+-- ----------------------------------------------------------------------
+-- work_orders 는 open 에서 시작했다. 만들어지자마자 작업해도 되는 상태다.
+-- 고객 승인 없이 프로덕션을 건드리는 MSP 는 없는데, 그 앞 단계가 통째로
+-- 비어 있었다. 그래서 "승인 없이 실행된 작업" 을 찾아낼 수 없었다.
+--
+-- 상태를 앞으로 늘린다. open 의 뜻은 그대로 두었다 - 이미 쌓인 기록이
+-- 전부 open 이라, 이름을 바꾸면 지난 작업이 미승인으로 보인다.
+--
+--   requested -> open(승인됨) -> before_taken -> after_taken -> closed
+--             -> rejected
+-- ======================================================================
+
+ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS requested_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS approved_by  TEXT NOT NULL DEFAULT '';
+ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS approved_at  TIMESTAMPTZ;
+ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS decided_note TEXT NOT NULL DEFAULT '';
+
+-- 작업창. 벗어나도 막지는 않는다(아래 app/work.py 참고).
+ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS window_start TIMESTAMPTZ;
+ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS window_end   TIMESTAMPTZ;
+
+-- 되돌리는 방법. 승인자가 가장 먼저 보는 칸이다.
+ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS rollback TEXT NOT NULL DEFAULT '';
+
+-- 작업창을 벗어나서 시작했는가. 막지 않는 대신 증적에 남긴다.
+ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS out_of_window BOOLEAN NOT NULL DEFAULT false;
+
+DO $$ BEGIN
+  ALTER TABLE work_orders DROP CONSTRAINT IF EXISTS work_orders_status_check;
+  ALTER TABLE work_orders ADD CONSTRAINT work_orders_status_check
+    CHECK (status IN ('requested', 'rejected', 'open',
+                      'before_taken', 'after_taken', 'closed'));
+END $$;
+
+-- 승인 대기 목록이 화면의 첫 화면이 된다.
+CREATE INDEX IF NOT EXISTS idx_work_orders_pending
+    ON work_orders (created_at DESC) WHERE status = 'requested';

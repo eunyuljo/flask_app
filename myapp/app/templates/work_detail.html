@@ -17,6 +17,30 @@
     <tr><td class="fname">계정 / 리전</td><td><code>{{ item.account_id }}</code> / <code>{{ item.region }}</code></td></tr>
     <tr><td class="fname">작업자</td><td>{{ item.operator }}</td></tr>
     <tr><td class="fname">상태</td><td>{{ labels[item.status] }}</td></tr>
+    <tr><td class="fname">요청</td><td>{{ item.requested_by or '—' }}</td></tr>
+    {% if item.approved_by %}
+      <tr>
+        <td class="fname">{{ '반려' if item.status == 'rejected' else '승인' }}</td>
+        <td>
+          {{ item.approved_by }} &middot; {{ item.approved_at.strftime('%Y-%m-%d %H:%M') }} UTC
+          {% if item.decided_note %}<div class="muted">{{ item.decided_note }}</div>{% endif %}
+        </td>
+      </tr>
+    {% endif %}
+    {% if item.window_start %}
+      <tr>
+        <td class="fname">작업창</td>
+        <td>
+          {{ item.window_start.strftime('%Y-%m-%d %H:%M') }}
+          ~ {{ item.window_end.strftime('%m-%d %H:%M') }} UTC
+          {% if item.out_of_window %}
+            <div><strong>작업창을 벗어나 시작했습니다.</strong></div>
+          {% elif window and window.has_window %}
+            <div class="muted">{{ window.note }}</div>
+          {% endif %}
+        </td>
+      </tr>
+    {% endif %}
     <tr><td class="fname">생성</td><td>{{ item.created_at }}</td></tr>
     {% if item.closed_at %}<tr><td class="fname">확정</td><td>{{ item.closed_at }}</td></tr>{% endif %}
   </table>
@@ -30,9 +54,63 @@
     <div class="msg assistant"><div class="body">{{ item.expected }}</div></div>
   {% endif %}
 
+  {% if item.rollback %}
+    <h2>되돌리는 방법</h2>
+    <div class="msg assistant"><div class="body">{{ item.rollback }}</div></div>
+  {% endif %}
+
+  {# ---- 승인 --------------------------------------------------------- #}
+  {% if item.status == 'requested' %}
+    <h2>승인</h2>
+    {% if not can_approve %}
+      <p class="muted">승인은 관리자만 할 수 있습니다.</p>
+    {% elif item.requested_by == me %}
+      <div class="flash error">
+        <strong>자기가 낸 요청은 자기가 승인할 수 없습니다.</strong>
+        승인이 형식만 남으면 없는 것과 같습니다 &mdash;
+        다른 관리자가 봐야 합니다.
+      </div>
+    {% else %}
+      <p class="muted">
+        <strong>되돌리는 방법</strong>부터 보세요. 되돌릴 수 없는 작업은
+        승인하기 전에 다시 물어야 합니다.
+      </p>
+      <form action="{{ url_for('work.approve', work_id=item.id) }}" method="post" class="wo-form">
+        <label>
+          메모 <span class="muted">(선택)</span>
+          <input type="text" name="note" placeholder="예) 작업창 안에서만 진행할 것">
+        </label>
+        <button type="submit">승인</button>
+      </form>
+      <form action="{{ url_for('work.reject', work_id=item.id) }}" method="post" class="wo-form danger">
+        <label>
+          반려 사유 <span class="muted">(필수 — 없으면 요청자가 무엇을 고칠지 모릅니다)</span>
+          <input type="text" name="note" required
+                 placeholder="예) 되돌리는 방법이 비어 있습니다">
+        </label>
+        <button type="submit">반려</button>
+      </form>
+    {% endif %}
+  {% elif item.status == 'rejected' %}
+    <div class="flash error">
+      <strong>반려된 작업입니다.</strong>
+      {{ item.decided_note }}
+    </div>
+  {% endif %}
+
   {# ---- 진행 단계 ---------------------------------------------------- #}
   <h2>진행</h2>
   <ol class="steps">
+    <li class="{% if item.status not in ('requested', 'rejected') %}done{% else %}now{% endif %}">
+      <strong>승인</strong>
+      <span class="muted">
+        {%- if item.status == 'requested' %} 승인을 기다리는 중입니다.
+        {%- elif item.status == 'rejected' %} 반려되었습니다.
+        {%- elif item.approved_by %} {{ item.approved_by }} 님이 승인했습니다.
+        {%- else %} 승인 단계가 생기기 전에 만들어진 작업입니다.{% endif %}
+      </span>
+    </li>
+
     <li class="{% if item.before_snapshot_id %}done{% elif item.status == 'open' %}now{% endif %}">
       <strong>작업 전 스냅샷</strong>
       {% if item.before_snapshot_id %}

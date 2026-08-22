@@ -7,7 +7,7 @@ from flask import (
     session, flash, current_app, Response
 )
 
-from app import work
+from app import audit, users, work
 from app.accounts import list_accounts, get_account, by_customer, AccountError
 from app.aws_session import get_env, is_demo, SessionError
 from app.collect import demo_resources, aws_resources, CollectError
@@ -81,12 +81,23 @@ def index():
     except AccountError as e:
         error = error or str(e)
 
+    # 승인 대기를 목록 위에 따로 둔다. 승인자가 가장 먼저 보는 것이고,
+    # 섞여 있으면 자기가 눌러야 할 것이 있는지 훑어야 알게 된다.
+    waiting = []
+    try:
+        waiting = work.pending()
+    except WorkError:
+        pass
+
     return render_template(
         "work.html",
         items=items,
+        waiting=waiting,
         grouped=by_customer(accounts),
         labels=STATUS_LABEL,
         error=error,
+        can_approve=users.can(session.get("role"), "admin"),
+        me=session.get("username", ""),
     )
 
 
@@ -116,6 +127,10 @@ def new():
             ticket=request.form.get("ticket", ""),
             request=request.form.get("request", ""),
             expected=request.form.get("expected", ""),
+            requested_by=session.get("username", ""),
+            rollback=request.form.get("rollback", ""),
+            window_start=_when(request.form.get("window_start", "")),
+            window_end=_when(request.form.get("window_end", "")),
         )
     except (WorkError, AccountError) as e:
         flash(str(e), "error")
@@ -145,6 +160,9 @@ def detail(work_id):
         rdiff=rdiff,
         diff_error=diff_error,
         labels=STATUS_LABEL,
+        window=work.window_state(item),
+        can_approve=users.can(session.get("role"), "admin"),
+        me=session.get("username", ""),
     )
 
 
@@ -170,6 +188,15 @@ def snapshot(work_id):
         # (attach_snapshot 이 UPDATE ... WHERE status 로 다시 확인하므로,
         #  동시에 두 번 눌렀을 때 둘 다 통과하는 일은 그쪽에서 막힌다.)
         work.check_transition(item, phase)
+
+        # 작업창을 벗어났으면 막지 않고 표시만 남긴다. 막으면 급할 때
+        # 이 도구를 통째로 우회하고, 그러면 증적이 아예 안 남는다.
+        if phase == "before":
+            state = work.window_state(item)
+            if state["has_window"] and not state["inside"]:
+                work.mark_out_of_window(work_id)
+                flash(f"작업창을 벗어나 시작했습니다. {state['note']} "
+                      "증적에 그대로 남습니다.", "error")
 
         label = "작업 전" if phase == "before" else "작업 후"
         snapshot_id = _take_snapshot(account, item["region"],
@@ -219,3 +246,71 @@ def evidence(work_id):
         mimetype="text/markdown",
         headers={"Content-Disposition": f'attachment; filename="evidence-{safe}.md"'},
     )
+
+
+def _when(raw):
+    """<input type="datetime-local"> 값을 UTC 로 읽는다.
+
+    브라우저는 시간대 없이 "2026-08-22T14:30" 을 보낸다. 어디 시각인지
+    적혀 있지 않으므로 이 앱의 다른 모든 시각과 같이 UTC 로 읽는다.
+    화면에도 UTC 라고 밝힌다 - 안 밝히면 각자 자기 시간대로 읽는다.
+    """
+    from datetime import datetime, timezone
+
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw).replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise WorkError(f"시각 형식을 읽지 못했습니다: {raw}")
+
+
+def _require_approver():
+    """승인은 관리자만. 메뉴를 숨기는 것이 아니라 여기서 막는다."""
+    if not users.can(session.get("role"), "admin"):
+        flash("승인은 관리자만 할 수 있습니다.", "error")
+        return False
+    return True
+
+
+@work_bp.route("/<int:work_id>/approve", methods=["POST"])
+def approve(work_id):
+    """작업을 승인한다."""
+    if not _require_approver():
+        return redirect(url_for("work.detail", work_id=work_id))
+    try:
+        work.approve(work_id, session.get("username", ""),
+                     request.form.get("note", ""))
+    except WorkError as e:
+        flash(str(e), "error")
+        return redirect(url_for("work.detail", work_id=work_id))
+
+    audit.record(
+        action="work_approval", outcome="ok",
+        summary=f"작업 승인: #{work_id}",
+        detail=request.form.get("note", "")[:300],
+    )
+    flash("승인했습니다. 이제 작업 전 스냅샷을 찍을 수 있습니다.", "success")
+    return redirect(url_for("work.detail", work_id=work_id))
+
+
+@work_bp.route("/<int:work_id>/reject", methods=["POST"])
+def reject(work_id):
+    """작업을 반려한다."""
+    if not _require_approver():
+        return redirect(url_for("work.detail", work_id=work_id))
+    try:
+        work.reject(work_id, session.get("username", ""),
+                    request.form.get("note", ""))
+    except WorkError as e:
+        flash(str(e), "error")
+        return redirect(url_for("work.detail", work_id=work_id))
+
+    audit.record(
+        action="work_approval", outcome="rejected",
+        summary=f"작업 반려: #{work_id}",
+        detail=request.form.get("note", "")[:300],
+    )
+    flash("반려했습니다.", "success")
+    return redirect(url_for("work.detail", work_id=work_id))
