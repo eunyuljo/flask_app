@@ -823,3 +823,31 @@ input[type=datetime-local] {
 /* 감사 로그. 차단된 시도만 눈에 띄게 한다 - 나머지는 정상 기록이다. */
 .event.au-normal { border-left-color: var(--border); }
 .event.au-alert  { border-left-color: var(--sev-critical); }
+
+/* ------------------------------------------------------------------
+   SLA
+   ------------------------------------------------------------------ */
+table.sla-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: .8rem;
+  color: var(--text-mute);
+  padding: 4px 12px 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+table.sla-table td { padding: 8px 12px 8px 0; white-space: nowrap; }
+
+/* 심각도별 목표 입력. 한 줄에 다 들어가되 좁으면 접힌다. */
+.sla-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.sla-form input[type=text] { margin: 0; width: 90px; }
+.sla-form input[name=note] { width: 240px; flex: 1; min-width: 160px; }
+.sla-form button { margin: 0; padding: 6px 12px; font-size: .85rem; }
+
+/* 넓은 표는 카드 안에서만 가로 스크롤한다. */
+.scroll-x { overflow-x: auto; }

@@ -402,3 +402,29 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log (at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_account ON audit_log (account_id, at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_outcome ON audit_log (outcome, at DESC);
+
+-- ======================================================================
+-- SLA 목표
+-- ----------------------------------------------------------------------
+-- 고객사와 심각도별로 "몇 분 안에 최초 대응" 을 정한다.
+-- 계약 조건이므로 코드가 아니라 데이터로 둔다.
+--
+-- customer 가 빈 문자열이면 '모든 고객사 기본값' 이다.
+-- 같은 심각도에 기본값과 고객사 전용이 둘 다 있으면 전용이 이긴다
+-- (런북과 같은 규칙).
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS sla_targets (
+    customer    TEXT        NOT NULL DEFAULT '',
+    severity    TEXT        NOT NULL
+                CHECK (severity IN ('critical', 'error', 'warning', 'info')),
+
+    -- 최초 대응 목표(분). 0 이면 목표 없음(집계에서 제외).
+    first_response_minutes INTEGER NOT NULL
+                CHECK (first_response_minutes >= 0),
+
+    note        TEXT        NOT NULL DEFAULT '',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    PRIMARY KEY (customer, severity)
+);

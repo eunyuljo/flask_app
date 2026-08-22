@@ -312,6 +312,130 @@ def register_cli(app):
                 raise click.ClickException(f"DB 작업에 실패했습니다.\n  {e}")
             raise
 
+    @app.cli.command("prune-events")
+    @click.option("--days", default=90, help="이 일수보다 오래된 것을 지운다 (기본 90)")
+    @click.option("--snapshots", is_flag=True, help="리소스 스냅샷도 함께 정리한다")
+    @click.option("--dry-run", is_flag=True, help="지우지 않고 몇 건인지만 센다")
+    @click.option("--yes", is_flag=True, help="확인 없이 실행")
+    def prune_events(days, snapshots, dry_run, yes):
+        """오래된 이벤트를 지운다.
+
+        \b
+        지우는 것   : events
+        지우지 않는 것 : audit_log, incidents, work_orders, runbooks
+        감사 로그는 '우리가 고객 인프라에 한 일' 이라 이벤트 정리와 수명이
+        다르다. 그래서 애초에 테이블을 나눠뒀다.
+
+        \b
+        주의: 사후 보고서(incidents)는 이벤트를 참조하지 않고 시간 범위로
+        조회한다. 그래서 이벤트를 지우면 그 기간 장애의 타임라인이 빈다.
+        이미 문서로 내보낸 것은 남지만, 화면에서 다시 조립하면 비어 보인다.
+        """
+        if days < 1:
+            raise click.ClickException("--days 는 1 이상이어야 합니다.")
+
+        try:
+            import psycopg
+        except ImportError:
+            raise click.ClickException("psycopg 가 설치되어 있지 않습니다.")
+
+        uri = _psycopg_uri()
+        try:
+            with psycopg.connect(uri) as conn, conn.cursor() as cur:
+                cur.execute("SELECT to_regclass('public.events')")
+                if cur.fetchone()[0] is None:
+                    raise click.ClickException(
+                        "events 테이블이 없습니다. flask --app run init-db 를 실행하세요."
+                    )
+
+                cur.execute(
+                    "SELECT count(*), min(occurred_at) FROM events "
+                    "WHERE occurred_at < now() - make_interval(days => %s)",
+                    (days,),
+                )
+                ev_count, oldest = cur.fetchone()
+
+                # 작업 증적이 참조하는 스냅샷은 지우지 않는다. 증적의 근거가
+                # 사라지면 그 문서가 무의미해진다(스키마도 RESTRICT 로 막는다).
+                snap_count = 0
+                if snapshots:
+                    cur.execute("SELECT to_regclass('public.resource_snapshots')")
+                    if cur.fetchone()[0] is not None:
+                        cur.execute(
+                            """
+                            SELECT count(*) FROM resource_snapshots s
+                             WHERE s.collected_at < now() - make_interval(days => %s)
+                               AND NOT EXISTS (
+                                     SELECT 1 FROM work_orders w
+                                      WHERE w.before_snapshot_id = s.snapshot_id
+                                         OR w.after_snapshot_id  = s.snapshot_id
+                                   )
+                            """,
+                            (days,),
+                        )
+                        snap_count = cur.fetchone()[0]
+
+                # 지우면 타임라인이 비게 될 장애가 있는지 미리 알려준다.
+                affected = 0
+                cur.execute("SELECT to_regclass('public.incidents')")
+                if cur.fetchone()[0] is not None:
+                    cur.execute(
+                        "SELECT count(*) FROM incidents "
+                        "WHERE started_at < now() - make_interval(days => %s)",
+                        (days,),
+                    )
+                    affected = cur.fetchone()[0]
+
+                click.echo(f"{days}일보다 오래된 것:")
+                click.echo(f"  이벤트   {ev_count}건" +
+                           (f" (가장 오래된 것 {oldest:%Y-%m-%d})" if oldest else ""))
+                if snapshots:
+                    click.echo(f"  스냅샷   {snap_count}개 (작업 증적이 참조하는 것은 제외)")
+                if affected:
+                    click.echo(
+                        f"  주의: 이 기간의 사후 보고서 {affected}건은 화면에서 "
+                        "타임라인이 비게 됩니다."
+                    )
+                click.echo("  감사 로그는 지우지 않습니다.")
+
+                if dry_run:
+                    click.echo("\n--dry-run 이라 아무것도 지우지 않았습니다.")
+                    return
+                if not ev_count and not snap_count:
+                    click.echo("\n지울 것이 없습니다.")
+                    return
+                if not yes and not click.confirm("\n정말 지울까요?"):
+                    click.echo("취소했습니다.")
+                    return
+
+                cur.execute(
+                    "DELETE FROM events WHERE occurred_at < now() - make_interval(days => %s)",
+                    (days,),
+                )
+                click.echo(f"이벤트 {cur.rowcount}건 삭제")
+
+                if snapshots and snap_count:
+                    # resources 는 ON DELETE CASCADE 라 함께 지워진다.
+                    cur.execute(
+                        """
+                        DELETE FROM resource_snapshots s
+                         WHERE s.collected_at < now() - make_interval(days => %s)
+                           AND NOT EXISTS (
+                                 SELECT 1 FROM work_orders w
+                                  WHERE w.before_snapshot_id = s.snapshot_id
+                                     OR w.after_snapshot_id  = s.snapshot_id
+                               )
+                        """,
+                        (days,),
+                    )
+                    click.echo(f"스냅샷 {cur.rowcount}개 삭제")
+        except click.ClickException:
+            raise
+        except Exception as e:
+            if type(e).__module__.split(".")[0] == "psycopg":
+                raise click.ClickException(f"DB 작업에 실패했습니다.\n  {e}")
+            raise
+
     @app.cli.command("add-account")
     @click.option("--customer", required=True, help="고객사 이름")
     @click.option("--account-id", required=True, help="12자리 AWS 계정 번호")

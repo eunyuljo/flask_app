@@ -118,3 +118,79 @@ def download_pptx():
         mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ----------------------------------------------------------------------
+# SLA
+# ----------------------------------------------------------------------
+# 리포트 블루프린트에 붙인 이유: 최초 대응 시간은 월간 고객사 리포트에
+# 들어가는 항목이다. 별도 블루프린트로 빼면 같은 독자·같은 주기를 가진
+# 화면이 둘로 갈라진다.
+
+SLA_DAYS = (7, 30, 90)
+
+
+def _sla_days():
+    try:
+        value = int(request.args.get("days", 30))
+    except (TypeError, ValueError):
+        return 30
+    return value if value in SLA_DAYS else 30
+
+
+# 최종 URL: /report/sla
+@report_bp.route("/sla")
+def sla():
+    """고객사별 최초 대응 시간과 목표."""
+    from app import sla as sla_module
+    from app.sla import SlaError, SEVERITIES, SUGGESTED
+    from app.customer import names, CustomerError
+
+    days = _sla_days()
+    error, all_names, data, goals = None, [], None, {}
+
+    try:
+        all_names = names()
+    except CustomerError as e:
+        error = str(e)
+
+    selected = request.args.get("customer") or (all_names[0] if all_names else "")
+    if selected and selected not in all_names:
+        flash(f"등록되지 않은 고객사입니다: {selected}", "error")
+        selected = all_names[0] if all_names else ""
+
+    if selected and not error:
+        try:
+            data = sla_module.measure(selected, days)
+            goals = sla_module.targets(selected)
+        except SlaError as e:
+            error = str(e)
+
+    return render_template(
+        "report_sla.html",
+        names=all_names, selected=selected, days=days, choices=SLA_DAYS,
+        data=data, goals=goals, error=error,
+        severities=SEVERITIES, suggested=SUGGESTED,
+    )
+
+
+# 최종 URL: /report/sla/target
+@report_bp.route("/sla/target", methods=["POST"])
+def sla_target():
+    """SLA 목표를 저장한다."""
+    from app import sla as sla_module
+    from app.sla import SlaError
+
+    customer = request.form.get("customer", "")
+    try:
+        sla_module.save_target(
+            customer=customer,
+            severity=request.form.get("severity", ""),
+            minutes=request.form.get("minutes", "0"),
+            note=request.form.get("note", ""),
+        )
+        flash("목표를 저장했습니다.", "success")
+    except SlaError as e:
+        flash(str(e), "error")
+
+    return redirect(url_for("report.sla", customer=customer, days=_sla_days()))

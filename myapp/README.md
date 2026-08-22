@@ -30,9 +30,11 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 18. [테스트](#테스트)
 19. [이벤트의 계정 귀속](#이벤트의-계정-귀속)
 20. [감사 로그](#감사-로그)
-21. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
-22. [환경변수 전체 목록](#환경변수-전체-목록)
-23. [알려진 한계](#알려진-한계)
+21. [최초 대응 시간 (SLA)](#최초-대응-시간-sla)
+22. [데이터 보존](#데이터-보존)
+23. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
+24. [환경변수 전체 목록](#환경변수-전체-목록)
+25. [알려진 한계](#알려진-한계)
 
 ---
 
@@ -75,7 +77,7 @@ myapp/
 ├── db/
 │   └── schema.sql              events / resources / accounts / work_orders
 │                               / runbooks / incidents / alarm_rules
-│                               / audit_log DDL
+│                               / audit_log / sla_targets DDL
 │
 ├── app/                        ─── Flask 애플리케이션 ───
 │   ├── __init__.py             create_app() 팩토리 + 블루프린트 등록
@@ -96,6 +98,7 @@ myapp/
 │   ├── noise.py                알람 노이즈 집계 + 억제 규칙
 │   ├── customer.py             고객사 현황 집계
 │   ├── audit.py                감사 로그 (고객사 계정을 건드린 기록)
+│   ├── sla.py                  최초 대응 시간 목표와 집계
 │   ├── report.py               기간 리포트 집계 / Markdown / AI 요약
 │   ├── report_pptx.py          리포트를 PowerPoint 슬라이드로
 │   ├── accounts.py             고객사 AWS 계정 목록
@@ -112,6 +115,7 @@ myapp/
 │   │       admin.html  dashboard.html  explore.html  resources.html
 │   │       report.html  console.html  work.html  work_detail.html
 │   │       runbook.html  runbook_edit.html  handover.html  admin_audit.html
+│   │       report_sla.html
 │   │       incident.html  incident_detail.html  noise.html  customer.html
 │   └── static/                 정적 파일 (Flask 가 /static/... 으로 자동 공개)
 │       └── css/style.css       전체 스타일. base.html 에서 link 로 연결
@@ -123,6 +127,7 @@ myapp/
     └── test_normalize.py  test_awscli.py  test_query.py
         test_resources.py  test_app.py  test_suppression.py
         test_noise_customer.py  test_account_audit.py
+        test_sla_prune.py
 ```
 
 **의존 방향은 `app` → `api` 단방향입니다.** `api/`는 Flask를 전혀 import하지 않으므로
@@ -1338,8 +1343,8 @@ DB 없이도 뜨는 것을 전제로 하는데, DB 없는 개발자가 매번 �
 이유가 없습니다.
 
 ```
-179 passed                       (PostgreSQL 있을 때)
-156 passed, 23 skipped           (없을 때)
+195 passed                       (PostgreSQL 있을 때)
+159 passed, 36 skipped           (없을 때)
 ```
 
 ### 무엇을 덮었나
@@ -1356,6 +1361,7 @@ DB 없이도 뜨는 것을 전제로 하는데, DB 없는 개발자가 매번 �
 | `test_suppression.py` | 억제 판정 (DB 없을 때 통과시키는 것 포함) |
 | `test_noise_customer.py` | 노이즈 집계, 심각도 정렬, 고객사 격리 |
 | `test_account_audit.py` | 계정 귀속(별칭·형식 검사), 감사 로그 |
+| `test_sla_prune.py` | SLA 목표 우선순위, 보존 정책의 보호 대상 |
 
 `test_app.py` 의 라우트 훑기는 `testing` 설정(= `sqlite://`)으로 돌기 때문에
 **DB 가 전혀 없는 상태에서 모든 화면이 200 을 내는지**까지 함께 확인합니다.
@@ -1450,6 +1456,85 @@ DB 가 잠깐 흔들릴 때 콘솔 전체가 멎으면 곤란하기 때문입니
 
 (감사 기록이 반드시 남아야 하는 환경이라면 반대로 막아야 합니다.
 그건 이 앱의 성격을 넘는 판단이라 여기서 정하지 않았습니다.)
+
+---
+
+## 최초 대응 시간 (SLA)
+
+`/report/sla` &mdash; 리포트 블루프린트 안에 있습니다. 최초 대응 시간은 월간
+고객사 리포트에 들어가는 항목이라, 별도 화면으로 빼면 같은 독자·같은 주기를
+가진 것이 둘로 갈라집니다.
+
+### 무엇을 재고 무엇을 못 재는가
+
+이걸 먼저 못 박습니다.
+
+| | |
+|---|---|
+| **재는 것** | 알람이 난 뒤, 그 알람의 계정을 **처음 들여다본 시각**까지의 시간 |
+| **재지 못하는 것** | "이 알람에 대응했는가" |
+
+감사 로그는 계정 단위 기록이라, 같은 계정에 알람이 여러 개 떠 있으면 첫
+조회 하나가 그 전부의 대응 시각으로 잡힙니다. **근사치입니다.**
+화면 맨 위에 이 문구를 띄웁니다 &mdash; 근사치를 계약 이행 증거로 내밀면
+나중에 훨씬 곤란해집니다.
+
+이 지표는 [계정 귀속](#이벤트의-계정-귀속)과 [감사 로그](#감사-로그)가
+둘 다 있어야 성립합니다. 둘 중 하나라도 없으면 알람과 대응을 이을 수 없습니다.
+
+### 목표
+
+계약 조건이므로 코드가 아니라 `sla_targets` 에 넣습니다.
+
+```
+고객사 비움 → 모든 고객사 기본값
+고객사 지정 → 그 고객사 전용 (기본값을 이김)
+```
+
+런북과 같은 규칙입니다.
+
+**0분은 "목표 없음"이고 집계에서 빠집니다.** '목표 없음'을 '항상 달성'으로
+보여주면 지표가 거짓말을 합니다. `warning`/`info` 의 기본 제안값이 0인
+이유도 같습니다.
+
+```
+심각도     목표             건수  대응 잡힘      중앙값  최악    판정
+critical  15분 (A커머스)     21   4 / 미대응 17   19분   590분  미달
+error     120분 (기본값)     32  21 / 미대응 11   25분   594분  달성
+warning   목표 없음          45  18 / 미대응 27   91분   238분  집계 안 함
+```
+
+---
+
+## 데이터 보존
+
+```bash
+flask --app run prune-events --days 90 --dry-run    # 몇 건인지만
+flask --app run prune-events --days 90              # 확인 후 삭제
+flask --app run prune-events --days 90 --snapshots  # 스냅샷도 함께
+```
+
+| | |
+|---|---|
+| 지우는 것 | `events`, (`--snapshots` 일 때) `resource_snapshots` |
+| 지우지 않는 것 | `audit_log`, `incidents`, `work_orders`, `runbooks` |
+
+**감사 로그는 절대 지우지 않습니다.** "우리가 고객 인프라에 한 일"이라
+이벤트 정리와 수명이 다릅니다. 애초에 테이블을 나눈 이유가 이것입니다.
+
+**작업 증적이 참조하는 스냅샷도 지우지 않습니다.** 증적의 근거가 사라지면
+그 문서가 무의미해집니다. 정리 질의가 걸러낼 뿐 아니라 스키마의
+`ON DELETE RESTRICT` 가 한 겹 더 막습니다 &mdash; 명령이 실수로 지우려 해도
+DB 가 거부합니다.
+
+### 주의: 오래된 장애의 타임라인이 빕니다
+
+사후 보고서는 이벤트를 참조하지 않고 **시간 범위로 조회**합니다. 그래서
+이벤트를 지우면 그 기간 장애의 타임라인이 비어 보입니다. 이미 내보낸
+문서(`report.md`, `customer.md`)는 남지만, 화면에서 다시 조립하면 비어
+있습니다.
+
+명령이 실행 전에 몇 건의 사후 보고서가 영향을 받는지 알려줍니다.
 
 ---
 
