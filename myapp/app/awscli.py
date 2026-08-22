@@ -132,6 +132,10 @@ def run(command, env_extra, timeout=DEFAULT_TIMEOUT):
     # 서버의 환경변수를 통째로 물려주지 않는다.
     # .env 로 들어온 ANTHROPIC_API_KEY, DB 비밀번호 등이 자식 프로세스에
     # 노출될 이유가 없다. 실행에 꼭 필요한 것만 골라 넣는다.
+    #
+    # HOME 을 /tmp 로 바꾸는 것도 같은 이유다. 그대로 두면 CLI 가 서버의
+    # ~/.aws 를 읽어서, 화면에서 고른 계정이 아니라 서버 자신의 자격증명으로
+    # 명령이 나갈 수 있다.
     env = {
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
         "HOME": "/tmp",
@@ -140,6 +144,21 @@ def run(command, env_extra, timeout=DEFAULT_TIMEOUT):
         "AWS_SHARED_CREDENTIALS_FILE": "/dev/null",
         "LC_ALL": "C.UTF-8",
     }
+
+    # 네트워크 설정은 물려준다. 비밀이 아니고, 없으면 아예 나가지 못한다.
+    #
+    # MSP 환경에서는 외부로 나가는 트래픽이 사내 프록시를 거치는 경우가 흔하고,
+    # 그 프록시가 자체 CA 로 TLS 를 다시 맺습니다. 이 값을 빼면 CLI 가
+    # "certificate verify failed" 로 죽습니다 - 개발 환경에서 실제로 그랬다.
+    #
+    # 검증을 끄는 선택지(--no-verify-ssl)는 두지 않는다. 그건 고객사 계정으로
+    # 가는 연결을 아무나 가로챌 수 있게 만드는 것이다. CA 를 알려주는 게 맞다.
+    for key in ("HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
+                "https_proxy", "http_proxy", "no_proxy",
+                "AWS_CA_BUNDLE", "REQUESTS_CA_BUNDLE"):
+        if os.environ.get(key):
+            env[key] = os.environ[key]
+
     env.update(env_extra)
 
     started = time.time()

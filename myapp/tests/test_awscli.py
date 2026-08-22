@@ -92,3 +92,76 @@ class TestNoShellExpansion:
         # 글자 그대로 남는지 확인한다.
         argv = parse("aws ec2 describe-instances --filters Name=tag:Env,Values=$HOME")
         assert "$HOME" in argv[-1]
+
+
+class TestChildEnvironment:
+    """자식 프로세스에 무엇을 물려주고 무엇을 감추는가.
+
+    subprocess.run 을 가로채서 실제로 넘어간 env 를 들여다본다.
+    실행 자체는 하지 않는다.
+    """
+
+    def _captured_env(self, monkeypatch, server_env):
+        import subprocess
+
+        from app import awscli
+
+        for key, value in server_env.items():
+            monkeypatch.setenv(key, value)
+
+        seen = {}
+
+        class FakeProc:
+            returncode = 0
+            stdout = "{}"
+            stderr = ""
+
+        def fake_run(argv, env=None, **kwargs):
+            seen.update(env or {})
+            return FakeProc()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        awscli.run("aws sts get-caller-identity", {"AWS_ACCESS_KEY_ID": "임시키"})
+        return seen
+
+    def test_secrets_are_not_passed_through(self, monkeypatch):
+        """서버 환경변수를 통째로 물려주면 .env 의 비밀이 자식에게 넘어간다."""
+        env = self._captured_env(monkeypatch, {
+            "ANTHROPIC_API_KEY": "sk-비밀",
+            "DB_PASSWORD": "비밀번호",
+            "SECRET_KEY": "서명키",
+        })
+        assert "ANTHROPIC_API_KEY" not in env
+        assert "DB_PASSWORD" not in env
+        assert "SECRET_KEY" not in env
+
+    def test_home_is_redirected(self, monkeypatch):
+        """서버의 ~/.aws 를 읽으면 화면에서 고른 계정이 아닌 자격증명이 쓰인다."""
+        env = self._captured_env(monkeypatch, {})
+        assert env["HOME"] == "/tmp"
+        assert env["AWS_SHARED_CREDENTIALS_FILE"] == "/dev/null"
+
+    def test_assumed_credentials_are_passed(self, monkeypatch):
+        env = self._captured_env(monkeypatch, {})
+        assert env["AWS_ACCESS_KEY_ID"] == "임시키"
+
+    def test_proxy_and_ca_are_passed_through(self, monkeypatch):
+        """사내 프록시를 거치는 망에서는 이걸 빼면 TLS 검증에서 죽는다.
+
+        개발 환경에서 실제로 'certificate verify failed' 로 죽었다.
+        비밀이 아니고, 없으면 CLI 가 아예 밖으로 나가지 못한다.
+        """
+        env = self._captured_env(monkeypatch, {
+            "HTTPS_PROXY": "http://프록시:8080",
+            "AWS_CA_BUNDLE": "/etc/ssl/사내CA.pem",
+        })
+        assert env["HTTPS_PROXY"] == "http://프록시:8080"
+        assert env["AWS_CA_BUNDLE"] == "/etc/ssl/사내CA.pem"
+
+    def test_unset_network_vars_are_not_invented(self, monkeypatch):
+        """설정되지 않은 값을 빈 문자열로 넣으면 CLI 가 오히려 헷갈린다."""
+        monkeypatch.delenv("HTTPS_PROXY", raising=False)
+        monkeypatch.delenv("AWS_CA_BUNDLE", raising=False)
+        env = self._captured_env(monkeypatch, {})
+        assert "HTTPS_PROXY" not in env
+        assert "AWS_CA_BUNDLE" not in env
