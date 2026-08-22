@@ -23,6 +23,8 @@ ACTIONS = {
     "ai_diagnose": "AI 진단",
     "user_manage": "계정 관리",
     "compliance_exception": "컴플라이언스 예외",
+    "rca_draft": "사후 보고서 초안",
+    "incident_jira": "사후 보고서 Jira 등록",
 }
 
 ACTOR_KINDS = {"human": "사람", "agent": "모델"}

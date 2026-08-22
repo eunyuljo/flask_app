@@ -37,15 +37,56 @@
   </p>
 
   {% if item.status == 'draft' %}
+    {# AI 초안. 타임라인·작업 기록·지난 장애를 근거로 빈 칸을 채워 준다.
+       저장 버튼을 누르는 것은 사람이다 - 모델이 쓴 글이 확인 없이
+       고객사 보고서로 나가면 안 된다. #}
+    {% if data and not draft %}
+      <form action="{{ url_for('incident.rca_draft', incident_id=item.id) }}" method="post">
+        <p class="muted">
+          아래 타임라인을 근거로 <strong>원인 분석 초안</strong>을 만들 수 있습니다.
+          빈 칸에만 채워 넣으며, <strong>저장을 눌러야 남습니다.</strong>
+          이미 쓴 칸은 건드리지 않습니다.
+        </p>
+        <button type="submit">AI 초안 만들기</button>
+      </form>
+    {% endif %}
+
+    {% if draft %}
+      <div class="flash warn-flash">
+        <strong>아래 {{ filled|length }}개 칸은 AI 초안입니다.</strong>
+        아직 저장되지 않았습니다 &mdash; 확인하고 고친 뒤 저장을 누르세요.
+        {% if not filled %}
+          (채울 빈 칸이 없어 아무것도 바뀌지 않았습니다.)
+        {% endif %}
+      </div>
+
+      {% if draft.uncertain %}
+        <div class="flash error">
+          <strong>근거만으로는 확정할 수 없는 것들입니다.</strong>
+          담당자가 확인해야 초안을 결론으로 바꿀 수 있습니다.
+          <ul>
+            {% for u in draft.uncertain %}<li>{{ u }}</li>{% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+    {% endif %}
+
     <form action="{{ url_for('incident.save', incident_id=item.id) }}" method="post" class="wo-form">
       {% for field in ['impact', 'cause', 'action', 'prevention'] %}
         <label>
           {{ field_labels[field] }}
-          <textarea name="{{ field }}" rows="4">{{ item[field] }}</textarea>
+          {% if field in filled %}<span class="muted">— AI 초안 (미저장)</span>{% endif %}
+          <textarea name="{{ field }}" rows="4">{{ shown[field] }}</textarea>
         </label>
       {% endfor %}
       <button type="submit">저장</button>
     </form>
+
+    {% if draft %}
+      <form action="{{ url_for('incident.rca_discard', incident_id=item.id) }}" method="post" class="danger">
+        <button type="submit">초안 버리기</button>
+      </form>
+    {% endif %}
 
     <form action="{{ url_for('incident.publish', incident_id=item.id) }}" method="post">
       <p class="muted">
@@ -54,6 +95,24 @@
       <button type="submit">제출 상태로 바꾸기</button>
     </form>
   {% else %}
+    {# 제출된 뒤에만 Jira 로 넘긴다. 초안 상태로 넘기면 나중에 내용이
+       바뀌는데 Jira 쪽은 그대로 남아 두 곳이 갈린다. #}
+    {% if item.jira_key %}
+      <p class="muted">
+        Jira 이슈: <code>{{ item.jira_key }}</code>
+        {% if jira_base %}
+          &middot; <a href="{{ jira_base }}/browse/{{ item.jira_key }}">열기</a>
+        {% endif %}
+      </p>
+    {% else %}
+      <form action="{{ url_for('incident.to_jira_issue', incident_id=item.id) }}" method="post">
+        <p class="muted">
+          이 보고서를 Jira 이슈로 넘깁니다. 한 번만 만들어집니다.
+        </p>
+        <button type="submit">Jira 로 넘기기</button>
+      </form>
+    {% endif %}
+
     {% for field in ['impact', 'cause', 'action', 'prevention'] %}
       <h3>{{ field_labels[field] }}</h3>
       <div class="msg assistant"><div class="body">{{ item[field] or '(작성되지 않음)' }}</div></div>

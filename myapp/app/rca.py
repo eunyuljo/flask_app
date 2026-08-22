@@ -196,3 +196,50 @@ def to_customer_markdown(item):
         a("")
 
     return "\n".join(L)
+
+
+# ----------------------------------------------------------------------
+# Jira 로 넘길 때
+# ----------------------------------------------------------------------
+# Markdown 을 그대로 보내면 안 된다. Jira Cloud REST v3 의 description 은
+# ADF 이고, app/jira.py 의 _adf() 는 평문을 문단으로만 감싼다. 그래서
+# '#' 이나 '|' 가 글자 그대로 찍힌다.
+#
+# 당직 인계에서 Slack 용 렌더러를 따로 둔 것과 같은 이유다 -
+# 보내는 곳마다 읽히는 형식이 다르다.
+
+def to_jira(item, data=None):
+    """(제목, 본문) 을 돌려준다. 본문은 평문이다."""
+    L = []
+    a = L.append
+
+    a(f"장애 #{item['id']} 사후 보고서")
+    a("")
+    a(f"심각도: {item['severity']}")
+    a(f"발생 구간: {_fmt_window(item)}")
+    if item["customer"]:
+        a(f"고객사: {item['customer']}")
+    if item["account_id"]:
+        a(f"계정/리전: {item['account_id']} / {item['region']}")
+    a(f"작성자: {item['author']}")
+    a(f"상태: {STATUS_LABEL[item['status']]}")
+    a("")
+
+    for field in ("impact", "cause", "action", "prevention"):
+        a(f"[{FIELD_LABEL[field]}]")
+        a(item[field].strip() or "(작성되지 않음)")
+        a("")
+
+    if data and data.get("timeline"):
+        a("[타임라인]")
+        for row in data["timeline"][:40]:
+            a(f"{row['at']:%m-%d %H:%M:%S}  {row['text']}")
+        if len(data["timeline"]) > 40:
+            a(f"... 외 {len(data['timeline']) - 40}건")
+        a("")
+
+    a("이 본문은 운영 도구에서 자동으로 만들어 보냈습니다. "
+      "원본은 사후 보고서 화면에 있습니다.")
+
+    summary = f"[장애] {item['title']}"
+    return summary, "\n".join(L)

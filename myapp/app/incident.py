@@ -620,3 +620,28 @@ def draft_customer(item, data):
         "customer_action": item["action"],
         "customer_prevention": item["prevention"],
     }
+
+
+def set_jira_key(incident_id, key):
+    """Jira 이슈 키를 기록한다.
+
+    이미 키가 있으면 덮어쓰지 않는다. 버튼을 두 번 눌러도 이슈가 하나만
+    생기게 하는 마지막 방어선이다(라우트에서도 한 번 막지만, 두 요청이
+    거의 동시에 들어오면 거기서는 못 막는다).
+    """
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure_table(cur)
+        cur.execute(
+            "UPDATE incidents SET jira_key = %s "
+            " WHERE id = %s AND btrim(jira_key) = '' RETURNING jira_key",
+            (key, incident_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            current = get(incident_id)
+            if current is None:
+                raise IncidentError("장애 기록을 찾지 못했습니다.")
+            raise IncidentError(
+                f"이미 Jira 이슈가 있습니다: {current['jira_key']}"
+            )
+        return row[0]

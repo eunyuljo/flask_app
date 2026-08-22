@@ -1,12 +1,16 @@
 # app/views/incident.py
 # 장애 사후 보고서(RCA) 블루프린트. url_prefix="/incident" 로 등록된다.
 # 타임라인은 앱이 모으고, 원인과 조치는 사람이 쓴다.
+#
+# AI 초안은 그 "사람이 쓴다" 를 대신하지 않는다. 빈 칸을 채워서 보여줄 뿐,
+# 저장 버튼을 누르는 것은 사람이다. 모델이 쓴 글이 확인 없이 고객사
+# 보고서로 나가면 안 된다.
 
 from datetime import datetime, timezone
 
 from flask import (
     Blueprint, render_template, request, redirect, url_for,
-    session, flash, Response
+    session, flash, Response, current_app
 )
 
 from app import incident
@@ -15,9 +19,17 @@ from app.incident import (
     IncidentError, STATUS_LABEL, FIELD_LABEL, NARRATIVE_FIELDS,
     CUSTOMER_FIELDS, CUSTOMER_FIELD_LABEL, CUSTOMER_STATUS_LABEL,
 )
-from app.rca import to_markdown, to_customer_markdown
+from app.rca import to_markdown, to_customer_markdown, to_jira
+from app import audit
 
 incident_bp = Blueprint("incident", __name__)
+
+# AI 가 만든 초안 보관소. 저장하기 전 단계라 DB 에 넣지 않는다.
+#   incident_id -> {"impact":..., ..., "uncertain": [...]}
+# 사람이 저장을 누르면 그때 incidents 테이블로 들어가고 여기서 지운다.
+# 재시작하면 사라지는데, 그건 문제가 아니다 - 저장 안 한 초안은
+# 남아 있을 이유가 없다.
+_RCA_DRAFTS = {}
 
 SEVERITIES = ("critical", "error", "warning", "info")
 
@@ -151,12 +163,26 @@ def detail(incident_id):
                     seen.add(other["id"])
                     related.append(other)
 
+    # 저장 전 초안이 있으면 빈 칸에만 채워서 보여준다.
+    # 사람이 이미 쓴 칸은 건드리지 않는다 - 초안 버튼을 잘못 눌렀다고
+    # 써둔 문장이 날아가면 안 된다.
+    draft = _RCA_DRAFTS.get(incident_id)
+    shown = {f: item[f] for f in NARRATIVE_FIELDS}
+    filled = []
+    if draft:
+        for field in NARRATIVE_FIELDS:
+            if not shown[field].strip() and draft.get(field, "").strip():
+                shown[field] = draft[field]
+                filled.append(field)
+
     return render_template(
         "incident_detail.html",
         item=item, data=data, error=error, related=related,
         labels=STATUS_LABEL, field_labels=FIELD_LABEL,
         customer_labels=CUSTOMER_STATUS_LABEL,
         customer_field_labels=CUSTOMER_FIELD_LABEL,
+        draft=draft, shown=shown, filled=filled,
+        jira_base=current_app.config.get("JIRA_BASE_URL", ""),
     )
 
 
@@ -167,6 +193,9 @@ def save(incident_id):
     fields = {f: request.form.get(f, "").strip() for f in NARRATIVE_FIELDS}
     try:
         incident.update_narrative(incident_id, fields)
+        # 저장했으면 초안은 할 일을 마쳤다. 남겨두면 다음에 이 화면을
+        # 열었을 때 저장한 내용 위에 또 초안이 얹힌 것처럼 보인다.
+        _RCA_DRAFTS.pop(incident_id, None)
         flash("저장했습니다.", "success")
     except IncidentError as e:
         flash(str(e), "error")
@@ -291,3 +320,151 @@ def customer_report(incident_id):
                 f'attachment; filename="incident-report-{item["id"]}.md"'
         },
     )
+
+
+# ----------------------------------------------------------------------
+# AI 초안
+# ----------------------------------------------------------------------
+# 알람 진단과 달리 AWS 를 조회하지 않는다. 장애는 이미 지난 일이고
+# 근거는 전부 DB 에 있다. 그래서 계정을 고를 필요도 없다.
+
+
+@incident_bp.route("/<int:incident_id>/rca/draft", methods=["POST"])
+def rca_draft(incident_id):
+    """타임라인을 근거로 원인 분석 초안을 만든다.
+
+    저장하지 않는다. 화면의 빈 칸에 채워서 보여주고, 사람이 저장을
+    눌러야 남는다.
+    """
+    from app.agent_core import draft_rca, AgentNotConfigured
+
+    try:
+        item, data, error = _load(incident_id)
+        if item is None:
+            raise IncidentError(error)
+        if data is None:
+            raise IncidentError(error or "타임라인을 모으지 못했습니다.")
+        if item["status"] != "draft":
+            raise IncidentError("이미 제출된 보고서에는 초안을 만들지 않습니다.")
+    except IncidentError as e:
+        flash(str(e), "error")
+        return redirect(url_for("incident.detail", incident_id=incident_id))
+
+    # 같은 알람으로 났던 지난 장애를 함께 넘긴다. 재발인지 아닌지가
+    # 원인 분석에서 가장 크게 갈리는 지점이다.
+    past = []
+    seen = set()
+    for kind in (data.get("by_kind") or [])[:5]:
+        for other in incident.past_incidents(kind["fingerprint"], limit=2,
+                                             exclude_id=item["id"]):
+            if other["id"] not in seen:
+                seen.add(other["id"])
+                past.append(other)
+
+    runbooks = []
+    try:
+        from app import runbook
+
+        for kind in (data.get("by_kind") or [])[:3]:
+            found = runbook.find(kind["fingerprint"], item.get("customer", ""))
+            if found:
+                runbooks.append(found)
+    except Exception:
+        # 런북이 없어도 초안은 만들 수 있다. 여기서 막지 않는다.
+        runbooks = []
+
+    try:
+        draft = draft_rca(item, data, past=past, runbooks=runbooks)
+    except AgentNotConfigured as e:
+        flash(str(e), "error")
+        return redirect(url_for("incident.detail", incident_id=incident_id))
+    except Exception as e:
+        flash(f"초안을 만들지 못했습니다: {e}", "error")
+        return redirect(url_for("incident.detail", incident_id=incident_id))
+
+    _RCA_DRAFTS[incident_id] = draft
+
+    # 모델이 만든 문서라는 것을 기록에 남긴다. 고객사 계정을 건드린 것은
+    # 아니지만, 나중에 "이 문장 누가 썼나" 를 물었을 때 답할 수 있어야 한다.
+    audit.record(
+        action="rca_draft", outcome="ok",
+        summary=f"사후 보고서 초안: #{item['id']} {item['title'][:80]}",
+        detail=f"근거 이벤트 {data.get('event_count', 0)}건, 지난 장애 {len(past)}건",
+        account={"customer": item.get("customer", ""),
+                 "account_id": item.get("account_id", "")},
+        region=item.get("region", ""),
+        actor_kind="agent",
+        meta={"incident_id": item["id"],
+              "uncertain": draft.get("uncertain", [])},
+    )
+
+    flash("초안을 만들었습니다. 빈 칸에 채워 두었으니 확인하고 저장하세요. "
+          "저장하지 않으면 남지 않습니다.", "success")
+    return redirect(url_for("incident.detail", incident_id=incident_id))
+
+
+@incident_bp.route("/<int:incident_id>/rca/discard", methods=["POST"])
+def rca_discard(incident_id):
+    """초안을 버린다."""
+    if _RCA_DRAFTS.pop(incident_id, None):
+        flash("초안을 버렸습니다.", "success")
+    return redirect(url_for("incident.detail", incident_id=incident_id))
+
+
+@incident_bp.route("/<int:incident_id>/jira", methods=["POST"])
+def to_jira_issue(incident_id):
+    """사후 보고서를 Jira 이슈로 넘긴다.
+
+    제출된 보고서만 넘긴다. 초안 상태로 넘기면 나중에 내용이 바뀌는데
+    Jira 쪽은 그대로 남아, 두 곳의 내용이 갈린다.
+    """
+    from app import jira as jira_mod
+    from app.jira import JiraError, JiraNotConfigured
+
+    try:
+        item, data, _error = _load(incident_id)
+        if item is None:
+            raise IncidentError("장애 기록을 찾지 못했습니다.")
+        if item["status"] != "published":
+            raise IncidentError(
+                "제출된 보고서만 Jira 로 넘길 수 있습니다. "
+                "초안 상태로 넘기면 나중에 내용이 갈립니다."
+            )
+        if (item.get("jira_key") or "").strip():
+            raise IncidentError(f"이미 Jira 이슈가 있습니다: {item['jira_key']}")
+    except IncidentError as e:
+        flash(str(e), "error")
+        return redirect(url_for("incident.detail", incident_id=incident_id))
+
+    summary, description = to_jira(item, data)
+    labels = ["incident", "rca"]
+    if item.get("customer"):
+        # Jira 라벨에는 공백을 못 넣는다.
+        labels.append(item["customer"].replace(" ", "-"))
+
+    try:
+        key = jira_mod.create_issue(summary, description, labels=labels)
+    except JiraNotConfigured as e:
+        flash(str(e), "error")
+        return redirect(url_for("incident.detail", incident_id=incident_id))
+    except JiraError as e:
+        flash(f"Jira 이슈를 만들지 못했습니다: {e}", "error")
+        return redirect(url_for("incident.detail", incident_id=incident_id))
+
+    try:
+        incident.set_jira_key(incident_id, key)
+    except IncidentError as e:
+        # 이슈는 이미 만들어졌다. 여기서 실패하면 키가 어디에도 안 남으므로
+        # 화면에라도 알려야 한다 - 안 그러면 다음 사람이 또 만든다.
+        flash(f"Jira {key} 를 만들었지만 기록에 남기지 못했습니다: {e}", "error")
+        return redirect(url_for("incident.detail", incident_id=incident_id))
+
+    audit.record(
+        action="incident_jira", outcome="ok",
+        summary=f"사후 보고서 Jira 등록: #{item['id']} -> {key}",
+        account={"customer": item.get("customer", ""),
+                 "account_id": item.get("account_id", "")},
+        meta={"incident_id": item["id"], "jira_key": key},
+    )
+    flash(f"Jira {key} 로 넘겼습니다.", "success")
+    return redirect(url_for("incident.detail", incident_id=incident_id))

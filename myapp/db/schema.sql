@@ -599,3 +599,9 @@ CREATE INDEX IF NOT EXISTS idx_compliance_exc
 -- 들어 있는 종류만 수집한 것으로 본다(가장 보수적인 추측).
 ALTER TABLE resource_snapshots
     ADD COLUMN IF NOT EXISTS collected_types TEXT[] NOT NULL DEFAULT '{}';
+
+
+-- 사후 보고서를 Jira 이슈로 넘겼을 때의 이슈 키.
+-- 비어 있으면 아직 안 넘긴 것이다. 이 값이 있어야 같은 보고서로 이슈를
+-- 두 번 만드는 것을 막을 수 있다 - 버튼을 두 번 누르는 일은 반드시 생긴다.
+ALTER TABLE incidents ADD COLUMN IF NOT EXISTS jira_key TEXT NOT NULL DEFAULT '';
