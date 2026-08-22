@@ -1,0 +1,178 @@
+{# templates/compliance.html
+   compliance 블루프린트의 index() 가 렌더링하는 점검 결과.
+   AWS Config 를 부르지 않고, 이미 찍어둔 리소스 스냅샷을 기준으로 본다. #}
+
+{% extends "base.html" %}
+
+{% block title %}컴플라이언스{% endblock %}
+{% block page_title %}컴플라이언스{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    이미 찍어둔 <a href="{{ url_for('resources.index') }}">리소스 스냅샷</a>을 기준으로 점검합니다.
+    AWS Config 를 부르지 않으므로 <strong>수집한 항목만</strong> 볼 수 있는 대신,
+    스냅샷이 쌓여 있어서 <strong>언제부터 이랬는지</strong>와
+    <strong>고쳤다가 다시 열린 것</strong>을 알 수 있습니다.
+  </p>
+  <p class="muted">
+    <a href="{{ url_for('compliance.exceptions') }}">예외 관리</a>
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if not targets %}
+    <p class="muted">
+      점검할 스냅샷이 없습니다.
+      <code>flask --app run collect-resources --demo</code> 로 먼저 수집하세요.
+    </p>
+  {% else %}
+
+  <p class="muted">
+    대상:
+    {% for t in targets %}
+      {% if chosen and t.snapshot_id == chosen.snapshot_id %}
+        <strong>{{ t.account_id }} / {{ t.region }}</strong>
+      {% else %}
+        <a href="{{ url_for('compliance.index', account=t.account_id, region=t.region) }}">{{ t.account_id }} / {{ t.region }}</a>
+      {% endif %}
+      {% if not loop.last %}&middot;{% endif %}
+    {% endfor %}
+  </p>
+  {% endif %}
+
+  {% if summary %}
+    <div class="kpis">
+      <div class="kpi"><span class="n">{{ summary.total }}</span><span class="k">위반</span></div>
+      <div class="kpi"><span class="n">{{ summary.by_severity.critical }}</span><span class="k">critical</span></div>
+      <div class="kpi"><span class="n">{{ summary.by_severity.high }}</span><span class="k">high</span></div>
+      <div class="kpi"><span class="n">{{ summary.excused }}</span><span class="k">예외 처리됨</span></div>
+      <div class="kpi"><span class="n">{{ snapshot|length }}</span><span class="k">점검한 리소스</span></div>
+    </div>
+    <p class="muted">
+      {{ chosen.account_id }} / {{ chosen.region }} &mdash;
+      스냅샷 #{{ chosen.snapshot_id }}, {{ chosen.collected_at.strftime('%Y-%m-%d %H:%M') }} UTC 수집
+      {% if summary.total == 0 %}&mdash; <strong>위반 없음</strong>{% endif %}
+    </p>
+  {% endif %}
+
+  {# 재발을 위반 목록보다 위에 둔다. 지금 상태만 보면 처음 열린 것과
+     세 번째 열린 것이 똑같아 보이는데, 대응은 완전히 달라야 한다. #}
+  {% if repeats %}
+    <div class="flash warn-flash">
+      <strong>고쳤다가 다시 열린 항목이 {{ repeats|length }}건 있습니다.</strong>
+      임시 조치였거나, 무언가가 설정을 되돌리고 있다는 뜻입니다.
+      <ul>
+        {% for r in repeats %}
+          <li>{{ r.title }} &mdash; <code>{{ r.resource_id }}</code> ({{ r.times }}번 열림)</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  {% if grouped %}
+    <hr>
+    <h2>위반 항목</h2>
+    {% for g in grouped %}
+      <div class="event sev-{{ g.check.severity }}">
+        <div class="event-head">
+          <span class="badge">{{ g.check.severity }}</span>
+          <strong>{{ g.check.title }}</strong>
+          <span class="muted">{{ g.live|length }}건{% if g.hits|length > g.live|length %} (+ 예외 {{ g.hits|length - g.live|length }}){% endif %}</span>
+        </div>
+        <div class="muted">{{ g.check.why }}</div>
+        <div class="muted">근거: {{ g.check.standard }}</div>
+
+        {% for h in g.hits %}
+          <div class="hit {% if h.excused %}muted{% endif %}">
+            <div class="hit-line">
+              <code>{{ h.resource_id }}</code>
+              <span>{{ h.detail }}</span>
+              {% set when = since.get((h.check_id, h.resource_id)) %}
+              <span class="hit-since muted">
+                {% if when %}{{ when.strftime('%m-%d %H:%M') }}부터{% else %}시점 미상{% endif %}
+              </span>
+            </div>
+            {% if h.excused %}
+              <div class="muted">예외로 처리되어 집계에서 빠져 있습니다.</div>
+            {% else %}
+              <details>
+                <summary class="muted">예외 등록</summary>
+                <form method="post" action="{{ url_for('compliance.add_exception') }}" class="form">
+                  <input type="hidden" name="account_id" value="{{ chosen.account_id }}">
+                  <input type="hidden" name="check_id" value="{{ h.check_id }}">
+                  <input type="hidden" name="resource_id" value="{{ h.resource_id }}">
+                  <label>사유 <span class="muted">(필수)</span>
+                    <input type="text" name="reason" required
+                           placeholder="예) 고객사 승인 - 사내망 대역만 접근 가능">
+                  </label>
+                  <label>기간(일)
+                    <input type="number" name="days" value="30" min="1" max="365">
+                  </label>
+                  <button type="submit">예외로 등록</button>
+                </form>
+              </details>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    {% endfor %}
+  {% elif chosen and not error %}
+    <p class="muted">이 스냅샷에서는 위반이 발견되지 않았습니다.</p>
+  {% endif %}
+
+  {% if points %}
+    <hr>
+    <h2>시간축 <span class="muted">(최근 {{ points|length }}개 스냅샷)</span></h2>
+    <p class="muted">
+      스냅샷마다 다시 점검해서 이웃한 시점끼리 비교합니다.
+      결과를 표에 저장하지 않기 때문에, 점검 항목을 고치면 과거 시점도 새 기준으로 다시 계산됩니다.
+    </p>
+    {# 표로 만들면 (항목, 리소스) 쌍이 좁은 칸에서 세로로 쪼개진다.
+       변화가 있는 시점만 펼쳐서 한 줄씩 읽히게 둔다. #}
+    {% for p in points %}
+      <div class="tl">
+        <div class="tl-head">
+          <strong>{{ p.collected_at.strftime('%m-%d %H:%M') }}</strong>
+          <span class="muted">리소스 {{ p.resources }}건</span>
+          <span>위반 {{ p.summary.total }}{% if p.summary.worst %}
+            <span class="muted">(최고 {{ p.summary.worst }})</span>{% endif %}</span>
+          {% if p.first %}
+            <span class="muted">— 가장 오래된 스냅샷 (비교 대상 없음)</span>
+          {% elif not p.opened and not p.closed %}
+            <span class="muted">— 변화 없음</span>
+          {% endif %}
+        </div>
+        {% if not p.first %}
+        {% for k in p.opened %}
+          <div class="tl-line open">＋ <code>{{ k[1] }}</code>
+            <span class="muted">{{ k[0] }}</span></div>
+        {% endfor %}
+        {% for k in p.closed %}
+          <div class="tl-line close">－ <code>{{ k[1] }}</code>
+            <span class="muted">{{ k[0] }}</span></div>
+        {% endfor %}
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  <hr>
+  <h2>점검 항목 <span class="muted">({{ checks|length }}개)</span></h2>
+  <p class="muted">
+    항목은 코드(<code>app/compliance.py</code>)에 있습니다. 규칙은 조건식이라
+    표에 넣으면 문자열로 저장했다가 다시 해석하는 일이 생깁니다.
+    표에 넣는 것은 규칙이 아니라 <a href="{{ url_for('compliance.exceptions') }}">예외</a>입니다.
+  </p>
+  <table>
+    <tr><th>심각도</th><th>항목</th><th>근거</th></tr>
+    {% for c in checks %}
+      <tr>
+        <td><span class="badge">{{ c.severity }}</span></td>
+        <td>{{ c.title }}<div class="muted">{{ c.why }}</div></td>
+        <td class="muted">{{ c.standard }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+{% endblock %}

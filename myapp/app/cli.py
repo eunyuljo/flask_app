@@ -790,3 +790,94 @@ def register_cli(app):
         except users.UserError as e:
             raise click.ClickException(str(e))
         click.echo(f"{username} 의 비밀번호를 바꿨습니다.")
+
+    # ------------------------------------------------------------------
+    # 컴플라이언스
+    # ------------------------------------------------------------------
+    @app.cli.command("compliance-check")
+    @click.option("--account", default="", help="계정 하나만 (비우면 전체)")
+    @click.option("--severity", default="", help="이 심각도 이상만 (critical/high/medium/low)")
+    @click.option("--slack", is_flag=True, help="critical 위반이 있으면 Slack 으로 알림")
+    def compliance_check(account, severity, slack):
+        """스냅샷을 기준으로 모범사례 점검을 돌린다.
+
+        화면과 같은 결과를 낸다. 결과를 표에 저장하지 않으므로 이 명령은
+        무엇도 바꾸지 않는다 - 몇 번을 돌려도 안전하다.
+        """
+        from app import compliance
+        from app.compliance import ComplianceError
+
+        try:
+            targets = compliance.latest_snapshots()
+        except ComplianceError as e:
+            raise click.ClickException(str(e))
+
+        if account:
+            targets = [t for t in targets if t["account_id"] == account]
+        if not targets:
+            click.echo("점검할 스냅샷이 없습니다. collect-resources 를 먼저 실행하세요.")
+            return
+
+        cutoff = compliance.SEVERITY_ORDER.get(severity, len(compliance.SEVERITIES))
+        worst_lines, total = [], 0
+
+        for t in targets:
+            try:
+                violations, snap = compliance.evaluate(t["snapshot_id"], t["account_id"])
+            except ComplianceError as e:
+                click.echo(f"{t['account_id']} / {t['region']}: 점검 실패 - {e}")
+                continue
+
+            live = [
+                v for v in violations
+                if not v["excused"]
+                and compliance.SEVERITY_ORDER[v["severity"]] <= cutoff
+            ]
+            summary = compliance.summarize(violations)
+            total += len(live)
+
+            click.echo(
+                f"\n{t['account_id']} / {t['region']}  "
+                f"(스냅샷 #{t['snapshot_id']}, 리소스 {len(snap)}건, "
+                f"{t['collected_at']:%Y-%m-%d %H:%M} 수집)"
+            )
+            if summary["excused"]:
+                click.echo(f"  예외로 빠진 항목 {summary['excused']}건")
+            if not live:
+                click.echo("  위반 없음")
+                continue
+
+            for v in live:
+                click.echo(f"  [{v['severity']:<8}] {v['resource_id']:<24} {v['detail']}")
+                if v["severity"] == "critical":
+                    worst_lines.append(
+                        f"{t['account_id']}/{t['region']} · {v['resource_id']} · {v['detail']}"
+                    )
+
+            # 재발은 따로 알린다. 지금 상태만 보면 처음 열린 것과
+            # 세 번째 열린 것이 똑같아 보인다.
+            try:
+                repeats = compliance.recurring(
+                    compliance.timeline(t["account_id"], t["region"])
+                )
+            except ComplianceError:
+                repeats = []
+            for r in repeats:
+                click.echo(f"  [재발    ] {r['resource_id']:<24} {r['title']} ({r['times']}번 열림)")
+
+        click.echo(f"\n합계: 위반 {total}건")
+
+        if slack and worst_lines:
+            from app import slack as slack_mod
+            from app.slack import SlackError, SlackNotConfigured
+
+            body = "*컴플라이언스 - critical 위반*\n" + "\n".join(
+                f"• {slack_mod.escape(line)}" for line in worst_lines
+            )
+            try:
+                slack_mod.post(body, purpose="sla")
+                click.echo("Slack 으로 보냈습니다.")
+            except SlackNotConfigured as e:
+                click.echo(f"Slack 미설정이라 건너뜁니다: {e}")
+            except SlackError as e:
+                raise click.ClickException(f"Slack 전송 실패: {e}")

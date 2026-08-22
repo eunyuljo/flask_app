@@ -34,9 +34,11 @@ def _baseline(account_id):
          "attributes": {"name": "db-sg", "vpc": "vpc-0aaa",
                         "ingress": ["5432/tcp:10.0.1.0/24"]}},
         {"resource_id": f"{account_id}-assets", "resource_type": "s3:bucket",
-         "attributes": {"public_access_blocked": True, "versioning": "Enabled"}},
+         "attributes": {"public_access_blocked": True, "versioning": "Enabled",
+                        "encryption": "AES256"}},
         {"resource_id": f"{account_id}-logs", "resource_type": "s3:bucket",
-         "attributes": {"public_access_blocked": True, "versioning": "Disabled"}},
+         "attributes": {"public_access_blocked": True, "versioning": "Disabled",
+                        "encryption": "None"}},
     ]
 
 
@@ -204,6 +206,18 @@ def aws_resources(region, env=None):
                 attrs["versioning"] = s3.get_bucket_versioning(Bucket=name).get("Status", "Disabled")
             except ClientError:
                 attrs["versioning"] = "Unknown"
+            try:
+                rules = s3.get_bucket_encryption(Bucket=name)[
+                    "ServerSideEncryptionConfiguration"]["Rules"]
+                attrs["encryption"] = (
+                    rules[0]["ApplyServerSideEncryptionByDefault"]["SSEAlgorithm"]
+                    if rules else "None"
+                )
+            except ClientError:
+                # ServerSideEncryptionConfigurationNotFoundError 도 여기로 온다.
+                # 설정이 없는 것과 못 읽은 것을 구분하지 못하는데, 점검에서는
+                # 둘 다 "확인되지 않음" 으로 다뤄야 해서 같은 값으로 둔다.
+                attrs["encryption"] = "None"
             items.append({"resource_id": name, "resource_type": "s3:bucket", "attributes": attrs})
 
     except (BotoCoreError, ClientError) as e:

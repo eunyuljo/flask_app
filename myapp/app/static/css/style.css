@@ -275,6 +275,11 @@ form.reset { margin-top: 12px; }
 .event.sev-error    { border-left-color: var(--sev-error); }
 .event.sev-warning  { border-left-color: var(--sev-warning); }
 .event.sev-info     { border-left-color: var(--sev-info); }
+/* 컴플라이언스는 심각도 이름이 다르다(critical/high/medium/low).
+   색은 이벤트 쪽과 같은 것을 쓴다 - 같은 빨강이 같은 뜻이어야 한다. */
+.event.sev-high     { border-left-color: var(--sev-error); }
+.event.sev-medium   { border-left-color: var(--sev-warning); }
+.event.sev-low      { border-left-color: var(--sev-info); }
 
 .event-head { margin-bottom: 5px; display: flex; align-items: center;
               gap: 6px; flex-wrap: wrap; }
@@ -294,6 +299,9 @@ form.reset { margin-top: 12px; }
 .sev-error .badge    { background: var(--orange-bg); color: var(--orange-fg); }
 .sev-warning .badge  { background: var(--warn-bg); color: var(--warn-fg); }
 .sev-info .badge     { background: var(--info-bg); color: var(--info-fg); }
+.sev-high .badge     { background: var(--orange-bg); color: var(--orange-fg); }
+.sev-medium .badge   { background: var(--warn-bg); color: var(--warn-fg); }
+.sev-low .badge      { background: var(--info-bg); color: var(--info-fg); }
 
 /* ==================================================================
    8) 관리자 대시보드
@@ -852,3 +860,21 @@ table.sla-table td { padding: 8px 12px 8px 0; white-space: nowrap; }
 
 /* 넓은 표는 카드 안에서만 가로 스크롤한다. */
 .scroll-x { overflow-x: auto; }
+
+/* --- 컴플라이언스 --- */
+/* 위반 한 줄. 리소스 ID 와 설명, 언제부터인지를 한 줄에 둔다.
+   표로 만들었더니 마지막 칸이 좁아져서 '예외 등록' 이 세로로 쪼개졌다. */
+.hit { padding: 8px 0; border-top: 1px solid var(--border); }
+.hit-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.hit-line code { flex: none; }
+.hit-since { margin-left: auto; white-space: nowrap; font-size: .78rem; }
+.hit details { margin-top: 4px; }
+.hit summary { font-size: .8rem; cursor: pointer; }
+
+/* 시간축. 한 시점이 한 덩어리다. */
+.tl { padding: 8px 0; border-top: 1px solid var(--border); }
+.tl-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+.tl-line { font-size: .85rem; padding-left: 12px; }
+.tl-line.open  { color: var(--sev-critical); }
+.tl-line.close { color: var(--ok-fg); }
+.tl-line code { color: inherit; }

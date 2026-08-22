@@ -31,6 +31,7 @@ from app.views.handover import handover_bp
 from app.views.incident import incident_bp
 from app.views.noise import noise_bp
 from app.views.customer import customer_bp
+from app.views.compliance import compliance_bp
 
 
 def create_app(config_name=None):
@@ -179,6 +180,11 @@ def create_app(config_name=None):
     # 기능 축(알람은 알람끼리, 작업은 작업끼리)이라, 고객사 하나의 상태를
     # 보려면 화면을 여섯 개 돌아야 했다.
     app.register_blueprint(customer_bp, url_prefix="/customer")
+
+    # compliance 블루프린트: url_prefix="/compliance"
+    # 리소스 스냅샷을 한 번 더 쓴다. 원래는 '무엇이 바뀌었나' 를 보려고
+    # 찍던 것인데, 같은 자료로 '지금 상태가 기준에 맞나' 도 볼 수 있다.
+    app.register_blueprint(compliance_bp, url_prefix="/compliance")
 
     # ------------------------------------------------------------------
     # CLI 명령 등록

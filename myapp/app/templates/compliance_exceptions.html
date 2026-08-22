@@ -1,0 +1,56 @@
+{# templates/compliance_exceptions.html
+   승인된 예외 목록. 만료된 것도 함께 보여준다 - 지금 몇 개가 살아 있는지와
+   그동안 몇 개를 덮었는지는 다른 질문이다. #}
+
+{% extends "base.html" %}
+
+{% block title %}컴플라이언스 예외{% endblock %}
+{% block page_title %}컴플라이언스 예외{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    <a href="{{ url_for('compliance.index') }}">&larr; 컴플라이언스</a>
+  </p>
+  <p class="muted">
+    고객이 알고 승인한 항목을 위반 목록에서 빼둡니다.
+    <strong>사유와 만료일이 반드시 붙습니다</strong> &mdash;
+    끝나지 않는 예외는 예외가 아니라 그냥 못 본 척하는 것이기 때문입니다.
+    만료되면 위반이 자동으로 다시 뜹니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if not items %}
+    <p class="muted">등록된 예외가 없습니다. 점검 화면의 각 위반 옆에서 등록할 수 있습니다.</p>
+  {% else %}
+    <table>
+      <tr>
+        <th>계정</th><th>점검 항목</th><th>리소스</th>
+        <th>사유</th><th>승인</th><th>만료</th><th></th>
+      </tr>
+      {% for e in items %}
+        <tr {% if e.expired %}class="muted"{% endif %}>
+          <td><code>{{ e.account_id }}</code></td>
+          <td>{{ e.check_id }}</td>
+          <td>
+            {% if e.resource_id %}<code>{{ e.resource_id }}</code>
+            {% else %}<strong>계정 전체</strong>{% endif %}
+          </td>
+          <td>{{ e.reason }}</td>
+          <td class="muted">{{ e.approved_by or '—' }}</td>
+          <td>
+            {{ e.expires_at.strftime('%Y-%m-%d') }}
+            {% if e.expired %}<strong>(만료됨)</strong>{% endif %}
+          </td>
+          <td>
+            <form method="post" action="{{ url_for('compliance.delete_exception', exception_id=e.id) }}" class="form danger">
+              <button type="submit">삭제</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+{% endblock %}

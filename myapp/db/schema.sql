@@ -541,3 +541,43 @@ CREATE TABLE IF NOT EXISTS users (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_login_at TIMESTAMPTZ
 );
+
+
+-- ======================================================================
+-- 컴플라이언스 예외
+-- ----------------------------------------------------------------------
+-- 점검 항목 자체는 코드(app/compliance.py)에 있다. 규칙은 '데이터'가 아니라
+-- '로직'이라서, 표에 넣으면 조건식을 문자열로 저장했다가 다시 해석하는
+-- 일이 생긴다. 표에 넣어야 하는 건 규칙이 아니라 예외다.
+--
+-- MSP 에서 위반 목록이 쓸모없어지는 이유는 대개 하나다. "이건 고객이
+-- 알고 승인한 건데 계속 빨갛게 뜬다." 그런 항목이 몇 개만 쌓이면
+-- 아무도 목록을 안 보게 된다.
+--
+-- 그래서 예외에는 반드시 사유와 만료일이 붙는다. 만료일이 없는 예외는
+-- 예외가 아니라 그냥 못 본 척하는 것이다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS compliance_exceptions (
+    id          BIGSERIAL   PRIMARY KEY,
+
+    -- 어느 계정의, 어느 점검 항목에 대한 예외인가.
+    account_id  TEXT        NOT NULL,
+    check_id    TEXT        NOT NULL,
+
+    -- 리소스 하나만 빼려면 그 ID 를, 계정 전체를 빼려면 빈 문자열.
+    -- 계정 전체 예외는 위험해서 화면에서 따로 표시한다.
+    resource_id TEXT        NOT NULL DEFAULT '',
+
+    reason      TEXT        NOT NULL,
+    approved_by TEXT        NOT NULL DEFAULT '',
+
+    -- 만료일. 지난 예외는 자동으로 효력을 잃고 위반이 다시 뜬다.
+    expires_at  TIMESTAMPTZ NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (account_id, check_id, resource_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_compliance_exc
+    ON compliance_exceptions (account_id, check_id);

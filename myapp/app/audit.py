@@ -22,6 +22,7 @@ ACTIONS = {
     "console_command": "콘솔 명령",
     "ai_diagnose": "AI 진단",
     "user_manage": "계정 관리",
+    "compliance_exception": "컴플라이언스 예외",
 }
 
 ACTOR_KINDS = {"human": "사람", "agent": "모델"}
