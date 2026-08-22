@@ -628,3 +628,38 @@ ALTER TABLE events ADD COLUMN IF NOT EXISTS acknowledged_by TEXT NOT NULL DEFAUL
 -- "아직 아무도 안 본 알람" 을 찾는 질의가 화면의 기본값이 된다.
 CREATE INDEX IF NOT EXISTS idx_events_unacked
     ON events (occurred_at DESC) WHERE acknowledged_at IS NULL;
+
+
+-- ======================================================================
+-- 배치 실행 기록
+-- ----------------------------------------------------------------------
+-- 이 앱의 자동화는 전부 CLI 명령이다. cron 에 걸어두고 죽으면 아무도
+-- 모른다. 컴플라이언스 점검이 3주째 안 돌았는데 화면은 3주 전 결과를
+-- 오늘 것처럼 보여주는 상황이 가능했다.
+--
+-- 명령이 스스로 "나 돌았다" 를 남기게 하고, 관리자 화면에서 마지막 실행
+-- 시각을 본다. 오래 안 돈 것은 경고한다.
+--
+-- 한 명령의 기록을 여러 줄로 쌓는다. 마지막 것만 덮어쓰면 "어제도
+-- 실패했나" 를 알 수 없다 - 한 번 실패는 흔하지만 연속 실패는 다른 문제다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS job_runs (
+    id         BIGSERIAL   PRIMARY KEY,
+    job        TEXT        NOT NULL,        -- CLI 명령 이름 (compliance-check ...)
+
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ended_at   TIMESTAMPTZ,
+
+    -- running : 시작만 하고 아직 안 끝남 (중간에 죽으면 여기서 멈춘다)
+    -- ok      : 끝까지 성공
+    -- failed  : 예외로 끝남
+    outcome    TEXT        NOT NULL DEFAULT 'running'
+               CHECK (outcome IN ('running', 'ok', 'failed')),
+
+    summary    TEXT        NOT NULL DEFAULT '',   -- 사람이 읽을 한 줄
+    detail     TEXT        NOT NULL DEFAULT '',   -- 실패 사유 등
+    meta       JSONB       NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs (job, started_at DESC);

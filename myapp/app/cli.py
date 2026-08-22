@@ -35,6 +35,44 @@ def _psycopg_uri():
     )
 
 
+def tracked(job):
+    """이 명령이 언제 돌았고 어떻게 끝났는지를 job_runs 에 남긴다.
+
+    cron 에 걸어두는 명령에만 붙인다. add-account 처럼 사람이 필요할 때만
+    부르는 것에는 붙이지 않는다 - 그건 "안 돌았다" 가 문제가 아니다.
+
+    예외가 나면 failed 로 남기고 그대로 다시 던진다. 기록 때문에 실패를
+    삼키면 cron 이 성공한 줄 안다.
+    """
+    def decorate(fn):
+        import functools
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            from app import jobs
+
+            run_id = jobs.start(job)
+            try:
+                result = fn(*args, **kwargs)
+            except click.ClickException as e:
+                # ClickException 은 '사용자에게 보여줄 오류' 다.
+                # 배치 입장에서는 실패이므로 그대로 남긴다.
+                jobs.finish(run_id, "failed", summary=str(e))
+                raise
+            except Exception as e:
+                jobs.finish(run_id, "failed", summary=f"{type(e).__name__}: {e}",
+                            detail=repr(e))
+                raise
+            # 명령이 dict 를 돌려주면 요약으로 쓴다. 아무것도 안 돌려줘도 된다.
+            info = result if isinstance(result, dict) else {}
+            jobs.finish(run_id, "ok", summary=info.get("summary", ""), meta=info)
+            return result
+
+        return wrapper
+
+    return decorate
+
+
 def register_cli(app):
     """앱에 CLI 명령들을 등록한다. create_app() 에서 호출한다."""
 
@@ -222,6 +260,7 @@ def register_cli(app):
     @click.option("--demo", is_flag=True, help="AWS 대신 합성 리소스를 만들어 넣는다")
     @click.option("--drift", default=0.15, help="--demo 에서 변경이 일어날 확률 (기본 0.15)")
     @click.option("--region", default=None, help="수집 리전 (기본: AWS_REGION 설정값)")
+    @tracked("collect-resources")
     def collect_resources(demo, drift, region):
         """AWS 리소스 상태를 한 벌 수집해 스냅샷으로 저장한다.
 
@@ -317,6 +356,7 @@ def register_cli(app):
     @click.option("--snapshots", is_flag=True, help="리소스 스냅샷도 함께 정리한다")
     @click.option("--dry-run", is_flag=True, help="지우지 않고 몇 건인지만 센다")
     @click.option("--yes", is_flag=True, help="확인 없이 실행")
+    @tracked("prune-events")
     def prune_events(days, snapshots, dry_run, yes):
         """오래된 이벤트를 지운다.
 
@@ -441,6 +481,7 @@ def register_cli(app):
                   callback=lambda c, p, v: int(v), help="근무 구간 (기본 12)")
     @click.option("--slack", is_flag=True, help="Slack 으로 보낸다")
     @click.option("--base-url", default="", help="링크에 쓸 앱 주소")
+    @tracked("handover")
     def handover_cmd(hours, slack, base_url):
         """당직 인계를 만든다. 기본은 Markdown 을 화면에 출력한다.
 
@@ -482,6 +523,7 @@ def register_cli(app):
                   help="이미 알린 것도 다시 보낸다(억제 무시)")
     @click.option("--escalate", is_flag=True,
                   help="단계를 올려 담당자를 부르고, 일정 단계부터 Jira 로 넘긴다")
+    @tracked("sla-check")
     def sla_check(hours, slack, send_all, escalate):
         """목표를 넘겼는데 대응 기록이 없는 알람을 찾는다.
 
@@ -800,6 +842,7 @@ def register_cli(app):
     @click.option("--slack", is_flag=True, help="critical 위반이 있으면 Slack 으로 알림")
     @click.option("--xlsx", default="",
                   help="보고용 엑셀을 이 경로에 쓴다 (--severity 와 무관하게 전체)")
+    @tracked("compliance-check")
     def compliance_check(account, severity, slack, xlsx):
         """스냅샷을 기준으로 모범사례 점검을 돌린다.
 

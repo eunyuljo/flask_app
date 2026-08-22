@@ -14,7 +14,7 @@ from flask import (
     request,
 )
 
-from app import audit, event_store, users
+from app import audit, event_store, health, jobs, users
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -213,3 +213,58 @@ def user_enabled():
     )
     flash(f"{username} 계정을 {'켰습니다' if enabled else '껐습니다'}.", "success")
     return redirect(url_for("admin.users_page"))
+
+
+# 최종 URL: /admin/health
+# 배치와 연동을 한 화면에 둔다. 운영자가 묻는 것이 하나이기 때문이다 -
+# "내 도구가 지금 제대로 돌고 있나".
+@admin_bp.route("/health")
+def health_page():
+    """배치 실행 상태와 연동 점검."""
+    rows, jobs_error = [], None
+    try:
+        rows = jobs.status()
+    except jobs.JobError as e:
+        jobs_error = str(e)
+
+    return render_template(
+        "admin_health.html",
+        jobs=rows, jobs_error=jobs_error,
+        job_labels=jobs.STATE_LABEL, alert_states=jobs.ALERT_STATES,
+        checks=health.CHECKS,
+        # 방금 돌린 점검 결과. 새로고침하면 사라진다 - Slack 에 메시지를
+        # 보내는 일이라, 결과를 붙들고 있으면 새로고침이 재전송처럼 보인다.
+        result=_HEALTH_RESULTS.pop(session.get("username", ""), None),
+    )
+
+
+# 점검 결과 보관소. 사용자마다 방금 돌린 것 하나만.
+# PRG 패턴을 지키려고 둔 자리다(새로고침이 Slack 메시지를 또 보내면 안 된다).
+_HEALTH_RESULTS = {}
+
+
+@admin_bp.route("/health/check/<check_id>", methods=["POST"])
+def health_check(check_id):
+    """연동 하나를 실제로 두드려 본다."""
+    outcome = health.run_check(check_id)
+    if outcome is None:
+        flash(f"알 수 없는 점검 항목입니다: {check_id}", "error")
+        return redirect(url_for("admin.health_page"))
+
+    _HEALTH_RESULTS[session.get("username", "")] = outcome
+
+    # 바깥으로 무언가를 보낸 점검은 기록에 남긴다. Slack 채널에 뜬 메시지를
+    # 보고 "이거 누가 보냈어?" 라고 물었을 때 답할 수 있어야 한다.
+    if outcome["sends"]:
+        audit.record(
+            action="health_check", outcome="ok" if outcome["result"]["ok"] else "failed",
+            summary=f"연동 점검: {outcome['label']}",
+            detail=outcome["result"]["detail"],
+        )
+
+    flash(
+        f"{outcome['label']} 점검: "
+        + ("정상" if outcome["result"]["ok"] else "실패"),
+        "success" if outcome["result"]["ok"] else "error",
+    )
+    return redirect(url_for("admin.health_page"))

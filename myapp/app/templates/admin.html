@@ -16,6 +16,10 @@
     <a href="{{ url_for('admin.users_page') }}">계정</a>
     &mdash; 누가 들어올 수 있고 어디까지 볼 수 있는지
   </p>
+  <p class="muted">
+    <a href="{{ url_for('admin.health_page') }}">운영 상태</a>
+    &mdash; 배치가 돌고 있는지, 연동이 실제로 되는지
+  </p>
 
   {# 알람 수집 API 가 인증 없이 열려 있으면 여기서 크게 알린다.
      아무나 알람을 밀어넣어 SLA 위반 -> 에스컬레이션 -> 당직 호출까지

@@ -1,0 +1,119 @@
+{# templates/admin_health.html
+   admin 블루프린트의 health_page().
+
+   배치와 연동을 한 화면에 둔다. 운영자가 묻는 것이 하나이기 때문이다 -
+   "내 도구가 지금 제대로 돌고 있나". #}
+
+{% extends "base.html" %}
+
+{% block title %}운영 상태{% endblock %}
+{% block page_title %}운영 상태{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    <a href="{{ url_for('admin.index') }}">&larr; 관리자</a>
+  </p>
+
+  <h2>배치 실행</h2>
+  <p class="muted">
+    이 앱의 자동화는 전부 CLI 명령입니다. cron 에 걸어두고 죽으면
+    <strong>아무도 모릅니다</strong> &mdash; 컴플라이언스 점검이 3주째 안 돌아도
+    화면은 3주 전 결과를 오늘 것처럼 보여줍니다.
+  </p>
+
+  {% if jobs_error %}
+    <div class="flash error">{{ jobs_error }}</div>
+  {% endif %}
+
+  {% set problems = jobs | selectattr('state', 'in', alert_states) | list %}
+  {% if problems %}
+    <div class="flash error">
+      <strong>{{ problems|length }}개 배치가 정상이 아닙니다.</strong>
+      <ul>
+        {% for j in problems %}
+          <li><code>{{ j.job }}</code> &mdash; {{ j.note }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% elif jobs %}
+    <div class="flash success">모든 배치가 정상입니다.</div>
+  {% endif %}
+
+  {% if jobs %}
+    <table class="rows">
+      <tr>
+        <th>명령</th><th>상태</th><th>마지막 실행</th>
+        <th>주기</th><th>내용</th>
+      </tr>
+      {% for j in jobs %}
+        <tr>
+          <td><code>{{ j.job }}</code></td>
+          <td>
+            {% if j.state in alert_states %}<strong>{{ job_labels[j.state] }}</strong>
+            {% else %}<span class="muted">{{ job_labels[j.state] }}</span>{% endif %}
+          </td>
+          <td class="muted">
+            {% if j.last %}
+              {{ j.last.started_at.strftime('%m-%d %H:%M') }}
+              ({{ j.age_hours }}시간 전)
+            {% else %}—{% endif %}
+          </td>
+          <td class="muted">{{ j.expected.why if j.expected else '수동' }}</td>
+          <td class="muted">
+            {{ j.note }}
+            {% if j.last and j.last.summary %}<div>{{ j.last.summary }}</div>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+    <p class="muted">
+      DB 가 죽어 있는 동안 난 실패는 여기 남지 않습니다 &mdash;
+      기록할 곳이 같이 죽어 있기 때문입니다.
+      그럴 때는 <strong>'오래됨'</strong> 으로 나타납니다.
+    </p>
+  {% endif %}
+
+  <hr>
+  <h2>연동 점검</h2>
+  <p class="muted">
+    <strong>설정됨은 작동함이 아닙니다.</strong> 토큰이 만료되고, 웹훅이 지워지고,
+    채널에서 앱이 빠집니다. 그런 일은 대개 SLA 위반 알림이 안 갈 때 알게 됩니다
+    &mdash; 가장 나쁜 때입니다.
+  </p>
+  <p class="muted">
+    화면을 열 때 자동으로 돌리지 않습니다. 눌렀을 때만 나갑니다.
+  </p>
+
+  {% if result %}
+    <div class="event {% if result.result.ok %}rd-ok{% else %}rd-missing{% endif %}">
+      <div class="event-head">
+        <span class="badge">{{ '정상' if result.result.ok else '실패' }}</span>
+        <strong>{{ result.label }}</strong>
+        <span class="muted">{{ result.result.ms }}ms</span>
+      </div>
+      <div>{{ result.result.detail }}</div>
+    </div>
+  {% endif %}
+
+  {% for c in checks %}
+    <div class="event">
+      <div class="event-head">
+        <strong>{{ c.label }}</strong>
+        {% if c.sends %}
+          <span class="badge">바깥으로 보냄</span>
+        {% endif %}
+      </div>
+      <div class="muted">{{ c.why }}</div>
+      {% if c.sends %}
+        <div class="muted">
+          이 점검은 실제로 메시지를 보냅니다. 받는 사람이 알 수 있게
+          점검이라고 밝히는 문구가 함께 나갑니다.
+        </div>
+      {% endif %}
+      <form action="{{ url_for('admin.health_check', check_id=c.id) }}"
+            method="post" class="form inline">
+        <button type="submit">점검</button>
+      </form>
+    </div>
+  {% endfor %}
+{% endblock %}
