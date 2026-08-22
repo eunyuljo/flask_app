@@ -33,9 +33,11 @@ Flask의 **블루프린트(Blueprint)** 구조를 눈으로 익히기 위한 예
 21. [최초 대응 시간 (SLA)](#최초-대응-시간-sla)
 22. [데이터 보존](#데이터-보존)
 23. [Slack 연동](#slack-연동)
-24. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
-25. [환경변수 전체 목록](#환경변수-전체-목록)
-26. [알려진 한계](#알려진-한계)
+24. [에스컬레이션](#에스컬레이션)
+25. [지난 장애를 진단 재료로](#지난-장애를-진단-재료로)
+26. [Lambda 이벤트 정규화](#lambda-이벤트-정규화)
+27. [환경변수 전체 목록](#환경변수-전체-목록)
+28. [알려진 한계](#알려진-한계)
 
 ---
 
@@ -78,7 +80,8 @@ myapp/
 ├── db/
 │   └── schema.sql              events / resources / accounts / work_orders
 │                               / runbooks / incidents / alarm_rules
-│                               / audit_log / sla_targets DDL
+│                               / audit_log / sla_targets / oncall_members
+│                               / escalations / incident_fingerprints DDL
 │
 ├── app/                        ─── Flask 애플리케이션 ───
 │   ├── __init__.py             create_app() 팩토리 + 블루프린트 등록
@@ -101,6 +104,8 @@ myapp/
 │   ├── audit.py                감사 로그 (고객사 계정을 건드린 기록)
 │   ├── sla.py                  최초 대응 시간 목표와 집계
 │   ├── slack.py                Slack Incoming Webhook 전송
+│   ├── jira.py                 Jira 이슈 생성 (에스컬레이션 넘기기)
+│   ├── escalation.py           단계 판정 · 담당자 · 호출 기록
 │   ├── report.py               기간 리포트 집계 / Markdown / AI 요약
 │   ├── report_pptx.py          리포트를 PowerPoint 슬라이드로
 │   ├── accounts.py             고객사 AWS 계정 목록
@@ -129,7 +134,8 @@ myapp/
     └── test_normalize.py  test_awscli.py  test_query.py
         test_resources.py  test_app.py  test_suppression.py
         test_noise_customer.py  test_account_audit.py
-        test_sla_prune.py  test_slack.py
+        test_sla_prune.py  test_slack.py  test_escalation.py
+        test_incident_archive.py
 ```
 
 **의존 방향은 `app` → `api` 단방향입니다.** `api/`는 Flask를 전혀 import하지 않으므로
@@ -1345,8 +1351,8 @@ DB 없이도 뜨는 것을 전제로 하는데, DB 없는 개발자가 매번 �
 이유가 없습니다.
 
 ```
-212 passed                       (PostgreSQL 있을 때)
-173 passed, 39 skipped           (없을 때)
+251 passed                       (PostgreSQL 있을 때)
+198 passed, 53 skipped           (없을 때)
 ```
 
 ### 무엇을 덮었나
@@ -1365,6 +1371,8 @@ DB 없이도 뜨는 것을 전제로 하는데, DB 없는 개발자가 매번 �
 | `test_account_audit.py` | 계정 귀속(별칭·형식 검사), 감사 로그 |
 | `test_sla_prune.py` | SLA 목표 우선순위, 보존 정책의 보호 대상 |
 | `test_slack.py` | 전송 계층 (가짜 웹훅 서버로 실제 POST 경로 검증) |
+| `test_escalation.py` | 단계 판정, 담당자 우선순위, Jira 호출 |
+| `test_incident_archive.py` | 무엇이 진단 재료가 되고 안 되는가 |
 
 `test_app.py` 의 라우트 훑기는 `testing` 설정(= `sqlite://`)으로 돌기 때문에
 **DB 가 전혀 없는 상태에서 모든 화면이 200 을 내는지**까지 함께 확인합니다.
@@ -1628,6 +1636,116 @@ _대응 여부는 감사 로그(콘솔 조회·AI 진단) 기준입니다.
 # 10분마다 — SLA 목표 초과 확인
 */10 * * * *  cd /path/to/myapp && .venv/bin/flask --app run sla-check --slack
 ```
+
+---
+
+## 에스컬레이션
+
+SLA 목표를 넘겼는데 아무도 안 보면 사람을 부릅니다. 지금까지는 위반을
+세어놓고 그 다음에 아무 일도 일어나지 않았습니다.
+
+```bash
+flask --app run add-oncall --name 김운영 --level 1 --slack-id U01ABCDEF
+flask --app run add-oncall --name 최전담 --level 1 --slack-id U03 --customer A커머스
+flask --app run list-oncall
+
+flask --app run sla-check --escalate          # 단계를 올린다
+flask --app run sla-check --slack --escalate  # 요약도 함께
+```
+
+### 단계
+
+```
+ESCALATION_STEPS=0,30,120
+  목표 초과 즉시    → 1단계 (1차 대응자)
+  목표 + 30분      → 2단계 (2차)
+  목표 + 120분     → 3단계 (관리자)
+```
+
+**고객사 전담이 있으면 전체 담당보다 우선합니다** &mdash; 런북·SLA 목표와
+같은 규칙입니다.
+
+**중간 단계를 건너뛰지 않습니다.** 3단계까지 가야 하는데 1단계만 올렸으면
+2·3을 한 번에 올립니다. 건너뛰면 그 사람은 자기가 호출된 적 없다는 것도
+모른 채 지나갑니다.
+
+**같은 단계를 두 번 부르지 않습니다.** `escalations` 에 기록이 남습니다
+(`sla_notices`·`alarm_state` 와 같은 발상 &mdash; 규칙과 실행 상태를 나눕니다).
+
+### 넣지 않은 것: 날짜 기반 당번표
+
+"이번 주 1차는 누구"는 달력과 교대 규칙이 따라오는데, 그건 이 앱의 성격을
+넘습니다. 여기 `level` 은 **당번 순번이 아니라 단계**입니다.
+
+### 요약 알림과 에스컬레이션은 독립입니다
+
+```
+sla_notices  "위반이 있다" 는 요약을 얼마나 자주 보낼지
+escalations  어느 단계까지 사람을 불렀는지
+```
+
+묶어두면 요약이 억제 창에 걸린 사이에 위반이 3단계까지 커져도 아무도
+불리지 않습니다. `--escalate` 는 `--slack` 없이도 동작합니다.
+
+### 티켓은 Jira 로 넘깁니다
+
+이 앱은 **티켓 시스템을 만들지 않습니다.** 상태 관리와 담당자 배정,
+코멘트 스레드는 Jira 가 이미 훨씬 잘 합니다. 여기서 흉내내면 두 곳에
+같은 내용을 적게 됩니다.
+
+`JIRA_ESCALATION_LEVEL`(기본 2)부터 이슈를 만들고 키만 기록합니다.
+1단계에서 매번 만들면 Jira 가 노이즈로 찹니다.
+
+Slack 이나 Jira 가 막혀도 **다음 단계와 기록은 계속됩니다.** 한 채널이
+막혔다고 에스컬레이션 전체가 멎으면 안 됩니다.
+
+---
+
+## 지난 장애를 진단 재료로
+
+사후 보고서가 쌓이면 **"지난번 이 알람은 무엇이 원인이었나"** 를 답할 수
+있습니다.
+
+```
+알람 카드
+  ▾ 지난번 이 알람: 결제 API 응답 지연 (2026-08-21)
+     보안그룹 규칙 추가 작업 중 5432/tcp 를 0.0.0.0/0 으로 열면서
+     외부 스캔 트래픽이 유입되어 DB 커넥션 풀이 고갈됨.
+```
+
+### 무엇이 재료가 되는가
+
+**확정됐고(`published`) 원인이 적힌 보고서만** 나옵니다.
+
+"지난번에도 이 알람이 있었다"까지만 알려주는 건 진단에 도움이 안 됩니다.
+초안 상태의 추측이 재료로 흘러들면 진단이 근거 없는 이야기를 물고 옵니다.
+
+### 이벤트가 지워져도 남습니다
+
+장애는 이벤트를 **시간 범위로** 조회합니다. 그래서 [보존 정책](#데이터-보존)이
+돌면 "어떤 알람의 장애였는지"가 통째로 사라집니다.
+
+`incident_fingerprints` 가 그 연결을 따로 남깁니다. 보고서를 확정할 때
+자동으로 만들어지고, 그 전에 확정된 것은 `flask --app run link-incidents`
+로 따라잡습니다.
+
+### AI 진단에 함께 넣습니다
+
+```
+같은 알람이 관련됐던 지난 장애 1건
+  [2026-08-21] 결제 API 응답 지연 (심각도 critical)
+    원인: 보안그룹 규칙 추가 작업(OPS-1600) 중 5432/tcp 를 …
+    조치: 해당 규칙을 10.0.0.0/8 로 좁히고 커넥션 풀을 재기동.
+    재발 방지: 보안그룹 변경 시 0.0.0.0/0 을 자동으로 걸러내는 점검 항목 추가.
+```
+
+[런북](#런북)이 "이럴 땐 이렇게 하세요"라면 이건 **"지난번엔 이게
+원인이었다"** 입니다.
+
+시스템 프롬프트에 못을 하나 박아뒀습니다 &mdash; **"지난번과 같은 원인이라고
+단정하지 말고 도구로 확인한 뒤 쓰라"**. 확인할 수 없으면 그렇다고 쓰게 합니다.
+과거가 재료가 되는 건 좋지만, 그게 결론을 미리 정해버리면 진단이 아니라
+편견이 됩니다.
 
 ---
 

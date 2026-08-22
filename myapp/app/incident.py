@@ -187,6 +187,117 @@ def publish(incident_id):
         if cur.fetchone() is None:
             raise IncidentError("이미 제출된 보고서입니다.")
 
+    # 확정된 보고서를 나중에 진단 재료로 쓸 수 있게 지문과 이어둔다.
+    # 확정 시점에 하는 이유: 그때 원인과 조치가 채워져 있고, 그게 이
+    # 보고서를 재료로 만드는 내용이다.
+    #
+    # 실패해도 확정 자체는 되돌리지 않는다. 연결이 없으면 '재료로 안 쓰임'
+    # 일 뿐이고, 확정을 물리면 사람이 다시 눌러야 한다.
+    try:
+        link_fingerprints(incident_id)
+    except Exception as e:
+        current_app.logger.warning("장애 #%s 지문 연결에 실패했습니다: %s",
+                                   incident_id, e)
+
+
+def link_fingerprints(incident_id):
+    """이 장애 구간에 난 알람 종류(지문)를 장애와 이어둔다.
+
+    지금까지 장애는 시간 범위로만 이벤트를 조회했다. 그래서 이벤트를
+    정리하면 연결이 끊긴다. 여기서 따로 남겨두면 이벤트가 지워져도
+    "이 지문은 장애 #2 와 관련이 있었다" 가 남는다.
+    """
+    item = get(incident_id)
+    if item is None:
+        raise IncidentError("장애 기록을 찾지 못했습니다.")
+
+    data = assemble(item)
+    kinds = data.get("by_kind") or []
+    if not kinds:
+        return 0
+
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.incident_fingerprints')")
+        if cur.fetchone()[0] is None:
+            raise IncidentError("incident_fingerprints 테이블이 없습니다.")
+        cur.executemany(
+            """
+            INSERT INTO incident_fingerprints
+                (incident_id, fingerprint, event_count, sample)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (incident_id, fingerprint) DO UPDATE
+                SET event_count = EXCLUDED.event_count,
+                    sample = EXCLUDED.sample
+            """,
+            [(incident_id, k["fingerprint"], k["c"], (k["sample"] or "")[:200])
+             for k in kinds],
+        )
+    return len(kinds)
+
+
+def past_incidents(fingerprint, limit=3, exclude_id=None):
+    """이 알람 종류가 관련됐던 지난 장애. 원인이 적힌 것만 돌려준다.
+
+    원인이 비어 있으면 재료가 되지 않는다 - "지난번에도 이 알람이 있었다"
+    까지만 알려주는 건 진단에 도움이 안 된다.
+    """
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.incident_fingerprints')")
+        if cur.fetchone()[0] is None:
+            return []
+
+        params = [fingerprint]
+        exclude_sql = ""
+        if exclude_id:
+            exclude_sql = " AND i.id <> %s"
+            params.append(exclude_id)
+        params.append(limit)
+
+        cur.execute(
+            f"""
+            SELECT i.id, i.title, i.severity, i.started_at, i.ended_at,
+                   i.customer, i.cause, i.action, i.prevention,
+                   f.event_count
+              FROM incident_fingerprints f
+              JOIN incidents i ON i.id = f.incident_id
+             WHERE f.fingerprint = %s
+               AND i.status = 'published'
+               AND btrim(i.cause) <> ''{exclude_sql}
+             ORDER BY i.started_at DESC
+             LIMIT %s
+            """,
+            params,
+        )
+        return _rows(cur)
+
+
+def past_for_many(fingerprints, limit_each=1):
+    """여러 지문의 지난 장애를 한 번에. {지문: [장애...]}
+
+    목록 화면에서 이벤트마다 past_incidents 를 부르면 질의가 그만큼 나간다.
+    """
+    if not fingerprints:
+        return {}
+
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.incident_fingerprints')")
+        if cur.fetchone()[0] is None:
+            return {}
+        cur.execute(
+            """
+            SELECT DISTINCT ON (f.fingerprint)
+                   f.fingerprint, i.id, i.title, i.cause, i.started_at, i.customer
+              FROM incident_fingerprints f
+              JOIN incidents i ON i.id = f.incident_id
+             WHERE f.fingerprint = ANY(%s)
+               AND i.status = 'published'
+               AND btrim(i.cause) <> ''
+             ORDER BY f.fingerprint, i.started_at DESC
+            """,
+            (list(set(fingerprints)),),
+        )
+        return {r["fingerprint"]: r for r in _rows(cur)}
+
 
 # ----------------------------------------------------------------------
 # 타임라인 조립

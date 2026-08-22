@@ -20,6 +20,7 @@ from app import audit, event_store
 from app.accounts import list_accounts, by_customer, get_account, AccountError
 from app.agent_core import diagnose as run_diagnose, AgentNotConfigured
 from app.lambda_client import invoke_normalizer, LambdaInvokeError
+from app.incident import past_for_many, past_incidents, IncidentError
 from app.runbook import find_many, find as find_runbook, RunbookError
 from app.stats import fingerprint_history, StatsUnavailable
 
@@ -61,17 +62,28 @@ def index():
     events = event_store.recent(20)
 
     # 이벤트마다 find() 를 부르면 20건에 질의가 20번 나간다. 한 번에 가져온다.
+    fingerprints = [e["record"].get("fingerprint", "") for e in events]
+
     runbooks = {}
     try:
-        runbooks = find_many([e["record"].get("fingerprint", "") for e in events])
+        runbooks = find_many(fingerprints)
     except RunbookError:
         # 런북은 없어도 알람 화면은 떠야 한다. 조용히 건너뛴다.
+        pass
+
+    # 이 알람 종류가 관련됐던 지난 장애. 확정된 사후 보고서가 쌓일수록
+    # 이 자리가 채워진다.
+    past = {}
+    try:
+        past = past_for_many(fingerprints)
+    except IncidentError:
         pass
 
     return render_template(
         "alarm.html",
         events=events,
         runbooks=runbooks,
+        past=past,
         mode=current_app.config["LAMBDA_MODE"],
         function_name=current_app.config["LAMBDA_FUNCTION_NAME"],
         invocation_type=current_app.config["LAMBDA_INVOCATION_TYPE"],
@@ -228,8 +240,16 @@ def diagnose():
     except RunbookError:
         book = None
 
+    # 같은 알람이 관련됐던 지난 장애. 원인이 적힌 것만 온다.
+    # 런북이 "이럴 땐 이렇게 하세요" 라면 이건 "지난번엔 이게 원인이었다" 다.
     try:
-        text, commands = run_diagnose(event, account, region, history, book)
+        history_incidents = past_incidents(event["fingerprint"], limit=3)
+    except IncidentError:
+        history_incidents = []
+
+    try:
+        text, commands = run_diagnose(event, account, region, history, book,
+                                      history_incidents)
     except AgentNotConfigured as e:
         flash(f"진단을 실행할 수 없습니다: {e}", "error")
         return redirect(url_for("alarm.index"))

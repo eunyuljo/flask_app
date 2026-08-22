@@ -441,3 +441,74 @@ CREATE TABLE IF NOT EXISTS sla_notices (
     notice_count    BIGINT      NOT NULL DEFAULT 1,
     PRIMARY KEY (account_id, fingerprint)
 );
+
+-- ======================================================================
+-- 에스컬레이션
+-- ----------------------------------------------------------------------
+-- SLA 목표를 넘겼는데 아무도 안 보면 사람을 부른다.
+-- 지금까지는 위반을 세어놓고 그 다음에 아무 일도 일어나지 않았다.
+--
+-- 주의: 날짜 기반 당번표(이번 주는 누가 1차)는 넣지 않았다. 달력과
+-- 교대 규칙이 따라오는데 그건 이 앱의 성격을 넘는다. 여기 level 은
+-- '당번 순번' 이 아니라 '단계' 다 - 1차 대응자, 2차, 관리자.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS oncall_members (
+    id          BIGSERIAL   PRIMARY KEY,
+    name        TEXT        NOT NULL,
+
+    -- 1 = 1차 대응자, 2 = 2차, 3 = 관리자 ...
+    -- 같은 단계에 여러 명을 두면 그 단계에서 모두에게 알린다.
+    level       INTEGER     NOT NULL CHECK (level >= 1),
+
+    -- Slack 사용자 ID(U01ABCDEF). @이름 이 아니라 ID 여야 멘션이 걸린다.
+    -- 비워두면 이름만 적힌다.
+    slack_id    TEXT        NOT NULL DEFAULT '',
+
+    -- 특정 고객사 전담이면 채운다. 비우면 모든 고객사.
+    customer    TEXT        NOT NULL DEFAULT '',
+
+    enabled     BOOLEAN     NOT NULL DEFAULT true,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_oncall_level ON oncall_members (level, customer);
+
+-- 어디까지 올렸는지. 같은 단계를 두 번 부르지 않기 위한 기록이다.
+-- sla_notices / alarm_state 와 같은 발상 - 규칙과 실행 상태를 나눈다.
+CREATE TABLE IF NOT EXISTS escalations (
+    account_id  TEXT        NOT NULL,
+    fingerprint TEXT        NOT NULL,
+    level       INTEGER     NOT NULL,
+    notified_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- 이 단계에서 만든 Jira 이슈. 티켓 시스템은 Jira 가 하고 여기는
+    -- 넘긴 흔적만 남긴다.
+    jira_key    TEXT        NOT NULL DEFAULT '',
+
+    PRIMARY KEY (account_id, fingerprint, level)
+);
+
+-- ======================================================================
+-- 장애 보고서를 진단 재료로
+-- ----------------------------------------------------------------------
+-- 사후 보고서가 쌓이면 "지난번 이 알람은 무엇이 원인이었나" 를 답할 수 있다.
+-- 그러려면 장애와 알람 종류(지문)를 이어야 한다.
+--
+-- 지금까지 장애는 시간 범위로만 이벤트를 조회했다. 그래서 이벤트를 정리하면
+-- 연결이 끊긴다. 이 표는 그 연결을 따로 남겨서, 이벤트가 지워져도
+-- "이 지문은 장애 #2 와 관련이 있었다" 가 남게 한다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS incident_fingerprints (
+    incident_id BIGINT      NOT NULL REFERENCES incidents ON DELETE CASCADE,
+    fingerprint TEXT        NOT NULL,
+
+    -- 그 장애 구간에 이 지문이 몇 건 났는가. 많이 난 것이 더 관련이 깊다.
+    event_count INTEGER     NOT NULL DEFAULT 0,
+    sample      TEXT        NOT NULL DEFAULT '',
+
+    PRIMARY KEY (incident_id, fingerprint)
+);
+
+CREATE INDEX IF NOT EXISTS idx_incident_fp ON incident_fingerprints (fingerprint);

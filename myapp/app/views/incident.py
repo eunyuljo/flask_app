@@ -139,9 +139,21 @@ def detail(incident_id):
         flash(error, "error")
         return redirect(url_for("incident.index"))
 
+    # 이 장애의 알람 종류가 관련됐던 다른 장애. 반복되는 문제인지 보인다.
+    related = []
+    if data:
+        seen = set()
+        for kind in data.get("by_kind", [])[:5]:
+            for other in incident.past_incidents(
+                kind["fingerprint"], limit=2, exclude_id=item["id"]
+            ):
+                if other["id"] not in seen:
+                    seen.add(other["id"])
+                    related.append(other)
+
     return render_template(
         "incident_detail.html",
-        item=item, data=data, error=error,
+        item=item, data=data, error=error, related=related,
         labels=STATUS_LABEL, field_labels=FIELD_LABEL,
         customer_labels=CUSTOMER_STATUS_LABEL,
         customer_field_labels=CUSTOMER_FIELD_LABEL,

@@ -480,7 +480,9 @@ def register_cli(app):
     @click.option("--slack", is_flag=True, help="Slack 으로 보낸다")
     @click.option("--all", "send_all", is_flag=True,
                   help="이미 알린 것도 다시 보낸다(억제 무시)")
-    def sla_check(hours, slack, send_all):
+    @click.option("--escalate", is_flag=True,
+                  help="단계를 올려 담당자를 부르고, 일정 단계부터 Jira 로 넘긴다")
+    def sla_check(hours, slack, send_all, escalate):
         """목표를 넘겼는데 대응 기록이 없는 알람을 찾는다.
 
         \b
@@ -514,26 +516,162 @@ def register_cli(app):
                 f"— {i['count']}건, 목표 {i['minutes']}분 / 경과 {int(i['elapsed_minutes'])}분"
             )
 
-        if not slack:
-            return
-        if not targets_:
-            click.echo("\n새로 알릴 것이 없습니다(억제 창 안).")
-            return
+        # 요약 알림과 에스컬레이션은 서로 독립이다. 억제 기록도 따로 둔다
+        #   sla_notices  : "위반이 있다" 는 요약을 얼마나 자주 보낼지
+        #   escalations  : 어느 단계까지 사람을 불렀는지
+        # 이걸 묶어두면, 요약이 억제 창에 걸린 사이에 위반이 3단계까지
+        # 커져도 아무도 불리지 않는다.
+        if slack and targets_:
+            from app import slack as slack_mod
+            from app.slack import SlackError, SlackNotConfigured
 
-        from app import slack as slack_mod
-        from app.slack import SlackError, SlackNotConfigured
+            try:
+                slack_mod.post(sla.to_slack(targets_), purpose="sla")
+                sla.mark_notified(targets_)
+                click.echo(f"\nSlack 으로 보냈습니다 ({len(targets_)}종)")
+            except SlackNotConfigured as e:
+                click.echo(f"\n요약 알림 건너뜀: {e}")
+            except SlackError as e:
+                click.echo(f"\n요약 알림 실패: {e}")
+        elif slack:
+            click.echo("\n새로 알릴 것이 없습니다(억제 창 안).")
+
+        if escalate:
+            _run_escalation(found)
+
+    def _run_escalation(found):
+        """위반 목록으로 단계를 올린다. sla-check --escalate 에서만 부른다."""
+        from app import escalation
+        from app.escalation import EscalationError
+
+        steps = current_app.config["ESCALATION_STEPS"]
+        jira_from = current_app.config["JIRA_ESCALATION_LEVEL"]
 
         try:
-            slack_mod.post(sla.to_slack(targets_), purpose="sla")
-        except SlackNotConfigured as e:
-            raise click.ClickException(
-                f"{e}\n  .env 에 SLACK_SLA_WEBHOOK 또는 SLACK_WEBHOOK_URL 을 넣으세요."
-            )
-        except SlackError as e:
+            todo = escalation.pending(found, steps)
+        except EscalationError as e:
             raise click.ClickException(str(e))
 
-        sla.mark_notified(targets_)
-        click.echo(f"\nSlack 으로 보냈습니다 ({len(targets_)}종)")
+        if not todo:
+            click.echo("\n올릴 단계가 없습니다.")
+            return
+
+        click.echo(f"\n에스컬레이션 대상 {len(todo)}종")
+
+        from app import slack as slack_mod
+        from app import jira as jira_mod
+        from app.slack import SlackError, SlackNotConfigured
+        from app.jira import JiraError, JiraNotConfigured
+
+        for item in todo:
+            people_all = escalation.members(item["customer"])
+            for level in item["levels"]:
+                people = escalation._for_level(people_all, level)
+                names = ", ".join(m["name"] for m in people) or "(담당자 미등록)"
+                click.echo(f"  {level}단계 -> {names} :: {item['sample'][:44]}")
+
+                # Slack 으로 부른다. 실패해도 다음 단계와 Jira 는 계속한다 -
+                # 한 채널이 막혔다고 에스컬레이션 전체가 멎으면 안 된다.
+                try:
+                    slack_mod.post(
+                        escalation.to_slack(item, level, people), purpose="sla"
+                    )
+                except SlackNotConfigured:
+                    click.echo("      (Slack 미설정 - 건너뜀)")
+                except SlackError as e:
+                    click.echo(f"      (Slack 실패: {e})")
+
+                jira_key = ""
+                if level >= jira_from:
+                    summary, description = escalation.to_jira(item, level)
+                    try:
+                        jira_key = jira_mod.create_issue(
+                            summary, description,
+                            labels=["sla", f"level-{level}"],
+                        )
+                        click.echo(f"      Jira {jira_key} 생성")
+                    except JiraNotConfigured:
+                        click.echo("      (Jira 미설정 - 건너뜀)")
+                    except JiraError as e:
+                        click.echo(f"      (Jira 실패: {e})")
+
+                escalation.record(
+                    item["account_id"], item["fingerprint"], level, jira_key
+                )
+
+    @app.cli.command("add-oncall")
+    @click.option("--name", required=True, help="담당자 이름")
+    @click.option("--level", default=1, help="1=1차 대응자, 2=2차, 3=관리자")
+    @click.option("--slack-id", default="", help="Slack 사용자 ID (U01ABCDEF)")
+    @click.option("--customer", default="", help="전담 고객사 (비우면 전체)")
+    def add_oncall(name, level, slack_id, customer):
+        """에스컬레이션 담당자를 등록한다.
+
+        slack-id 는 @이름 이 아니라 사용자 ID 여야 멘션이 걸린다.
+        Slack 프로필 > 더보기 > 멤버 ID 복사 로 얻는다.
+        """
+        from app import escalation
+        from app.escalation import EscalationError
+
+        try:
+            member_id = escalation.add_member(name, level, slack_id, customer)
+        except EscalationError as e:
+            raise click.ClickException(str(e))
+        scope = customer or "전체"
+        click.echo(f"담당자 #{member_id} 등록: {name} ({level}단계, {scope})")
+
+    @app.cli.command("list-oncall")
+    def list_oncall():
+        """에스컬레이션 담당자 목록."""
+        from app import escalation
+        from app.escalation import EscalationError
+
+        try:
+            rows = escalation.members()
+        except EscalationError as e:
+            raise click.ClickException(str(e))
+
+        if not rows:
+            click.echo("등록된 담당자가 없습니다. flask --app run add-oncall 로 등록하세요.")
+            return
+
+        steps = current_app.config["ESCALATION_STEPS"]
+        click.echo(f"단계별 호출 시점(목표 초과 후): {steps} 분")
+        click.echo(f"{'ID':>4}  {'단계':>4}  {'이름':<12} {'Slack ID':<14} 범위")
+        for r in rows:
+            mark = "" if r["enabled"] else "  (비활성)"
+            click.echo(f"{r['id']:>4}  {r['level']:>4}  {r['name']:<12} "
+                       f"{r['slack_id'] or '-':<14} {r['customer'] or '전체'}{mark}")
+
+    @app.cli.command("link-incidents")
+    def link_incidents():
+        """확정된 사후 보고서를 알람 종류(지문)와 잇는다.
+
+        연결은 보고서를 확정할 때 자동으로 만들어진다. 이 명령은 그 전에
+        확정된 보고서를 따라잡기 위한 것이다.
+        """
+        from app import incident
+        from app.incident import IncidentError
+
+        try:
+            items = [i for i in incident.recent(200) if i["status"] == "published"]
+        except IncidentError as e:
+            raise click.ClickException(str(e))
+
+        if not items:
+            click.echo("확정된 사후 보고서가 없습니다.")
+            return
+
+        total = 0
+        for item in items:
+            try:
+                n = incident.link_fingerprints(item["id"])
+            except IncidentError as e:
+                click.echo(f"  #{item['id']} 실패: {e}")
+                continue
+            total += n
+            click.echo(f"  #{item['id']} {item['title'][:40]} -> 지문 {n}종")
+        click.echo(f"\n보고서 {len(items)}건, 지문 연결 {total}개")
 
     @app.cli.command("add-account")
     @click.option("--customer", required=True, help="고객사 이름")

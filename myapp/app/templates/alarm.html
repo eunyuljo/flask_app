@@ -102,6 +102,18 @@
         {% endif %}
       {% endif %}
 
+      {# 같은 알람이 관련됐던 지난 장애. 확정된 사후 보고서가 쌓일수록 채워진다. #}
+      {% set pi = past.get(item.record.fingerprint) %}
+      {% if pi and item.record.event_type not in ('diagnose', 'console') %}
+        <details class="rb-fold">
+          <summary>
+            지난번 이 알람: <a href="{{ url_for('incident.detail', incident_id=pi.id) }}">{{ pi.title }}</a>
+            <span class="muted">({{ pi.started_at.strftime('%Y-%m-%d') }})</span>
+          </summary>
+          <div class="rb-body">{{ pi.cause }}</div>
+        </details>
+      {% endif %}
+
       {# 진단은 실제 알람에만 붙인다. 진단 기록 자체를 또 진단할 이유는 없다. #}
       {% if grouped and item.record.event_type != 'diagnose' and item.record.event_type != 'console' %}
         <form action="{{ url_for('alarm.diagnose') }}" method="post" class="diag-form">

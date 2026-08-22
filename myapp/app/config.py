@@ -140,6 +140,33 @@ class Config:
         os.environ.get("SLA_NOTICE_WINDOW_MINUTES", "60")
     )
 
+    # ------------------------------------------------------------------
+    # Jira (에스컬레이션 티켓)
+    # ------------------------------------------------------------------
+    # 이 앱은 티켓 시스템을 만들지 않는다. 에스컬레이션이 일정 단계에
+    # 이르면 Jira 로 넘기고, 그 뒤의 상태 관리는 Jira 가 한다.
+    # 비워두면 넘기기를 건너뛴다.
+    JIRA_BASE_URL = os.environ.get("JIRA_BASE_URL", "")
+    JIRA_EMAIL = os.environ.get("JIRA_EMAIL", "")
+    JIRA_API_TOKEN = os.environ.get("JIRA_API_TOKEN", "")
+    JIRA_PROJECT_KEY = os.environ.get("JIRA_PROJECT_KEY", "")
+    JIRA_ISSUE_TYPE = os.environ.get("JIRA_ISSUE_TYPE", "Task")
+
+    # 몇 단계부터 Jira 로 넘길지. 1차 대응자를 부르는 단계에서 매번
+    # 티켓을 만들면 Jira 가 노이즈로 찬다.
+    JIRA_ESCALATION_LEVEL = int(os.environ.get("JIRA_ESCALATION_LEVEL", "2"))
+
+    # ------------------------------------------------------------------
+    # 에스컬레이션 단계
+    # ------------------------------------------------------------------
+    # SLA 목표를 넘기고 나서 몇 분이 더 지나면 각 단계를 부를지.
+    # "0,30,120" = 목표 초과 즉시 1차, +30분 뒤 2차, +120분 뒤 3차.
+    ESCALATION_STEPS = [
+        int(x.strip())
+        for x in os.environ.get("ESCALATION_STEPS", "0,30,120").split(",")
+        if x.strip()
+    ]
+
     # set 으로 만들어두면 "username in ADMIN_USERS" 검사가 빠르고 읽기도 쉽다.
     ADMIN_USERS = {
         u.strip() for u in os.environ.get("ADMIN_USERS", "admin").split(",") if u.strip()

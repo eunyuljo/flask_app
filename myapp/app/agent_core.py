@@ -329,10 +329,15 @@ DIAGNOSE_SYSTEM_PROMPT = """당신은 AWS 운영 담당자를 돕는 진단 도�
 
 등록된 대응 절차가 주어지면 그 절차를 우선하세요. 일반적인 AWS 지식보다
 이 조직이 실제로 하는 방식이 먼저입니다. 절차대로 확인한 결과를 쓰고,
-절차에 없는 것을 제안할 때는 절차 밖의 제안임을 밝히세요."""
+절차에 없는 것을 제안할 때는 절차 밖의 제안임을 밝히세요.
+
+같은 알람의 지난 장애가 주어지면 그 원인을 먼저 확인하세요. 다만
+'지난번과 같은 원인' 이라고 단정하지 말고, 실제로 그런지 도구로 확인한 뒤
+쓰세요. 확인할 수 없으면 '지난번에는 X 였는데 이번에는 확인하지 못했다' 고
+쓰세요."""
 
 
-def _format_event(event, history, runbook=None):
+def _format_event(event, history, runbook=None, past=None):
     """모델에게 넘길 알람 설명을 만든다."""
     lines = [
         "다음 알람을 진단해 주세요.",
@@ -373,10 +378,24 @@ def _format_event(event, history, runbook=None):
         lines.append(f"등록된 대응 절차 ({scope}) — {runbook['title']}")
         lines.append(runbook["body"])
 
+    # 같은 알람이 관련됐던 지난 장애. 런북이 '이럴 땐 이렇게 하세요' 라면
+    # 이건 '지난번엔 이게 원인이었다' 다. 확정된 사후 보고서만 온다.
+    if past:
+        lines.append("")
+        lines.append(f"같은 알람이 관련됐던 지난 장애 {len(past)}건")
+        for p in past:
+            when = f"{p['started_at']:%Y-%m-%d}"
+            lines.append(f"  [{when}] {p['title']} (심각도 {p['severity']})")
+            lines.append(f"    원인: {p['cause']}")
+            if p.get("action"):
+                lines.append(f"    조치: {p['action']}")
+            if p.get("prevention"):
+                lines.append(f"    재발 방지: {p['prevention']}")
+
     return "\n".join(lines)
 
 
-def diagnose(event, account, region, history=None, runbook=None):
+def diagnose(event, account, region, history=None, runbook=None, past=None):
     """알람 하나를 진단한다. (진단문, 실행한 명령 목록) 을 돌려준다.
 
     event   : 정규화된 이벤트 레코드
@@ -384,6 +403,7 @@ def diagnose(event, account, region, history=None, runbook=None):
     region  : 조회할 리전
     history : app.stats.fingerprint_history 결과. 없으면 None.
     runbook : app.runbook.find() 결과. 있으면 모델이 이 절차를 따른다.
+    past    : app.incident.past_incidents() 결과. 같은 알람의 지난 장애.
     """
     from flask import g
 
@@ -405,7 +425,7 @@ def diagnose(event, account, region, history=None, runbook=None):
         max_tokens=cfg["AGENT_MAX_TOKENS"],
         system=DIAGNOSE_SYSTEM_PROMPT,
         tools=[aws_read],
-        messages=[{"role": "user", "content": _format_event(event, history, runbook)}],
+        messages=[{"role": "user", "content": _format_event(event, history, runbook, past)}],
         max_iterations=DIAG_MAX_ITERATIONS,
         thinking={"type": "adaptive"},
         output_config={"effort": cfg["AGENT_EFFORT"]},

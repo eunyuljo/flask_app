@@ -60,6 +60,22 @@
     {% endfor %}
   {% endif %}
 
+  {# 같은 알람 종류가 관련됐던 다른 장애. 반복되는 문제인지 여기서 보인다. #}
+  {% if related %}
+    <h2>비슷한 지난 장애 <span class="muted">({{ related|length }}건)</span></h2>
+    <p class="muted">이 장애에서 난 알람 종류가 관련됐던 다른 보고서입니다.</p>
+    {% for r in related %}
+      <div class="event sev-{{ r.severity }}">
+        <div class="event-head">
+          <span class="badge">{{ r.started_at.strftime('%Y-%m-%d') }}</span>
+          <strong><a href="{{ url_for('incident.detail', incident_id=r.id) }}">{{ r.title }}</a></strong>
+          <span class="muted">{{ r.customer }}</span>
+        </div>
+        <div class="muted">원인: {{ r.cause }}</div>
+      </div>
+    {% endfor %}
+  {% endif %}
+
   {# ---- 고객 제출본 ---------------------------------------------------- #}
   {# 내부 RCA 와 기록은 공유하고 출력만 나눈다.
      여기 들어가는 것에는 계정 번호·리소스 ID·티켓 번호·작업자 이름이
