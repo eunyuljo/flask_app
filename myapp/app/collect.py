@@ -6,6 +6,17 @@
 import random
 
 
+# 이 수집기가 훑는 리소스 종류.
+#
+# 스냅샷에 함께 적어둔다. 그래야 컴플라이언스 점검이 "RDS 를 봤는데 깨끗함"
+# 과 "RDS 를 아예 안 봤음" 을 구분할 수 있다. 둘 다 화면에서는 '0' 으로
+# 보이는데, 뜻은 정반대다.
+#
+# 여기에 종류를 추가할 때는 aws_resources() 와 demo 쪽을 함께 고쳐야 한다.
+# 목록에만 적고 실제로 안 모으면, 없는 것을 '봤다' 고 주장하는 셈이 된다.
+COLLECTED_TYPES = ("ec2:instance", "ec2:security_group", "s3:bucket")
+
+
 class CollectError(Exception):
     """수집에 실패했을 때. CLI 는 ClickException 으로, 웹은 화면 안내로 바꾼다."""
 
@@ -22,11 +33,15 @@ def _baseline(account_id):
         {"resource_id": f"i-0a1b2c3d", "resource_type": "ec2:instance",
          "attributes": {"instance_type": "t3.medium", "state": "running",
                         "security_groups": ["sg-web"],
-                        "tags": {"Name": "web-01", "Env": "prod"}}},
+                        "tags": {"Name": "web-01", "Env": "prod"},
+                        "public_ip": "203.0.113.10", "imds": "required",
+                        "imds_endpoint": "enabled", "iam_profile": "web-role"}},
         {"resource_id": f"i-0e4f5a6b", "resource_type": "ec2:instance",
          "attributes": {"instance_type": "t3.small", "state": "running",
                         "security_groups": ["sg-web"],
-                        "tags": {"Name": "web-02", "Env": "prod"}}},
+                        "tags": {"Name": "web-02", "Env": "prod"},
+                        "public_ip": None, "imds": "optional",
+                        "imds_endpoint": "enabled", "iam_profile": "web-role"}},
         {"resource_id": "sg-web", "resource_type": "ec2:security_group",
          "attributes": {"name": "web-sg", "vpc": "vpc-0aaa",
                         "ingress": ["443/tcp:0.0.0.0/0", "22/tcp:10.0.0.0/8"]}},
@@ -54,12 +69,17 @@ def _mutate(previous, drift):
         attrs = dict(item["attributes"])
         kind = item["resource_type"]
         if kind == "ec2:instance":
-            if random.random() < 0.5:
+            roll2 = random.random()
+            if roll2 < 0.4:
                 attrs["instance_type"] = random.choice(
                     ["t3.small", "t3.medium", "t3.large", "m5.large"]
                 )
-            else:
+            elif roll2 < 0.7:
                 attrs["state"] = random.choice(["running", "stopped"])
+            else:
+                # 고쳤다가 다시 열리는 상황을 만든다. 시간축의 '재발' 이
+                # 실제로 잡히는지 데모 자료로도 볼 수 있어야 한다.
+                attrs["imds"] = random.choice(["required", "optional"])
         elif kind == "ec2:security_group":
             ingress = list(attrs.get("ingress", []))
             if random.random() < 0.5:
@@ -78,7 +98,9 @@ def _mutate(previous, drift):
             "resource_type": "ec2:instance",
             "attributes": {"instance_type": "t3.micro", "state": "running",
                            "security_groups": ["sg-web"],
-                           "tags": {"Name": "batch-tmp", "Env": "dev"}},
+                           "tags": {"Name": "batch-tmp", "Env": "dev"},
+                           "public_ip": "203.0.113.77", "imds": "optional",
+                           "imds_endpoint": "enabled", "iam_profile": ""},
         })
     return items
 
@@ -164,6 +186,18 @@ def aws_resources(region, env=None):
         for page in ec2.get_paginator("describe_instances").paginate():
             for reservation in page["Reservations"]:
                 for inst in reservation["Instances"]:
+                    # 아래 세 값은 describe_instances 응답에 이미 들어 있다.
+                    # API 를 한 번도 더 부르지 않고 점검 항목이 늘어난다.
+                    #
+                    # imds: IMDSv1 이 열려 있으면 애플리케이션의 SSRF 한 방으로
+                    #   인스턴스 역할의 임시 자격증명이 통째로 나간다.
+                    # public_ip: 보안그룹이 열려 있어도 퍼블릭 IP 가 없으면
+                    #   인터넷에서 직접 닿지는 않는다. 이 값이 있어야
+                    #   '열려 있을 수 있다' 와 '지금 닿는다' 를 가른다.
+                    # iam_profile: 붙은 역할이 있으면 IMDSv1 의 피해 범위가
+                    #   그 역할의 권한 범위가 된다.
+                    meta = inst.get("MetadataOptions", {})
+                    profile = (inst.get("IamInstanceProfile") or {}).get("Arn", "")
                     items.append({
                         "resource_id": inst["InstanceId"],
                         "resource_type": "ec2:instance",
@@ -173,6 +207,12 @@ def aws_resources(region, env=None):
                             "security_groups": [g["GroupId"] for g in inst.get("SecurityGroups", [])],
                             "tags": {t["Key"]: t["Value"] for t in inst.get("Tags", [])},
                             "subnet": inst.get("SubnetId"),
+                            # 키가 없으면 '모름', None 이면 '없음' 이다.
+                            # 이 앱은 그 둘을 구분해서 다룬다.
+                            "public_ip": inst.get("PublicIpAddress"),
+                            "imds": meta.get("HttpTokens"),
+                            "imds_endpoint": meta.get("HttpEndpoint"),
+                            "iam_profile": profile.split("/")[-1] if profile else "",
                         },
                     })
 

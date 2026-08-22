@@ -835,7 +835,7 @@ def register_cli(app):
                 if not v["excused"]
                 and compliance.SEVERITY_ORDER[v["severity"]] <= cutoff
             ]
-            summary = compliance.summarize(violations)
+            summary = compliance.summarize(violations, snap)
             total += len(live)
 
             click.echo(
@@ -845,6 +845,15 @@ def register_cli(app):
             )
             if summary["excused"]:
                 click.echo(f"  예외로 빠진 항목 {summary['excused']}건")
+            skipped = compliance.coverage(snap)["skipped"]
+            if skipped:
+                # "위반 없음" 바로 위에 적어야 한다. 아래에 적으면
+                # 안전하다고 읽고 나서 뒤늦게 보게 된다.
+                click.echo(
+                    f"  점검하지 못한 항목 {len(skipped)}건 "
+                    f"({', '.join(c['title'] for c in skipped)}) "
+                    "- 해당 리소스를 수집하지 않았습니다"
+                )
             if not live:
                 click.echo("  위반 없음")
                 continue

@@ -61,22 +61,34 @@ def psycopg_uri():
 # ----------------------------------------------------------------------
 # 저장
 # ----------------------------------------------------------------------
-def save_snapshot(uri, items, account_id, region, source="demo", note=None):
+def save_snapshot(uri, items, account_id, region, source="demo", note=None,
+                  collected_types=None):
     """수집 결과를 스냅샷 하나로 저장한다.
 
     items: [{"resource_id":..., "resource_type":..., "attributes": {...}}, ...]
+    collected_types: 이번에 훑은 리소스 종류. 안 주면 app/collect.py 의
+        기본 목록을 쓴다.
+
+        이걸 남겨두는 이유는 "봤는데 없음" 과 "안 봤음" 을 구분하기
+        위해서다. 둘 다 리소스가 0건이라 저장된 결과만 봐서는 똑같다.
 
     complete 플래그를 마지막에 켠다. 도중에 실패하면 false 로 남아
     비교 대상에서 자동으로 빠진다.
     """
     import psycopg
 
+    if collected_types is None:
+        from app.collect import COLLECTED_TYPES
+
+        collected_types = COLLECTED_TYPES
+
     with psycopg.connect(uri) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO resource_snapshots (account_id, region, source, note) "
-                "VALUES (%s, %s, %s, %s) RETURNING snapshot_id",
-                (account_id, region, source, note),
+                "INSERT INTO resource_snapshots "
+                "  (account_id, region, source, note, collected_types) "
+                "VALUES (%s, %s, %s, %s, %s) RETURNING snapshot_id",
+                (account_id, region, source, note, list(collected_types)),
             )
             snapshot_id = cur.fetchone()[0]
 

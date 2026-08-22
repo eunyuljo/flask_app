@@ -71,8 +71,12 @@ ITEMS = [
      "category": "alarm", "hint": "시끄러운 알람 순위와 억제 규칙"},
 
     # ---- 인프라 ----
+    {"endpoint": "resources.inventory_page", "label": "리소스 목록", "icon": "▣",
+     "category": "infra", "match": ("resources.inventory",),
+     "hint": "지금 무엇이 떠 있는가"},
     {"endpoint": "resources.index", "label": "리소스 변경", "icon": "▩",
-     "category": "infra", "hint": "두 시점의 인프라 차이"},
+     "category": "infra", "match": ("resources.",),
+     "hint": "두 시점의 인프라 차이"},
     {"endpoint": "compliance.index", "label": "컴플라이언스", "icon": "✓",
      "category": "infra", "hint": "스냅샷 기준 모범사례 점검"},
 

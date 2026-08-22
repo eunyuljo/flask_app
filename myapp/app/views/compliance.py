@@ -52,8 +52,10 @@ def _report(target, names=None):
         "snapshot_id": target["snapshot_id"],
         "collected_at": target["collected_at"],
         "resources": len(snap),
+        "collected_types": sorted(snap.collected),
+        "coverage": compliance.coverage(snap),
         "violations": violations,
-        "summary": compliance.summarize(violations),
+        "summary": compliance.summarize(violations, snap),
         "points": points,
         "repeats": compliance.recurring(points),
         "since": compliance.first_seen(points),
@@ -90,6 +92,7 @@ def index():
 
     violations = report["violations"] if report else []
     summary = report["summary"] if report else None
+    coverage = report["coverage"] if report else None
     points = report["points"] if report else []
     repeats = report["repeats"] if report else []
     since = report["since"] if report else {}
@@ -113,6 +116,8 @@ def index():
         error=error,
         grouped=grouped,
         summary=summary,
+        coverage=coverage,
+        collected_types=report["collected_types"] if report else [],
         resources=report["resources"] if report else 0,
         points=list(reversed(points)),   # 화면에는 최신순
         repeats=repeats,

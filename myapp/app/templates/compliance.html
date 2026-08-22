@@ -56,12 +56,35 @@
       <div class="kpi"><span class="n">{{ summary.by_severity.high }}</span><span class="k">high</span></div>
       <div class="kpi"><span class="n">{{ summary.excused }}</span><span class="k">예외 처리됨</span></div>
       <div class="kpi"><span class="n">{{ resources }}</span><span class="k">점검한 리소스</span></div>
+      {% if summary.skipped %}
+        <div class="kpi">
+          <span class="n">{{ summary.skipped }}</span><span class="k">점검하지 못함</span>
+        </div>
+      {% endif %}
     </div>
     <p class="muted">
       {{ chosen.account_id }} / {{ chosen.region }} &mdash;
       스냅샷 #{{ chosen.snapshot_id }}, {{ chosen.collected_at.strftime('%Y-%m-%d %H:%M') }} UTC 수집
       {% if summary.total == 0 %}&mdash; <strong>위반 없음</strong>{% endif %}
     </p>
+
+    {# "위반 0건" 이 '안전' 으로 읽히면 안 되는 경우를 여기서 막는다.
+       수집하지 않은 리소스를 요구하는 점검은 통과한 게 아니라 안 돈 것이다. #}
+    {% if coverage and coverage.skipped %}
+      <div class="flash warn-flash">
+        <strong>점검하지 못한 항목이 {{ coverage.skipped|length }}개 있습니다.</strong>
+        이 스냅샷이 해당 리소스를 수집하지 않았습니다 &mdash;
+        <strong>위반이 없는 것이 아니라 보지 않은 것</strong>입니다.
+        <ul>
+          {% for c in coverage.skipped %}
+            <li>{{ c.title }} <span class="muted">({{ c.missing | join(', ') }} 미수집)</span></li>
+          {% endfor %}
+        </ul>
+        <div class="muted">
+          이번에 수집한 종류: {{ collected_types | join(', ') or '없음' }}
+        </div>
+      </div>
+    {% endif %}
   {% endif %}
 
   {# 재발을 위반 목록보다 위에 둔다. 지금 상태만 보면 처음 열린 것과
@@ -172,13 +195,19 @@
     표에 넣으면 문자열로 저장했다가 다시 해석하는 일이 생깁니다.
     표에 넣는 것은 규칙이 아니라 <a href="{{ url_for('compliance.exceptions') }}">예외</a>입니다.
   </p>
+  {% set skipped_ids = coverage.skipped | map(attribute='id') | list if coverage else [] %}
   <table class="rows">
-    <tr><th>심각도</th><th>항목</th><th>근거</th></tr>
+    <tr><th>심각도</th><th>항목</th><th>근거</th><th>이번 점검</th></tr>
     {% for c in checks %}
       <tr>
         <td><span class="badge">{{ c.severity }}</span></td>
         <td>{{ c.title }}<div class="muted">{{ c.why }}</div></td>
         <td class="muted">{{ c.standard }}</td>
+        <td>
+          {%- if c.id in skipped_ids %}<strong>못 돌림</strong>
+          {%- elif coverage %}<span class="muted">돌림</span>
+          {%- else %}<span class="muted">—</span>{% endif %}
+        </td>
       </tr>
     {% endfor %}
   </table>

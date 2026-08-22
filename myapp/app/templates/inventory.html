@@ -1,0 +1,139 @@
+{# templates/inventory.html
+   resources 블루프린트의 inventory_page() 가 렌더링하는 리소스 목록.
+
+   /resources/ 는 "무엇이 바뀌었나"(두 시점의 차이),
+   여기는 "무엇이 있나"(지금 목록). 자료는 같고 각도가 다르다. #}
+
+{% extends "base.html" %}
+
+{% block title %}리소스 목록{% endblock %}
+{% block page_title %}리소스 목록{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    <a href="{{ url_for('resources.index') }}">리소스 변경</a> 은 두 시점의
+    <strong>차이</strong>를 보여줍니다. 여기는 <strong>지금 무엇이 떠 있는지</strong>입니다.
+    계정+리전마다 가장 최근 스냅샷 하나를 기준으로 합니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if scopes %}
+    <p class="muted">
+      대상:
+      {% if not account_id %}<strong>전체</strong>
+      {% else %}<a href="{{ url_for('resources.inventory_page') }}">전체</a>{% endif %}
+      {% for s in scopes %}
+        &middot;
+        {% if s.account_id == account_id and s.region == region %}
+          <strong>{{ s.account_id }} / {{ s.region }}</strong>
+        {% else %}
+          <a href="{{ url_for('resources.inventory_page', account=s.account_id, region=s.region) }}">{{ s.account_id }} / {{ s.region }}</a>
+        {% endif %}
+      {% endfor %}
+    </p>
+  {% endif %}
+
+  {% if facets and facets.types %}
+    <p class="muted">
+      종류:
+      {% if not resource_type %}<strong>전체</strong>
+      {% else %}<a href="{{ url_for('resources.inventory_page', account=account_id, region=region, q=q, missing_tag=missing_tag) }}">전체</a>{% endif %}
+      {% for t in facets.types %}
+        &middot;
+        {% if t.resource_type == resource_type %}
+          <strong>{{ t.resource_type }} ({{ t.n }})</strong>
+        {% else %}
+          <a href="{{ url_for('resources.inventory_page', account=account_id, region=region,
+                              type=t.resource_type, q=q, missing_tag=missing_tag) }}">{{ t.resource_type }} ({{ t.n }})</a>
+        {% endif %}
+      {% endfor %}
+    </p>
+  {% endif %}
+
+  {# 태그 없는 리소스 찾기. 비용 배분과 담당자 확인에서 가장 자주 나오는 질문이다. #}
+  {% if facets and facets.tag_keys %}
+    <p class="muted">
+      이 태그가 없는 것만:
+      {% if not missing_tag %}<strong>(끄기)</strong>
+      {% else %}<a href="{{ url_for('resources.inventory_page', account=account_id, region=region, type=resource_type, q=q) }}">(끄기)</a>{% endif %}
+      {% for key in facets.tag_keys %}
+        &middot;
+        {% if key == missing_tag %}<strong>{{ key }}</strong>
+        {% else %}
+          <a href="{{ url_for('resources.inventory_page', account=account_id, region=region,
+                              type=resource_type, q=q, missing_tag=key) }}">{{ key }}</a>
+        {% endif %}
+      {% endfor %}
+    </p>
+  {% endif %}
+
+  <form method="get" action="{{ url_for('resources.inventory_page') }}" class="form">
+    <input type="hidden" name="account" value="{{ account_id }}">
+    <input type="hidden" name="region" value="{{ region }}">
+    <input type="hidden" name="type" value="{{ resource_type }}">
+    <input type="hidden" name="missing_tag" value="{{ missing_tag }}">
+    <label>찾기 <span class="muted">(리소스 ID·태그·속성 전체)</span>
+      <input type="text" name="q" value="{{ q }}" placeholder="예) prod, sg-web, 203.0.113">
+    </label>
+    <button type="submit">찾기</button>
+  </form>
+
+  {% if result %}
+    <div class="filters">
+      <a class="chip" href="{{ url_for('resources.inventory_download', account=account_id,
+                                       region=region, type=resource_type, q=q,
+                                       missing_tag=missing_tag) }}">엑셀로 내려받기</a>
+    </div>
+
+    <p class="muted">
+      {{ result.total }}건
+      {% if result.truncated %}
+        &mdash; <strong>화면에는 {{ result['items']|length }}건만 보여줍니다.</strong>
+        전부 보려면 엑셀로 받거나 필터를 좁히세요.
+      {% endif %}
+    </p>
+
+    {% if result['items'] %}
+      <table class="rows">
+        <tr>
+          <th>계정 / 리전</th><th>종류</th><th>리소스</th><th>태그</th><th>속성</th>
+        </tr>
+        {% for r in result['items'] %}
+          <tr>
+            <td class="muted">{{ r.account_id }}<br>{{ r.region }}</td>
+            <td>{{ r.resource_type }}</td>
+            <td><code>{{ r.resource_id }}</code></td>
+            <td>
+              {% for k, v in (r.attributes.get('tags') or {}).items() %}
+                <div class="muted">{{ k }}={{ v }}</div>
+              {% else %}
+                <span class="muted">{% if 'tags' in r.attributes %}없음{% else %}—{% endif %}</span>
+              {% endfor %}
+            </td>
+            <td>
+              {# 태그는 앞 칸에 있으니 여기서는 뺀다. #}
+              {% for k, v in r.attributes.items() | sort if k != 'tags' %}
+                <div class="muted"><strong>{{ k }}</strong>
+                  {#- 값이 없는 것(None)과 목록을 그대로 찍으면
+                      파이썬 표기(['sg-web'])가 화면에 나온다. #}
+                  {%- if v is none %} <em>없음</em>
+                  {%- elif v is sameas true %} 예
+                  {%- elif v is sameas false %} 아니오
+                  {%- elif v is string %} {{ v }}
+                  {%- elif v is mapping %} {{ v.items() | map('join', '=') | join(', ') }}
+                  {%- elif v is sequence %} {{ v | join(', ') or '없음' }}
+                  {%- else %} {{ v }}{% endif %}
+                </div>
+              {% endfor %}
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <p class="muted">조건에 맞는 리소스가 없습니다.</p>
+    {% endif %}
+  {% endif %}
+{% endblock %}

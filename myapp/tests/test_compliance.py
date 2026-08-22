@@ -12,9 +12,13 @@ import pytest
 from app import compliance as C
 
 
-def snap(*items):
-    """리소스 목록으로 스냅샷 하나를 만든다."""
-    return C.Snapshot(1, list(items))
+def snap(*items, collected=None):
+    """리소스 목록으로 스냅샷 하나를 만든다.
+
+    collected 를 주지 않으면 들어 있는 종류만 수집한 것으로 본다
+    (collected_types 열이 생기기 전 스냅샷과 같은 취급).
+    """
+    return C.Snapshot(1, list(items), collected_types=collected)
 
 
 def sg(resource_id, *ingress):
@@ -406,3 +410,131 @@ class TestAgainstRealSnapshots:
             assert times == sorted(times)
             if points:
                 assert points[0]["first"] is True
+
+
+class TestImdsv2:
+    """IMDSv1 이 열려 있으면 SSRF 한 방으로 자격증명이 나간다."""
+
+    def _inst(self, **attrs):
+        base = {"state": "running", "security_groups": [], "tags": {"Name": "x", "Env": "prod"},
+                "imds": "optional", "imds_endpoint": "enabled", "iam_profile": ""}
+        base.update(attrs)
+        return {"resource_id": "i-1", "resource_type": "ec2:instance", "attributes": base}
+
+    def test_v2_required_passes(self):
+        v = C.run_checks(snap(self._inst(imds="required")))
+        assert ids(v, "ec2-imdsv1") == []
+
+    def test_v1_open_is_flagged(self):
+        v = C.run_checks(snap(self._inst(imds="optional")))
+        assert ids(v, "ec2-imdsv1") == ["i-1"]
+
+    def test_attached_role_raises_severity(self):
+        """훔칠 자격증명이 있는지 없는지로 무게가 달라진다."""
+        with_role = C.run_checks(snap(self._inst(iam_profile="app-role")))
+        without = C.run_checks(snap(self._inst(iam_profile="")))
+        assert [x for x in with_role if x["check_id"] == "ec2-imdsv1"][0]["severity"] == "critical"
+        assert [x for x in without if x["check_id"] == "ec2-imdsv1"][0]["severity"] == "high"
+
+    def test_disabled_endpoint_is_not_a_violation(self):
+        """메타데이터를 통째로 껐으면 v1 도 안 열린다."""
+        v = C.run_checks(snap(self._inst(imds_endpoint="disabled")))
+        assert ids(v, "ec2-imdsv1") == []
+
+    def test_unknown_field_is_not_a_violation(self):
+        """이 값을 수집하기 전에 찍힌 스냅샷을 위반으로 올리면
+        목록이 거짓으로 찬다."""
+        item = self._inst()
+        del item["attributes"]["imds"]
+        v = C.run_checks(snap(item))
+        assert ids(v, "ec2-imdsv1") == []
+
+
+class TestPublicIpChangesExposure:
+    """보안그룹이 열려 있어도 퍼블릭 IP 가 없으면 인터넷에서 직접 닿지 않는다."""
+
+    def _both(self, **attrs):
+        base = {"state": "running", "security_groups": ["sg-open"],
+                "tags": {"Name": "x", "Env": "prod"}}
+        base.update(attrs)
+        return snap(
+            sg("sg-open", "22/tcp:0.0.0.0/0"),
+            {"resource_id": "i-1", "resource_type": "ec2:instance", "attributes": base},
+        )
+
+    def _hit(self, violations):
+        return [v for v in violations if v["check_id"] == "ec2-exposed-admin-port"]
+
+    def test_public_ip_is_critical(self):
+        hit = self._hit(C.run_checks(self._both(public_ip="203.0.113.5")))
+        assert hit and hit[0]["severity"] == "critical"
+        assert "지금 인터넷에서 닿습니다" in hit[0]["detail"]
+
+    def test_no_public_ip_is_lowered(self):
+        """사설 IP 만 있는 인스턴스까지 critical 로 올리면 목록이 부풀고,
+        그러면 진짜 뚫린 것이 묻힌다."""
+        hit = self._hit(C.run_checks(self._both(public_ip=None)))
+        assert hit and hit[0]["severity"] == "medium"
+
+    def test_unknown_public_ip_keeps_old_behaviour(self):
+        """수집 전 스냅샷은 판단을 미루지 않고 올리되, 확인 못 했다고 밝힌다."""
+        hit = self._hit(C.run_checks(self._both()))
+        assert hit and hit[0]["severity"] == "critical"
+        assert "확인하지 못했습니다" in hit[0]["detail"]
+
+
+class TestCoverage:
+    """'봤는데 깨끗함' 과 '아예 안 봄' 을 가른다."""
+
+    def test_uncollected_type_makes_a_check_skipped(self):
+        s = snap(bucket("b"), collected=["s3:bucket"])
+        skipped = [c["id"] for c in C.coverage(s)["skipped"]]
+        assert "rds-public" in skipped
+        assert "s3-versioning" not in skipped
+
+    def test_collected_but_empty_type_still_runs(self):
+        """RDS 를 봤는데 한 대도 없는 것은 '통과' 다."""
+        s = snap(bucket("b"), collected=["s3:bucket", "rds:instance", "iam:role"])
+        skipped = [c["id"] for c in C.coverage(s)["skipped"]]
+        assert "rds-public" not in skipped
+
+    def test_old_snapshot_infers_from_what_is_present(self):
+        """collected_types 가 없던 시절 스냅샷. 들어 있는 종류만 본 것으로
+        여긴다 - 없는 종류를 '깨끗함' 으로 처리하는 것보다 안전하다."""
+        s = snap(bucket("b"))
+        skipped = [c["id"] for c in C.coverage(s)["skipped"]]
+        assert "rds-public" in skipped
+
+    def test_checks_without_requirements_always_run(self):
+        s = snap(bucket("b"), collected=["s3:bucket"])
+        skipped = [c["id"] for c in C.coverage(s)["skipped"]]
+        assert "missing-required-tags" not in skipped
+
+    def test_summary_counts_skipped(self):
+        """S3 만 수집했으면 S3 점검과 태그 점검만 돈다.
+        나머지는 통과한 게 아니라 안 돈 것이다."""
+        s = snap(bucket("b"), collected=["s3:bucket"])
+        summary = C.summarize(C.run_checks(s), s)
+        ran = {c["id"] for c in C.coverage(s)["ran"]}
+        assert ran == {"s3-public-access", "s3-encryption", "s3-versioning",
+                       "missing-required-tags"}
+        assert summary["skipped"] == len(C.CHECKS) - len(ran)
+        assert summary["total"] == 0
+
+    def test_summary_without_snapshot_reports_zero(self):
+        """스냅샷을 안 주면 셀 수 없다. 0 이라고만 하고 거짓말하지 않는다."""
+        assert C.summarize([])["skipped"] == 0
+
+    def test_every_check_declares_what_it_needs(self):
+        """빠뜨리면 그 점검은 조용히 '항상 돈 것' 이 된다."""
+        for check in C.CHECKS:
+            assert "requires" in check, check["id"]
+
+    def test_declared_types_are_ones_we_could_collect(self):
+        """점검이 요구하는 종류가 수집기에 없으면 영원히 안 걸린다.
+        그 사실 자체는 괜찮다(coverage 가 알려준다). 다만 오타는 잡는다."""
+        known = {"ec2:instance", "ec2:security_group", "s3:bucket",
+                 "rds:instance", "iam:role"}
+        for check in C.CHECKS:
+            for need in check["requires"]:
+                assert need in known, f"{check['id']} -> {need}"

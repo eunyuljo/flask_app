@@ -70,7 +70,7 @@ class Snapshot:
     스냅샷은 통째로 들고 있으니 그냥 찾아보면 된다.
     """
 
-    def __init__(self, snapshot_id, items, meta=None):
+    def __init__(self, snapshot_id, items, meta=None, collected_types=None):
         self.snapshot_id = snapshot_id
         self.items = items
         self.meta = meta or {}
@@ -79,8 +79,18 @@ class Snapshot:
         for i in items:
             self._by_type.setdefault(i["resource_type"], []).append(i)
 
+        # 이 스냅샷이 훑은 리소스 종류. 비어 있으면 collected_types 열이
+        # 생기기 전에 찍힌 스냅샷이라, 실제로 들어 있는 종류만 본 것으로
+        # 여긴다. 가장 보수적인 추측이다 - 없는 종류를 '봤는데 깨끗함'
+        # 으로 처리하는 것보다 '못 봤음' 으로 두는 편이 안전하다.
+        self.collected = set(collected_types or self._by_type)
+
     def of_type(self, resource_type):
         return self._by_type.get(resource_type, [])
+
+    def knows(self, *resource_types):
+        """이 종류들을 전부 수집했는가."""
+        return all(t in self.collected for t in resource_types)
 
     def get(self, resource_id):
         return self._by_id.get(resource_id)
@@ -156,12 +166,66 @@ def _check_instance_behind_open_admin_port(snap):
     if not risky:
         return
     for inst in snap.of_type("ec2:instance"):
-        if inst["attributes"].get("state") != "running":
+        attrs = inst["attributes"]
+        if attrs.get("state") != "running":
             continue
-        hit = [g for g in inst["attributes"].get("security_groups", []) if g in risky]
-        if hit:
-            names = ", ".join(f"{g}({risky[g]})" for g in hit)
-            yield inst["resource_id"], f"관리 포트가 열린 보안그룹에 붙어 있습니다: {names}"
+        hit = [g for g in attrs.get("security_groups", []) if g in risky]
+        if not hit:
+            continue
+
+        names = ", ".join(f"{g}({risky[g]})" for g in hit)
+
+        # 퍼블릭 IP 를 알면 '열려 있을 수 있다' 와 '지금 닿는다' 를 가른다.
+        # 사설 IP 만 있는 인스턴스까지 critical 로 올리면 목록이 부풀고,
+        # 그러면 진짜 뚫린 것이 묻힌다.
+        if "public_ip" not in attrs:
+            # 이 값을 수집하기 전에 찍힌 스냅샷. 판단을 미루지 않고
+            # 예전처럼 올리되, 확인하지 못했다는 것을 밝힌다.
+            yield (inst["resource_id"],
+                   f"관리 포트가 열린 보안그룹에 붙어 있습니다: {names} "
+                   "(퍼블릭 IP 를 수집하지 않아 실제 도달 여부는 확인하지 못했습니다)")
+        elif attrs.get("public_ip"):
+            yield (inst["resource_id"],
+                   f"퍼블릭 IP({attrs['public_ip']})가 붙어 있고 관리 포트가 "
+                   f"열린 보안그룹을 씁니다: {names}. 지금 인터넷에서 닿습니다.",
+                   "critical")
+        else:
+            yield (inst["resource_id"],
+                   f"관리 포트가 열린 보안그룹에 붙어 있습니다: {names}. "
+                   "퍼블릭 IP 가 없어 인터넷에서 직접 닿지는 않습니다.",
+                   "medium")
+
+
+def _check_imdsv1(snap):
+    """인스턴스 메타데이터 서비스 v1 이 열려 있는 인스턴스.
+
+    IMDSv1 은 단순 GET 으로 임시 자격증명을 돌려준다. 그래서 애플리케이션에
+    SSRF 하나만 있어도 그 인스턴스 역할의 자격증명이 통째로 나간다.
+    v2 는 PUT 으로 토큰을 먼저 받아야 해서 그 경로가 막힌다.
+
+    붙은 역할이 있으면 훔칠 것이 있다는 뜻이라 무게를 올린다.
+    """
+    for inst in snap.of_type("ec2:instance"):
+        attrs = inst["attributes"]
+        # 키가 아예 없으면 이 값을 수집하기 전에 찍힌 스냅샷이다.
+        # 모르는 것을 위반으로 올리면 목록이 거짓으로 찬다.
+        if "imds" not in attrs:
+            continue
+        if attrs.get("imds_endpoint") == "disabled":
+            continue          # 메타데이터 자체를 껐으면 v1 도 안 열린다
+        if attrs.get("imds") == "required":
+            continue          # v2 강제 - 정상
+
+        profile = attrs.get("iam_profile") or ""
+        if profile:
+            yield (inst["resource_id"],
+                   f"IMDSv1 이 열려 있고 역할이 붙어 있습니다({profile}). "
+                   "SSRF 한 번으로 이 역할의 자격증명이 나갈 수 있습니다.",
+                   "critical")
+        else:
+            yield (inst["resource_id"],
+                   "IMDSv1 이 열려 있습니다(HttpTokens=optional).",
+                   "high")
 
 
 def _check_s3_public(snap):
@@ -223,6 +287,7 @@ def _check_iam_broad_policy(snap):
 CHECKS = [
     {
         "id": "sg-admin-port-open",
+        "requires": ("ec2:security_group",),
         "title": "관리 포트가 인터넷에 열려 있음",
         "severity": "critical",
         "standard": "CIS AWS 5.2 / 5.3",
@@ -232,6 +297,7 @@ CHECKS = [
     },
     {
         "id": "sg-db-port-open",
+        "requires": ("ec2:security_group",),
         "title": "DB 포트가 인터넷에 열려 있음",
         "severity": "critical",
         "standard": "CIS AWS 5.2",
@@ -241,6 +307,7 @@ CHECKS = [
     },
     {
         "id": "sg-all-ports-open",
+        "requires": ("ec2:security_group",),
         "title": "모든 포트가 인터넷에 열려 있음",
         "severity": "critical",
         "standard": "CIS AWS 5.2",
@@ -250,6 +317,7 @@ CHECKS = [
     },
     {
         "id": "ec2-exposed-admin-port",
+        "requires": ("ec2:instance", "ec2:security_group"),
         "title": "관리 포트가 열린 보안그룹을 쓰는 인스턴스",
         "severity": "critical",
         "standard": "CIS AWS 5.2",
@@ -258,7 +326,19 @@ CHECKS = [
         "fn": _check_instance_behind_open_admin_port,
     },
     {
+        "id": "ec2-imdsv1",
+        "requires": ("ec2:instance",),
+        "title": "인스턴스 메타데이터 v1 이 열려 있음",
+        "severity": "critical",
+        "standard": "CIS AWS 5.6",
+        "why": "IMDSv1 은 단순 GET 으로 임시 자격증명을 돌려줍니다. "
+               "애플리케이션에 SSRF 하나만 있어도 그 인스턴스 역할의 "
+               "자격증명이 통째로 나갑니다. v2 는 토큰을 먼저 받게 해서 막습니다.",
+        "fn": _check_imdsv1,
+    },
+    {
         "id": "s3-public-access",
+        "requires": ("s3:bucket",),
         "title": "S3 퍼블릭 액세스 차단이 꺼져 있음",
         "severity": "critical",
         "standard": "CIS AWS 2.1.5",
@@ -268,6 +348,7 @@ CHECKS = [
     },
     {
         "id": "rds-public",
+        "requires": ("rds:instance",),
         "title": "RDS 인스턴스가 퍼블릭으로 열려 있음",
         "severity": "high",
         "standard": "CIS AWS 2.3.3",
@@ -277,6 +358,7 @@ CHECKS = [
     },
     {
         "id": "iam-broad-policy",
+        "requires": ("iam:role",),
         "title": "역할에 광범위한 권한이 붙어 있음",
         "severity": "high",
         "standard": "CIS AWS 1.16 (최소 권한)",
@@ -286,6 +368,7 @@ CHECKS = [
     },
     {
         "id": "s3-encryption",
+        "requires": ("s3:bucket",),
         "title": "S3 기본 암호화가 없음",
         "severity": "high",
         "standard": "CIS AWS 2.1.1",
@@ -295,6 +378,7 @@ CHECKS = [
     },
     {
         "id": "rds-single-az",
+        "requires": ("rds:instance",),
         "title": "RDS 가 단일 AZ 로 떠 있음",
         "severity": "medium",
         "standard": "Well-Architected 신뢰성",
@@ -304,6 +388,7 @@ CHECKS = [
     },
     {
         "id": "s3-versioning",
+        "requires": ("s3:bucket",),
         "title": "S3 버저닝이 꺼져 있음",
         "severity": "medium",
         "standard": "Well-Architected 신뢰성",
@@ -313,6 +398,7 @@ CHECKS = [
     },
     {
         "id": "missing-required-tags",
+        "requires": (),
         "title": "필수 태그가 없음",
         "severity": "low",
         "standard": "태깅 정책",
@@ -359,12 +445,41 @@ def _table_ready(cur, name):
 
 
 def load_snapshot(cur, snapshot_id):
+    # 무엇을 수집했는지 먼저 읽는다. 같은 커서로 리소스를 읽은 뒤에
+    # 질의를 하나 더 던지면 앞의 결과가 덮어써진다.
+    cur.execute(
+        "SELECT collected_types FROM resource_snapshots WHERE snapshot_id = %s",
+        (snapshot_id,),
+    )
+    row = cur.fetchone()
+    collected = list(row[0]) if row and row[0] else None
+
     cur.execute(
         "SELECT resource_id, resource_type, attributes FROM resources "
         "WHERE snapshot_id = %s",
         (snapshot_id,),
     )
-    return Snapshot(snapshot_id, _rows(cur))
+    return Snapshot(snapshot_id, _rows(cur), collected_types=collected)
+
+
+def coverage(snap):
+    """점검 항목마다 돌았는지 / 못 돌았는지.
+
+    "위반 0건" 이 두 가지 뜻을 갖는 문제를 여기서 가른다.
+      돌았고 0건  -> 봤는데 문제가 없다
+      못 돌았음   -> 그 리소스를 아예 수집하지 않았다
+
+    화면과 보고서에서는 정반대의 뜻이므로 반드시 구분해서 보여줘야 한다.
+    """
+    ran, skipped = [], []
+    for check in CHECKS:
+        need = check.get("requires", ())
+        missing = [t for t in need if t not in snap.collected]
+        if missing:
+            skipped.append({**check, "missing": missing})
+        else:
+            ran.append(check)
+    return {"ran": ran, "skipped": skipped}
 
 
 def latest_snapshots(limit=50):
@@ -481,7 +596,16 @@ def run_checks(snap, excused=None):
 
     found = []
     for check in CHECKS:
-        for resource_id, detail in check["fn"](snap):
+        for yielded in check["fn"](snap):
+            # 점검 함수는 (리소스, 설명) 을 내놓는다. 같은 항목이라도
+            # 상황에 따라 무게가 다를 때는 (리소스, 설명, 심각도) 로
+            # 세 개를 내놓을 수 있다. IMDSv1 이 그렇다 - 붙은 역할이
+            # 있으면 훔칠 자격증명이 있다는 뜻이라 무게가 달라진다.
+            if len(yielded) == 3:
+                resource_id, detail, severity = yielded
+            else:
+                resource_id, detail = yielded
+                severity = check["severity"]
             # 리소스 하나짜리 예외를 먼저 본다. 계정 전체 예외보다
             # 구체적인 쪽이 사유도 정확하다.
             key = next(
@@ -492,7 +616,7 @@ def run_checks(snap, excused=None):
             found.append({
                 "check_id": check["id"],
                 "title": check["title"],
-                "severity": check["severity"],
+                "severity": severity,
                 "standard": check["standard"],
                 "why": check["why"],
                 "resource_id": resource_id,
@@ -527,8 +651,12 @@ def evaluate(snapshot_id, account_id=None):
     return run_checks(snap, excused), snap
 
 
-def summarize(violations):
-    """심각도별 개수. 예외로 뺀 것은 따로 센다."""
+def summarize(violations, snap=None):
+    """심각도별 개수. 예외로 뺀 것과 못 돌린 항목은 따로 센다.
+
+    snap 을 주면 "수집하지 않아 점검하지 못한 항목" 수도 함께 센다.
+    이 수가 0 이 아니면 '위반 0건' 을 '안전' 으로 읽으면 안 된다.
+    """
     live = [v for v in violations if not v["excused"]]
     counts = {s: 0 for s in SEVERITIES}
     for v in live:
@@ -538,6 +666,7 @@ def summarize(violations):
         "by_severity": counts,
         "excused": len(violations) - len(live),
         "worst": next((s for s in SEVERITIES if counts[s]), None),
+        "skipped": len(coverage(snap)["skipped"]) if snap is not None else 0,
     }
 
 

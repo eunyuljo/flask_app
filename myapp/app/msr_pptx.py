@@ -287,6 +287,9 @@ def _slide_compliance(prs, data):
 
     note = (f"{comp['checked_at']:%Y-%m-%d %H:%M} UTC 수집분 기준. "
             "수집하지 않은 항목은 점검 대상에 들어 있지 않습니다.")
+    if comp.get("skipped"):
+        note += (" 이번에 돌리지 못한 점검: " + ", ".join(comp["skipped"])
+                 + " (위반이 없는 것이 아니라 보지 않은 것입니다).")
     if comp["excused"]:
         note += f" 승인된 예외 {comp['excused']}건은 집계에서 뺐습니다."
     note += _overflow_note(comp["worst"], min(len(comp["worst"]), MAX_ROWS_HALF))

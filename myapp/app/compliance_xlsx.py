@@ -128,7 +128,7 @@ def build(reports, generated_at=None):
     _sheet_timeline(wb, f, reports)
     _sheet_recurring(wb, f, reports)
     _sheet_exceptions(wb, f, reports)
-    _sheet_checks(wb, f)
+    _sheet_checks(wb, f, reports)
 
     wb.close()
     buf.seek(0)
@@ -144,11 +144,18 @@ def _sheet_summary(wb, f, reports, generated_at):
     ws = wb.add_worksheet("요약")
     _autofit(ws, [16, 18, 16, 12, 12, 12, 12, 12, 14])
 
+    skipped = sum(len((r.get("coverage") or {}).get("skipped", [])) for r in reports)
+
     ws.write(0, 0, "컴플라이언스 점검 결과", f["title"])
     ws.write(1, 0, f"{_naive(generated_at):%Y-%m-%d %H:%M} UTC 생성", f["sub"])
     ws.write(2, 0,
              "AWS Config 가 아니라 수집해 둔 리소스 스냅샷을 기준으로 점검한 결과입니다. "
              "수집하지 않은 항목은 점검 대상에 들어 있지 않습니다.", f["sub"])
+    if skipped:
+        ws.write(3, 0,
+                 f"이번에 돌리지 못한 점검이 {skipped}건 있습니다. "
+                 "'점검 항목' 시트에서 어느 항목인지 확인하세요 - "
+                 "위반이 없는 것이 아니라 보지 않은 것입니다.", f["sub"])
 
     # 전체 합계를 위에 둔다. 계정이 여러 개일 때 맨 위 줄만 보면 되게.
     totals = {s: 0 for s in compliance.SEVERITIES}
@@ -161,7 +168,8 @@ def _sheet_summary(wb, f, reports, generated_at):
     row = 4
     cards = [("위반 합계", sum(totals.values()))]
     cards += [(sev, totals[sev]) for sev in compliance.SEVERITIES]
-    cards += [("예외 처리됨", excused), ("대상 계정", len(reports))]
+    cards += [("예외 처리됨", excused), ("점검하지 못함", skipped),
+              ("대상 계정", len(reports))]
     for col, (label, value) in enumerate(cards):
         ws.write(row, col, label, f["kpi_label"])
         ws.write(row + 1, col, value, f["kpi_value"])
@@ -323,19 +331,38 @@ def _sheet_exceptions(wb, f, reports):
         ws.write(1, 0, "등록된 예외가 없습니다.", f["cell"])
 
 
-def _sheet_checks(wb, f):
-    """무엇을 봤는지. 이게 없으면 '위반 0건' 이 무슨 뜻인지 알 수 없다."""
+def _sheet_checks(wb, f, reports):
+    """무엇을 봤는지. 이게 없으면 '위반 0건' 이 무슨 뜻인지 알 수 없다.
+
+    '이번 점검' 열이 핵심이다. 못 돌린 항목을 통과한 것처럼 보여주면,
+    보고서를 받은 사람이 안전하다고 읽는다.
+    """
     ws = wb.add_worksheet("점검 항목")
-    _autofit(ws, [10, 30, 22, 60])
+    _autofit(ws, [10, 30, 22, 52, 22])
 
     ws.write(0, 0, "이 보고서가 확인한 항목", f["title"])
     ws.write(1, 0,
              "여기 없는 것은 점검하지 않았습니다. IAM 사용자 MFA, root 액세스 키, "
              "CloudTrail 활성화 등은 현재 수집 대상이 아닙니다.", f["sub"])
 
-    _table_head(ws, 3, ["심각도", "항목", "근거", "왜 위반인가"], f)
+    # 계정마다 수집 범위가 다를 수 있다. 한 곳에서라도 못 돌았으면
+    # 그 사실을 적는다 - 어느 계정에서 못 돌았는지까지 함께.
+    skipped_at = {}
+    for r in reports:
+        for c in (r.get("coverage") or {}).get("skipped", []):
+            skipped_at.setdefault(c["id"], []).append(
+                r.get("customer") or r["account_id"]
+            )
+
+    _table_head(ws, 3, ["심각도", "항목", "근거", "왜 위반인가", "이번 점검"], f)
     for i, c in enumerate(compliance.CHECKS, start=4):
         ws.write(i, 0, c["severity"], f[f"sev_{c['severity']}"])
         ws.write(i, 1, c["title"], f["cell"])
         ws.write(i, 2, c["standard"], f["cell"])
         ws.write(i, 3, c["why"], f["cell"])
+        where = skipped_at.get(c["id"])
+        if where:
+            ws.write(i, 4, "못 돌림: " + ", ".join(sorted(set(where))),
+                     f["sev_critical"])
+        else:
+            ws.write(i, 4, "돌림", f["cell"])

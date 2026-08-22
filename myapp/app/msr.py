@@ -262,26 +262,38 @@ def _compliance_now(customer, account_ids, notes):
 
     totals = {s: 0 for s in compliance.SEVERITIES}
     worst_items, excused = [], 0
+    skipped = {}
     for t in targets:
         try:
-            violations, _snap = compliance.evaluate(t["snapshot_id"], t["account_id"])
+            violations, snap = compliance.evaluate(t["snapshot_id"], t["account_id"])
         except ComplianceError:
             continue
-        summary = compliance.summarize(violations)
+        summary = compliance.summarize(violations, snap)
         for sev in compliance.SEVERITIES:
             totals[sev] += summary["by_severity"][sev]
         excused += summary["excused"]
+        # 못 돌린 점검은 계정별로 다를 수 있다. 항목 이름으로 모은다.
+        for c in compliance.coverage(snap)["skipped"]:
+            skipped[c["title"]] = skipped.get(c["title"], 0) + 1
         worst_items += [
             v for v in violations
             if not v["excused"] and v["severity"] in ("critical", "high")
         ]
 
     worst_items.sort(key=lambda v: compliance.SEVERITY_ORDER[v["severity"]])
+    if skipped:
+        notes.append(
+            "수집하지 않아 돌리지 못한 점검이 있습니다: "
+            + ", ".join(sorted(skipped))
+            + ". 위반이 없는 것이 아니라 보지 않은 것입니다."
+        )
+
     return {
         "by_severity": totals,
         "total": sum(totals.values()),
         "excused": excused,
         "worst": worst_items[:8],
+        "skipped": sorted(skipped),
         "checked_at": max(t["collected_at"] for t in targets),
     }
 

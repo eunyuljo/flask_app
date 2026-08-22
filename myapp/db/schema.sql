@@ -581,3 +581,21 @@ CREATE TABLE IF NOT EXISTS compliance_exceptions (
 
 CREATE INDEX IF NOT EXISTS idx_compliance_exc
     ON compliance_exceptions (account_id, check_id);
+
+
+-- ======================================================================
+-- 스냅샷이 무엇을 수집했는지
+-- ----------------------------------------------------------------------
+-- 이게 없으면 "RDS 위반 0건" 이 두 가지 뜻을 갖는다.
+--   (1) RDS 를 봤는데 문제가 없다
+--   (2) RDS 를 아예 수집하지 않았다
+-- 화면에서는 둘 다 똑같이 '0' 으로 보인다. 그건 보고서에서 가장 나쁜 종류의
+-- 거짓말이다 - 안전하다고 읽히지만 사실은 안 본 것이다.
+--
+-- 수집기가 "이번에 이 종류들을 봤다" 를 적어두면, 그 목록에 없는 종류를
+-- 요구하는 점검은 '통과' 가 아니라 '점검하지 못함' 으로 분류할 수 있다.
+--
+-- 빈 배열은 이 열이 생기기 전에 찍힌 스냅샷이라는 뜻이다. 그때는 실제로
+-- 들어 있는 종류만 수집한 것으로 본다(가장 보수적인 추측).
+ALTER TABLE resource_snapshots
+    ADD COLUMN IF NOT EXISTS collected_types TEXT[] NOT NULL DEFAULT '{}';
