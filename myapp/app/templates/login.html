@@ -15,16 +15,26 @@
     <label>
       아이디
       {# input 의 name 값("username")이 곧 request.form.get("username") 의 키가 된다. #}
-      <input type="text" name="username" placeholder="admin" required>
+      <input type="text" name="username" required autocomplete="username">
     </label>
     <label>
       비밀번호
-      <input type="password" name="password" placeholder="1234" required>
+      <input type="password" name="password" required autocomplete="current-password">
     </label>
     <button type="submit">로그인</button>
   </form>
 
-  <p style="color:#666; margin-top:20px;">
-    학습용 계정 &mdash; 아이디: <code>admin</code> / 비밀번호: <code>1234</code>
+  {# 계정이 하나도 없을 때만 기본 계정을 안내한다.
+     계정을 하나라도 만들면 이 안내가 사라지고, 기본 계정도 막힌다. #}
+  {% if bootstrap %}
+    <p class="muted" style="margin-top:20px;">
+      아직 계정이 없어 기본 계정으로 들어갈 수 있습니다 &mdash;
+      아이디 <code>{{ bootstrap_username }}</code> / 비밀번호 <code>1234</code>.
+      들어간 뒤 <strong>관리자 &gt; 계정</strong>에서 계정을 만들면 이 통로는 닫힙니다.
+    </p>
+  {% endif %}
+
+  <p class="muted" style="margin-top:20px;">
+    로그인은 {{ (lifetime.total_seconds() / 3600) | round(1) }}시간 뒤에 풀립니다.
   </p>
 {% endblock %}

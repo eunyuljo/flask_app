@@ -512,3 +512,32 @@ CREATE TABLE IF NOT EXISTS incident_fingerprints (
 );
 
 CREATE INDEX IF NOT EXISTS idx_incident_fp ON incident_fingerprints (fingerprint);
+
+-- ======================================================================
+-- 사용자
+-- ----------------------------------------------------------------------
+-- 처음에는 계정이 코드에 하드코딩되어 있었다(admin / 1234). 그건 '가장
+-- 단순한 인증' 을 보여주는 데는 성공했지만, 이 앱이 고객사 AWS 계정에
+-- 들어가고 감사 로그를 남기게 된 지금은 맞지 않는다.
+--
+-- 비밀번호는 해시로만 저장한다. werkzeug.security 를 쓴다 - Flask 가
+-- 이미 의존하는 패키지라 새로 설치할 것이 없다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS users (
+    id            BIGSERIAL   PRIMARY KEY,
+    username      TEXT        NOT NULL UNIQUE,
+
+    -- 평문은 어디에도 저장하지 않는다. 형식: 알고리즘$솔트$해시
+    password_hash TEXT        NOT NULL,
+
+    -- admin    : 전부 (관리자 화면, 콘솔, 감사 로그)
+    -- operator : 운영 화면 (알람, 작업, 장애, 리포트 ...)
+    -- viewer   : 읽기만 (쓰기 라우트는 막는다)
+    role          TEXT        NOT NULL DEFAULT 'operator'
+                  CHECK (role IN ('admin', 'operator', 'viewer')),
+
+    enabled       BOOLEAN     NOT NULL DEFAULT true,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_login_at TIMESTAMPTZ
+);

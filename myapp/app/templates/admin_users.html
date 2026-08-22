@@ -1,0 +1,91 @@
+{# templates/admin_users.html
+   admin 블루프린트의 users_page() 가 렌더링하는 계정 관리 화면.
+   비밀번호는 해시로만 저장되므로 이 화면에서도 볼 수 없다. 바꾸는 것만 된다. #}
+
+{% extends "base.html" %}
+
+{% block title %}계정{% endblock %}
+{% block page_title %}계정{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    <a href="{{ url_for('admin.index') }}">&larr; 관리자</a>
+  </p>
+  <p class="muted">
+    누가 이 서비스에 들어올 수 있는지, 어디까지 볼 수 있는지를 정합니다.
+    비밀번호는 해시로만 저장되어 있어 여기서도 볼 수 없고, 새로 정하는 것만 됩니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  <hr>
+  <h2>새 계정</h2>
+  <form method="post" action="{{ url_for('admin.user_create') }}" class="form">
+    <label>아이디
+      <input type="text" name="username" required autocomplete="off">
+    </label>
+    <label>비밀번호 <span class="muted">(8자 이상)</span>
+      <input type="password" name="password" required autocomplete="new-password">
+    </label>
+    <label>역할
+      <select name="role">
+        {% for key, label in roles.items() %}
+          <option value="{{ key }}" {% if key == 'operator' %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">만들기</button>
+  </form>
+
+  <p class="muted">
+    <strong>관리자</strong>는 관리자 화면과 콘솔까지,
+    <strong>운영자</strong>는 운영 화면까지,
+    <strong>조회 전용</strong>은 보기만 할 수 있습니다.
+  </p>
+
+  <hr>
+  <h2>계정 목록 <span class="muted">({{ items|length }}개)</span></h2>
+
+  {% if not items %}
+    <p class="muted">아직 만든 계정이 없습니다.</p>
+  {% endif %}
+
+  {% for u in items %}
+    <div class="event {% if not u.enabled %}au-normal{% endif %}">
+      <div class="event-head">
+        <span class="badge">{{ roles.get(u.role, u.role) }}</span>
+        <strong>{{ u.username }}</strong>
+        {% if u.username == me %}<span class="muted">(나)</span>{% endif %}
+        {% if not u.enabled %}<span class="muted">— 중지됨</span>{% endif %}
+      </div>
+      <div class="muted">
+        만든 날 {{ u.created_at.strftime('%Y-%m-%d') }}
+        &middot; 마지막 로그인
+        {% if u.last_login_at %}{{ u.last_login_at.strftime('%Y-%m-%d %H:%M') }} UTC
+        {% else %}없음{% endif %}
+      </div>
+
+      <details class="meta-fold">
+        <summary class="muted">비밀번호 바꾸기</summary>
+        <form method="post" action="{{ url_for('admin.user_password') }}" class="form">
+          <input type="hidden" name="username" value="{{ u.username }}">
+          <label>새 비밀번호 <span class="muted">(8자 이상)</span>
+            <input type="password" name="password" required autocomplete="new-password">
+          </label>
+          <button type="submit">바꾸기</button>
+        </form>
+      </details>
+
+      {# 계정을 지우지 않고 끄기만 한다. 감사 로그에 남은 이름이 누구였는지
+         나중에도 확인할 수 있어야 하기 때문이다. #}
+      <form method="post" action="{{ url_for('admin.user_enabled') }}"
+            class="form {% if u.enabled %}danger{% endif %}">
+        <input type="hidden" name="username" value="{{ u.username }}">
+        <input type="hidden" name="enabled" value="{{ '0' if u.enabled else '1' }}">
+        <button type="submit">{{ '계정 끄기' if u.enabled else '계정 켜기' }}</button>
+      </form>
+    </div>
+  {% endfor %}
+{% endblock %}

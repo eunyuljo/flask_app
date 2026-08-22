@@ -2,6 +2,7 @@
 # 환경(개발/테스트/운영)별 설정값을 한곳에 모아두는 파일. DB 접속 정보와 secret_key 처럼
 # 코드가 아니라 '환경에 따라 달라지는 값'을 여기서 관리하고, create_app() 이 골라서 읽어간다.
 
+from datetime import timedelta
 import os
 from urllib.parse import quote_plus
 
@@ -45,6 +46,25 @@ class Config:
     # session 과 flash 가 쿠키에 서명할 때 쓰는 키.
     # os.environ.get("키", 기본값) -> 환경변수가 있으면 그 값을, 없으면 기본값을 쓴다.
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
+
+    # 로그인 세션이 살아 있는 시간. 이 시간이 지나면 쿠키가 만료되어
+    # 다시 로그인해야 한다. auth.login 에서 session.permanent = True 를
+    # 켜 두어야 이 값이 적용된다.
+    PERMANENT_SESSION_LIFETIME = timedelta(
+        hours=float(os.environ.get("SESSION_HOURS", "12"))
+    )
+
+    # 알람 수집 API(/alarm/api/events) 를 부를 때 필요한 키.
+    # 쉼표로 여러 개를 넣을 수 있다(고객사별로 다른 키를 주기 위해).
+    #
+    # 비워두면 인증 없이 열린다. 이 앱은 "설정하지 않은 것은 오류가 아니다"
+    # 를 원칙으로 삼기 때문인데, 이 항목만은 열어두면 아무나 알람을 밀어넣어
+    # 당직자를 깨울 수 있다. 그래서 관리자 화면에서 크게 경고한다.
+    INGEST_API_KEYS = {
+        k.strip()
+        for k in os.environ.get("INGEST_API_KEYS", "").split(",")
+        if k.strip()
+    }
 
     # ------------------------------------------------------------------
     # DB 접속 정보
@@ -166,11 +186,6 @@ class Config:
         for x in os.environ.get("ESCALATION_STEPS", "0,30,120").split(",")
         if x.strip()
     ]
-
-    # set 으로 만들어두면 "username in ADMIN_USERS" 검사가 빠르고 읽기도 쉽다.
-    ADMIN_USERS = {
-        u.strip() for u in os.environ.get("ADMIN_USERS", "admin").split(",") if u.strip()
-    }
 
     # 커넥션 풀 옵션. 오래 놀고 있던 커넥션을 DB 가 먼저 끊어버려서 나는
     # "server closed the connection unexpectedly" 에러를 막는 설정이다.

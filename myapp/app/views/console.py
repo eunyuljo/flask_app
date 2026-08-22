@@ -3,13 +3,13 @@
 # app/__init__.py 에서 url_prefix="/console" 로 등록된다.
 
 from flask import (
-    Blueprint, render_template, request, redirect, url_for, session, flash, current_app
+    Blueprint, render_template, request, redirect, url_for, session, flash
 )
 
 from app.accounts import list_accounts, get_account, by_customer, AccountError
 from app.aws_session import get_env, is_demo, SessionError, cache_state
 from app.awscli import run, parse, CommandRejected, ExecutionError, READ_ONLY_PREFIXES
-from app import audit
+from app import audit, users
 
 console_bp = Blueprint("console", __name__)
 
@@ -31,7 +31,7 @@ def require_login():
     if not session.get("username"):
         flash("콘솔을 쓰려면 먼저 로그인해 주세요.", "error")
         return redirect(url_for("auth.login"))
-    if session.get("username") not in current_app.config["ADMIN_USERS"]:
+    if not users.can(session.get("role"), "admin"):
         flash("콘솔은 관리자만 사용할 수 있습니다.", "error")
         return redirect(url_for("main.index"))
 

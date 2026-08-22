@@ -17,6 +17,7 @@ from flask import (
 )
 
 from app import audit, event_store
+from app.event_store import EventStoreError
 from app.accounts import list_accounts, by_customer, get_account, AccountError
 from app.agent_core import diagnose as run_diagnose, AgentNotConfigured
 from app.lambda_client import invoke_normalizer, LambdaInvokeError
@@ -59,7 +60,12 @@ def index():
     # 방금 진단한 결과가 있으면 그 이벤트에만 펼쳐서 보여준다.
     diagnosed = request.args.get("diagnosed", "")
 
-    events = event_store.recent(20)
+    events, store_error = [], None
+    try:
+        events = event_store.recent(20)
+    except EventStoreError as e:
+        # DB 가 없으면 목록은 못 보여주지만 제출 폼은 떠야 한다.
+        store_error = str(e)
 
     # 이벤트마다 find() 를 부르면 20건에 질의가 20번 나간다. 한 번에 가져온다.
     fingerprints = [e["record"].get("fingerprint", "") for e in events]
@@ -89,6 +95,7 @@ def index():
         invocation_type=current_app.config["LAMBDA_INVOCATION_TYPE"],
         grouped=by_customer(accounts),
         account_error=account_error,
+        store_error=store_error,
         diagnosed=diagnosed,
         diagnoses=_DIAGNOSES,
     )
@@ -102,11 +109,8 @@ def _process(payload, invocation_type=None):
     if result.get("async"):
         return result
 
-    if result.get("ok"):
-        event_store.add(
-            result["record"],
-            {"store": result.get("store", {}), "alarm": result.get("alarm", {})},
-        )
+    # 예전에는 여기서 메모리 저장소에도 사본을 넣었다. 이제 목록이 DB 를
+    # 읽으므로 필요 없다 - Lambda 가 이미 적재했다.
     return result
 
 
@@ -142,10 +146,63 @@ def send():
         alarm = result.get("alarm", {})
         note = "알람 발송됨" if alarm.get("alarmed") else alarm.get("reason", "알람 없음")
         flash(f"처리 완료 - 심각도 {record['severity']} / {note}", "success")
+
+        # 목록은 이제 DB 를 읽는다. 적재를 건너뛰었으면 아래에 나타나지 않는다.
+        # 이걸 안 알려주면 "보냈는데 왜 안 보이지" 로 헤매게 된다.
+        store = result.get("store", {})
+        if not store.get("stored"):
+            flash(
+                f"이 이벤트는 DB 에 적재되지 않아 아래 목록에 나타나지 않습니다 "
+                f"({store.get('reason', '이유 미상')}). "
+                "Lambda 쪽 DATABASE_URL 을 설정하세요.",
+                "error",
+            )
     else:
         flash(f"정규화 실패: {result.get('error')}", "error")
 
     return redirect(url_for("alarm.index"))
+
+
+def _ingest_allowed():
+    """알람 수집 API 를 부를 자격이 있는가.
+
+    키를 하나도 설정하지 않았으면 열어둔다. 이 앱은 설정하지 않은 기능
+    때문에 앱이 뜨지 않는 것을 피하려고 여기저기서 그렇게 하고 있다.
+    다만 이 자리는 열어두면 아무나 알람을 넣어 당직자를 깨울 수 있어서,
+    관리자 화면에 경고를 띄우고 앱 로그에도 남긴다.
+
+    비교에 hmac.compare_digest 를 쓰는 이유: `==` 는 앞에서부터 비교하다
+    다른 글자가 나오면 바로 멈춰서, 걸린 시간으로 키를 한 글자씩
+    맞춰볼 여지를 준다. compare_digest 는 길이가 같으면 항상 같은 시간이 걸린다.
+    """
+    import hmac
+
+    keys = current_app.config["INGEST_API_KEYS"]
+    if not keys:
+        current_app.logger.warning(
+            "INGEST_API_KEYS 가 비어 있어 알람 수집 API 가 인증 없이 열려 있습니다"
+        )
+        return True
+
+    # 표준 헤더가 없는 영역이라 둘 다 받는다.
+    # Authorization: Bearer <키>  /  X-API-Key: <키>
+    sent = request.headers.get("X-API-Key", "")
+    if not sent:
+        auth = request.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            sent = auth[7:].strip()
+    if not sent:
+        return False
+
+    # 양쪽을 바이트로 맞춰서 비교한다. 두 가지 이유가 겹쳐 있다.
+    #
+    # 1. compare_digest 는 str 을 받으면 ASCII 만 허용한다(아니면 TypeError).
+    # 2. 헤더 값은 WSGI 규약에 따라 latin-1 로 디코딩되어 들어온다. 키에
+    #    ASCII 가 아닌 글자가 있으면 여기서 글자가 깨진 채 도착한다.
+    #    latin-1 로 다시 인코딩하면 브라우저가 보낸 원래 바이트가 나온다.
+    #    (설정값 쪽은 os.environ 이 UTF-8 로 디코딩해 둔 것이라 utf-8 로 되돌린다.)
+    sent_b = sent.encode("latin-1", "replace")
+    return any(hmac.compare_digest(sent_b, k.encode("utf-8")) for k in keys)
 
 
 # 최종 URL: /alarm/api/events  (다른 서버가 호출하는 JSON API)
@@ -154,8 +211,13 @@ def ingest():
     """외부 시스템이 JSON 으로 이벤트를 보내는 입구.
 
     화면용 라우트와 같은 블루프린트에 두되, 응답은 HTML 이 아니라 JSON 으로 돌려준다.
-    실제 서비스라면 여기에 API 키 검증을 붙여야 한다(지금은 학습용이라 열려 있다).
+    브라우저 세션이 아니라 다른 서버가 부르는 곳이라 로그인 대신 API 키로 막는다.
     """
+    if not _ingest_allowed():
+        # 401: 인증이 필요한데 없거나 틀렸다는 뜻.
+        # 어떤 키가 맞는지에 대한 힌트는 주지 않는다.
+        return jsonify({"ok": False, "error": "인증이 필요합니다."}), 401
+
     # silent=True 는 본문이 JSON 이 아닐 때 예외 대신 None 을 돌려준다.
     payload = request.get_json(silent=True)
     if payload is None:
@@ -208,7 +270,7 @@ def diagnose():
 
     item = event_store.get(event_id)
     if item is None:
-        flash("진단할 이벤트를 찾지 못했습니다. 목록이 밀려났을 수 있습니다.", "error")
+        flash("진단할 이벤트를 찾지 못했습니다.", "error")
         return redirect(url_for("alarm.index"))
     event = item["record"]
 

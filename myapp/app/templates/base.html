@@ -80,7 +80,7 @@
         <a href="{{ url_for('report.index') }}" class="{% if ep.startswith('report.') %}on{% endif %}">
           <span class="ico">▤</span>리포트
         </a>
-        {% if session.get('username') in config['ADMIN_USERS'] %}
+        {% if session.get('role') == 'admin' %}
           <a href="{{ url_for('console.index') }}" class="{% if ep.startswith('console.') %}on{% endif %}">
             <span class="ico">❯</span>콘솔
           </a>
@@ -93,7 +93,7 @@
         {# 관리자 메뉴는 관리자에게만 보여준다.
            단, '메뉴를 숨기는 것'은 보안이 아니다. 실제 차단은 admin 블루프린트의
            before_request 가 하고, 여기서는 보이지 않게만 할 뿐이다. #}
-        {% if session.get('username') in config['ADMIN_USERS'] %}
+        {% if session.get('role') == 'admin' %}
           <a href="{{ url_for('admin.index') }}" class="{% if ep.startswith('admin.') %}on{% endif %}">
             <span class="ico">⚙</span>관리자
           </a>
@@ -106,6 +106,7 @@
         <div class="side-user">
           <span class="avatar">{{ session.get('username')[0] | upper }}</span>
           <span class="side-user-name">{{ session.get('username') }}</span>
+          <span class="side-user-role">{{ role_names.get(session.get('role'), session.get('role')) }}</span>
         </div>
         <a class="side-quiet" href="{{ url_for('auth.logout') }}">로그아웃</a>
       {% else %}
@@ -123,6 +124,18 @@
     </header>
 
     <div class="content">
+      {# 계정을 하나도 만들지 않은 상태로 들어와 있다는 경고.
+         flash 와 달리 한 번 보고 사라지면 안 되므로 매번 그린다.
+         로그인할 때 세션에 표시해 둔 값이라 여기서 DB 를 다시 보지 않는다. #}
+      {% if session.get('bootstrap') %}
+        <div class="flash error">
+          기본 계정으로 로그인되어 있습니다. 비밀번호가 코드에 그대로 적혀 있으니
+          누구나 들어올 수 있습니다.
+          <a href="{{ url_for('admin.users_page') }}">계정을 만들어</a> 주세요
+          (또는 <code>flask --app run add-user &lt;이름&gt; --role admin</code>).
+        </div>
+      {% endif %}
+
       {# flash() 로 넣어둔 메시지를 꺼내서 출력한다.
          with_categories=true 를 주면 (카테고리, 메시지) 튜플로 받아 스타일을 구분할 수 있다.
          한 번 꺼내면 세션에서 사라지므로 새로고침하면 더 이상 보이지 않는다. #}

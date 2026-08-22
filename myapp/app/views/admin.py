@@ -14,7 +14,7 @@ from flask import (
     request,
 )
 
-from app import event_store
+from app import audit, event_store, users
 
 admin_bp = Blueprint("admin", __name__)
 
@@ -27,17 +27,19 @@ def require_admin():
     여기서는 한 단계 더 나아가 '누구인가'까지 본다.
     이렇게 블루프린트마다 접근 정책을 다르게 걸 수 있다는 게 도메인을 나누는 이점이다.
     """
-    username = session.get("username")
-
     # 로그인 자체를 안 했으면 로그인 페이지로 안내한다.
-    if not username:
+    if not session.get("username"):
         flash("관리자 페이지는 로그인이 필요합니다.", "error")
         return redirect(url_for("auth.login"))
 
     # 로그인은 했지만 권한이 없는 경우.
     # 이때는 로그인 페이지로 보내면 안 된다(로그인해도 해결되지 않으므로).
     # 403 Forbidden 이 맞는 응답이다.
-    if username not in current_app.config["ADMIN_USERS"]:
+    #
+    # 권한은 계정의 역할(role)로 판단한다. 예전에는 설정 파일에 적어둔
+    # 이름 목록(ADMIN_USERS)과 비교했는데, 계정과 권한이 서로 다른 곳에
+    # 저장되어 있어서 계정을 지워도 권한이 남는 문제가 있었다.
+    if not users.can(session.get("role"), "admin"):
         abort(403)
 
 
@@ -63,10 +65,19 @@ def index():
         ("DB 접속", cfg["SQLALCHEMY_DATABASE_URI"].split("@")[-1], None),
     ]
 
+    # 이벤트는 DB 에서 읽는다. DB 가 없어도 나머지(설정, 라우트)는 보여야 한다.
+    stats, events, store_error = None, [], None
+    try:
+        stats = event_store.stats()
+        events = event_store.recent(10)
+    except event_store.EventStoreError as e:
+        store_error = str(e)
+
     return render_template(
         "admin.html",
-        stats=event_store.stats(),
-        events=event_store.recent(10),
+        stats=stats,
+        events=events,
+        store_error=store_error,
         settings=settings,
         routes=sorted(
             (r.rule, r.endpoint, ",".join(sorted(r.methods - {"HEAD", "OPTIONS"})))
@@ -117,3 +128,88 @@ def audit_log():
         outcomes=OUTCOMES, actions=ACTIONS, actor_kinds=ACTOR_KINDS,
         alerts=ALERT_OUTCOMES,
     )
+
+
+# 최종 URL: /admin/users
+# 계정 관리도 접근 정책이 같아서 admin 블루프린트에 붙였다.
+@admin_bp.route("/users")
+def users_page():
+    """계정 목록."""
+    items, error = [], None
+    try:
+        items = users.listing()
+    except users.UserError as e:
+        error = str(e)
+
+    return render_template(
+        "admin_users.html",
+        items=items,
+        error=error,
+        roles=users.ROLES,
+        me=session.get("username"),
+    )
+
+
+@admin_bp.route("/users/create", methods=["POST"])
+def user_create():
+    """계정을 만든다."""
+    username = request.form.get("username", "")
+    try:
+        users.create(
+            username,
+            request.form.get("password", ""),
+            request.form.get("role", "operator"),
+        )
+    except users.UserError as e:
+        flash(str(e), "error")
+        return redirect(url_for("admin.users_page"))
+
+    audit.record(
+        action="user_manage", outcome="ok",
+        summary=f"계정 생성: {username.strip()}",
+    )
+    # 계정이 생겼으면 더 이상 부트스트랩이 아니다. 세션에 남은 표시를 지워
+    # 경고 배너가 사라지게 한다(다음 요청부터 반영된다).
+    session.pop("bootstrap", None)
+    flash(f"계정을 만들었습니다: {username.strip()}", "success")
+    return redirect(url_for("admin.users_page"))
+
+
+# 사용자 이름을 URL 이 아니라 폼 본문으로 받는다.
+# 이름에 "/" 나 한글이 들어가면 URL 에서 다루기가 번거롭고
+# (경로 변환기는 "/" 를 값으로 받지 않는다), 이름이 서버 로그에 남는다.
+@admin_bp.route("/users/password", methods=["POST"])
+def user_password():
+    """비밀번호를 바꾼다."""
+    username = request.form.get("username", "")
+    try:
+        users.set_password(username, request.form.get("password", ""))
+    except users.UserError as e:
+        flash(str(e), "error")
+        return redirect(url_for("admin.users_page"))
+
+    audit.record(
+        action="user_manage", outcome="ok",
+        summary=f"비밀번호 변경: {username}",
+    )
+    flash(f"{username} 의 비밀번호를 바꿨습니다.", "success")
+    return redirect(url_for("admin.users_page"))
+
+
+@admin_bp.route("/users/enabled", methods=["POST"])
+def user_enabled():
+    """계정을 켜거나 끈다."""
+    username = request.form.get("username", "")
+    enabled = request.form.get("enabled") == "1"
+    try:
+        users.set_enabled(username, enabled)
+    except users.UserError as e:
+        flash(str(e), "error")
+        return redirect(url_for("admin.users_page"))
+
+    audit.record(
+        action="user_manage", outcome="ok",
+        summary=f"계정 {'사용' if enabled else '중지'}: {username}",
+    )
+    flash(f"{username} 계정을 {'켰습니다' if enabled else '껐습니다'}.", "success")
+    return redirect(url_for("admin.users_page"))

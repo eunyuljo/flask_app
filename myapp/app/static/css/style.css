@@ -126,6 +126,7 @@ body {
   display: grid; place-items: center; font-size: .72rem; font-weight: 700;
 }
 .side-user-name { font-size: .85rem; color: #dfe4ea; }
+.side-user-role { font-size: .7rem; color: #6d7787; margin-left: auto; }
 .side-quiet { display: block; padding: 5px 9px; border-radius: 6px;
               color: #6d7787; text-decoration: none; font-size: .82rem; }
 .side-quiet:hover { background: #1e2430; color: #fff; }
@@ -447,7 +448,7 @@ svg.chart g:hover .bar { filter: brightness(1.15); }
   .side-foot { border-top: 0; border-left: 1px solid #232a36;
                padding: 0 0 0 10px; margin: 0; display: flex; align-items: center; gap: 8px; }
   .side-user { padding: 0; }
-  .side-user-name { display: none; }
+  .side-user-name, .side-user-role { display: none; }
   .topbar, .content { padding-left: 14px; padding-right: 14px; }
 }
 @media (max-width: 520px) {

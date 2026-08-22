@@ -12,9 +12,28 @@
     <a href="{{ url_for('admin.audit_log') }}">감사 로그</a>
     &mdash; 콘솔 명령과 AI 진단이 고객사 계정에 무엇을 했는지
   </p>
+  <p class="muted">
+    <a href="{{ url_for('admin.users_page') }}">계정</a>
+    &mdash; 누가 들어올 수 있고 어디까지 볼 수 있는지
+  </p>
+
+  {# 알람 수집 API 가 인증 없이 열려 있으면 여기서 크게 알린다.
+     아무나 알람을 밀어넣어 SLA 위반 -> 에스컬레이션 -> 당직 호출까지
+     이어지게 만들 수 있기 때문이다. #}
+  {% if not config['INGEST_API_KEYS'] %}
+    <div class="flash error">
+      <strong>알람 수집 API 가 인증 없이 열려 있습니다.</strong>
+      지금은 누구든 <code>POST /alarm/api/events</code> 로 critical 알람을 넣을 수 있고,
+      그것이 SLA 위반과 에스컬레이션을 거쳐 당직자 호출까지 이어집니다.
+      <code>INGEST_API_KEYS</code> 환경변수에 키를 넣어 막으세요.
+    </div>
+  {% endif %}
 
 
   <h2>이벤트 통계</h2>
+  {% if store_error %}
+    <div class="flash error">이벤트를 읽지 못했습니다: {{ store_error }}</div>
+  {% else %}
   <div class="stats">
     <div class="stat"><div class="n">{{ stats.total }}</div><div class="muted">보관 중</div></div>
     <div class="stat"><div class="n">{{ stats.by_severity.critical }}</div><div class="muted">critical</div></div>
@@ -22,7 +41,8 @@
     <div class="stat"><div class="n">{{ stats.by_severity.warning }}</div><div class="muted">warning</div></div>
     <div class="stat"><div class="n">{{ stats.alarmed }}</div><div class="muted">알람 발송</div></div>
   </div>
-  <p class="muted">최대 {{ stats.capacity }}건까지만 메모리에 보관합니다(원본은 Lambda 가 DB 에 적재).</p>
+  <p class="muted">events 테이블 전체 기준입니다. 오래된 것은 <code>flask --app run prune-events</code> 로 정리합니다.</p>
+  {% endif %}
 
   <h2>현재 설정</h2>
   {# 비밀 값은 '설정됨/미설정'만 보여주고 값 자체는 화면에 찍지 않는다. #}

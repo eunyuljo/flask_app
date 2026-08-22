@@ -187,6 +187,52 @@ def create_app(config_name=None):
     # 등록해두면 `flask --app run init-db` 처럼 쓸 수 있다.
     register_cli(app)
 
+    # ------------------------------------------------------------------
+    # 조회 전용 계정 차단
+    # ------------------------------------------------------------------
+    # 블루프린트마다 POST 라우트가 흩어져 있어서, 각자 막게 하면 새 화면을
+    # 만들 때마다 빠뜨리게 된다. 여기서 한 번에 막는다.
+    #
+    # 로그인한 사용자에게만 적용한다. 로그인하지 않은 요청(알람 수집 API 등)은
+    # 각 블루프린트가 이미 자기 방식으로 막고 있다.
+    @app.before_request
+    def block_read_only():
+        from urllib.parse import urlparse
+
+        from flask import flash, redirect, request, session, url_for
+
+        from app import users
+
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return None
+        if not session.get("username"):
+            return None
+        # 로그아웃은 막으면 안 된다(로그인은 GET 폼 + POST 라 아래 검사에 걸린다).
+        if (request.endpoint or "").startswith("auth."):
+            return None
+        if users.can(session.get("role"), "operator"):
+            return None
+
+        flash("조회 전용 계정이라 바꾸는 작업은 할 수 없습니다.", "error")
+        # 원래 있던 화면으로 돌려보낸다.
+        # referrer 는 브라우저가 보내는 값이라 그대로 믿고 redirect 하면
+        # 남의 사이트로 튕겨 보낼 수 있다(open redirect). 같은 사이트일 때만 쓴다.
+        back = request.referrer or ""
+        if urlparse(back).netloc != urlparse(request.host_url).netloc:
+            back = url_for("main.index")
+        return redirect(back)
+
+    # ------------------------------------------------------------------
+    # 템플릿 공통 값
+    # ------------------------------------------------------------------
+    # context_processor 로 등록한 함수가 돌려주는 딕셔너리는 모든 템플릿에서
+    # 변수처럼 쓸 수 있다. 화면마다 render_template 에 같은 값을 넘기지 않아도 된다.
+    @app.context_processor
+    def inject_roles():
+        from app import users
+
+        return {"role_names": users.ROLES}
+
     return app
 
 # 주의: 여기서 app = create_app() 을 실행하지 않는다.

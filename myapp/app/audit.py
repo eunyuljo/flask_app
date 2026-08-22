@@ -21,6 +21,7 @@ ALERT_OUTCOMES = ("rejected",)
 ACTIONS = {
     "console_command": "콘솔 명령",
     "ai_diagnose": "AI 진단",
+    "user_manage": "계정 관리",
 }
 
 ACTOR_KINDS = {"human": "사람", "agent": "모델"}

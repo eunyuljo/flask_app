@@ -722,3 +722,71 @@ def register_cli(app):
                 f"{a['customer']:<14}{a['account_id']:<16}{mode:<12}"
                 f"{','.join(a['regions']):<28}{'예' if a['enabled'] else '아니오'}"
             )
+
+    # ------------------------------------------------------------------
+    # 계정
+    # ------------------------------------------------------------------
+    # 화면(/admin/users) 에서도 같은 일을 할 수 있지만, 첫 계정만은 CLI 로
+    # 만들 수 있어야 한다. 화면에 들어가려면 이미 로그인이 되어 있어야 하고,
+    # 그 로그인은 코드에 적힌 기본 계정으로 하게 되기 때문이다.
+    @app.cli.command("add-user")
+    @click.argument("username")
+    @click.option("--role", default="operator", help="admin / operator / viewer")
+    @click.password_option(
+        "--password", prompt="비밀번호", confirmation_prompt="다시 입력",
+        help="8자 이상. 생략하면 물어본다(입력이 화면에 찍히지 않는다).",
+    )
+    def add_user(username, role, password):
+        """사용자를 만든다.
+
+        비밀번호를 인자로 직접 주지 않고 물어보게 한 이유:
+        명령줄에 적으면 셸 기록(~/.bash_history)과 프로세스 목록(ps)에 그대로 남는다.
+        """
+        from app import users
+
+        try:
+            user_id = users.create(username, password, role)
+        except users.UserError as e:
+            raise click.ClickException(str(e))
+        click.echo(f"계정 #{user_id} 생성: {username} ({users.ROLES[role]})")
+
+    @app.cli.command("list-users")
+    def list_users():
+        """계정 목록. 비밀번호 해시는 보여주지 않는다."""
+        from app import users
+
+        try:
+            rows = users.listing()
+        except users.UserError as e:
+            raise click.ClickException(str(e))
+        if not rows:
+            click.echo(
+                "계정이 없습니다. 지금은 코드에 적힌 기본 계정"
+                f"({users.BOOTSTRAP_USERNAME})으로 로그인됩니다.\n"
+                "  flask --app run add-user <이름> --role admin 으로 만드세요."
+            )
+            return
+        click.echo(f"{'아이디':<20}{'역할':<12}{'사용':<8}마지막 로그인")
+        for u in rows:
+            last = u["last_login_at"]
+            click.echo(
+                f"{u['username']:<20}{users.ROLES.get(u['role'], u['role']):<12}"
+                f"{'예' if u['enabled'] else '아니오':<8}"
+                f"{last.strftime('%Y-%m-%d %H:%M') if last else '없음'}"
+            )
+
+    @app.cli.command("passwd")
+    @click.argument("username")
+    @click.password_option(
+        "--password", prompt="새 비밀번호", confirmation_prompt="다시 입력",
+        help="8자 이상.",
+    )
+    def passwd(username, password):
+        """비밀번호를 바꾼다."""
+        from app import users
+
+        try:
+            users.set_password(username, password)
+        except users.UserError as e:
+            raise click.ClickException(str(e))
+        click.echo(f"{username} 의 비밀번호를 바꿨습니다.")
