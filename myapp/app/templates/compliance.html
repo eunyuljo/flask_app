@@ -16,6 +16,13 @@
   </p>
   <p class="muted">
     <a href="{{ url_for('compliance.exceptions') }}">예외 관리</a>
+    {% if chosen %}
+      &middot;
+      <a href="{{ url_for('compliance.download_xlsx', account=chosen.account_id, region=chosen.region) }}">
+        이 계정 엑셀로</a>
+      &middot;
+      <a href="{{ url_for('compliance.download_xlsx') }}">전체 계정 엑셀로</a>
+    {% endif %}
   </p>
 
   {% if error %}
@@ -48,7 +55,7 @@
       <div class="kpi"><span class="n">{{ summary.by_severity.critical }}</span><span class="k">critical</span></div>
       <div class="kpi"><span class="n">{{ summary.by_severity.high }}</span><span class="k">high</span></div>
       <div class="kpi"><span class="n">{{ summary.excused }}</span><span class="k">예외 처리됨</span></div>
-      <div class="kpi"><span class="n">{{ snapshot|length }}</span><span class="k">점검한 리소스</span></div>
+      <div class="kpi"><span class="n">{{ resources }}</span><span class="k">점검한 리소스</span></div>
     </div>
     <p class="muted">
       {{ chosen.account_id }} / {{ chosen.region }} &mdash;

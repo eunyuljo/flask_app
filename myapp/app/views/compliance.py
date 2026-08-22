@@ -8,11 +8,14 @@
 
 from datetime import datetime, timedelta, timezone
 
+from urllib.parse import quote
+
 from flask import (
-    Blueprint, render_template, request, redirect, url_for, session, flash
+    Blueprint, Response, render_template, request, redirect, url_for, session, flash
 )
 
 from app import audit, compliance
+from app.accounts import list_accounts, AccountError
 from app.compliance import ComplianceError
 
 compliance_bp = Blueprint("compliance", __name__)
@@ -23,6 +26,39 @@ def require_login():
     if not session.get("username"):
         flash("컴플라이언스 화면을 보려면 먼저 로그인해 주세요.", "error")
         return redirect(url_for("auth.login"))
+
+
+def _customers():
+    """계정 ID -> 고객사 이름. 보고서에 계정 번호만 찍히면 누구 것인지 모른다."""
+    try:
+        return {a["account_id"]: a["customer"] for a in list_accounts(enabled_only=False)}
+    except AccountError:
+        return {}
+
+
+def _report(target, names=None):
+    """계정+리전 하나의 점검 결과를 한 덩어리로 모은다.
+
+    화면과 엑셀이 같은 함수를 쓴다. 갈라놓으면 화면에는 있는데 보고서에는
+    없는 항목이 생기고, 그건 화면을 믿을 수 없다는 뜻이 된다.
+    """
+    names = names if names is not None else _customers()
+    violations, snap = compliance.evaluate(target["snapshot_id"], target["account_id"])
+    points = compliance.timeline(target["account_id"], target["region"])
+    return {
+        "account_id": target["account_id"],
+        "region": target["region"],
+        "customer": names.get(target["account_id"], ""),
+        "snapshot_id": target["snapshot_id"],
+        "collected_at": target["collected_at"],
+        "resources": len(snap),
+        "violations": violations,
+        "summary": compliance.summarize(violations),
+        "points": points,
+        "repeats": compliance.recurring(points),
+        "since": compliance.first_seen(points),
+        "exceptions": compliance.exceptions(target["account_id"]),
+    }
 
 
 @compliance_bp.route("/")
@@ -45,18 +81,18 @@ def index():
             chosen = t
             break
 
-    violations, summary, snapshot, points, repeats, since = [], None, None, [], [], {}
+    report = None
     if chosen and not error:
         try:
-            violations, snapshot = compliance.evaluate(
-                chosen["snapshot_id"], chosen["account_id"]
-            )
-            summary = compliance.summarize(violations)
-            points = compliance.timeline(chosen["account_id"], chosen["region"])
-            repeats = compliance.recurring(points)
-            since = compliance.first_seen(points)
+            report = _report(chosen)
         except ComplianceError as e:
             error = str(e)
+
+    violations = report["violations"] if report else []
+    summary = report["summary"] if report else None
+    points = report["points"] if report else []
+    repeats = report["repeats"] if report else []
+    since = report["since"] if report else {}
 
     # 항목별로 묶는다. 같은 위반이 리소스 열 개에 걸쳐 있으면
     # 줄 열 개보다 "이 항목에 열 개" 가 읽기 쉽다.
@@ -77,12 +113,73 @@ def index():
         error=error,
         grouped=grouped,
         summary=summary,
-        snapshot=snapshot,
+        resources=report["resources"] if report else 0,
         points=list(reversed(points)),   # 화면에는 최신순
         repeats=repeats,
         since=since,
         checks=compliance.CHECKS,
         severities=compliance.SEVERITIES,
+    )
+
+
+@compliance_bp.route("/download.xlsx")
+def download_xlsx():
+    """점검 결과를 엑셀로 내려받는다.
+
+    account 를 주면 그 계정만, 주지 않으면 전체를 한 권에 담는다.
+    고객사 보고는 계정 하나로 끝나지만 월간 내부 보고는 전체를 나란히 놓고 본다.
+    """
+    from app.compliance_xlsx import build, ExcelNotAvailable
+
+    account_id = request.args.get("account", "")
+    region = request.args.get("region", "")
+
+    try:
+        targets = compliance.latest_snapshots()
+    except ComplianceError as e:
+        flash(str(e), "error")
+        return redirect(url_for("compliance.index"))
+
+    if account_id:
+        targets = [
+            t for t in targets
+            if t["account_id"] == account_id and (not region or t["region"] == region)
+        ]
+    if not targets:
+        flash("내려받을 점검 결과가 없습니다. 먼저 리소스를 수집하세요.", "error")
+        return redirect(url_for("compliance.index"))
+
+    names = _customers()
+    try:
+        reports = [_report(t, names) for t in targets]
+        buf = build(reports)
+    except ExcelNotAvailable as e:
+        flash(str(e), "error")
+        return redirect(url_for("compliance.index", account=account_id, region=region))
+    except ComplianceError as e:
+        flash(str(e), "error")
+        return redirect(url_for("compliance.index", account=account_id, region=region))
+
+    stamp = reports[0]["collected_at"].strftime("%Y%m%d")
+    if account_id:
+        label = reports[0]["customer"] or account_id
+        name = f"컴플라이언스-{label}-{stamp}.xlsx"
+    else:
+        name = f"컴플라이언스-전체-{stamp}.xlsx"
+
+    # 파일 이름에 한글이 들어간다. HTTP 헤더는 latin-1 이라 그대로 넣으면
+    # 깨지거나 서버가 거부한다. RFC 5987 의 filename* 로 UTF-8 을 알려주고,
+    # 그걸 모르는 옛 클라이언트를 위해 ASCII 이름도 함께 준다.
+    ascii_name = f"compliance-{account_id or 'all'}-{stamp}.xlsx"
+    disposition = (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{quote(name)}"
+    )
+
+    return Response(
+        buf.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": disposition},
     )
 
 

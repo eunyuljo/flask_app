@@ -798,7 +798,9 @@ def register_cli(app):
     @click.option("--account", default="", help="계정 하나만 (비우면 전체)")
     @click.option("--severity", default="", help="이 심각도 이상만 (critical/high/medium/low)")
     @click.option("--slack", is_flag=True, help="critical 위반이 있으면 Slack 으로 알림")
-    def compliance_check(account, severity, slack):
+    @click.option("--xlsx", default="",
+                  help="보고용 엑셀을 이 경로에 쓴다 (--severity 와 무관하게 전체)")
+    def compliance_check(account, severity, slack, xlsx):
         """스냅샷을 기준으로 모범사례 점검을 돌린다.
 
         화면과 같은 결과를 낸다. 결과를 표에 저장하지 않으므로 이 명령은
@@ -866,6 +868,28 @@ def register_cli(app):
                 click.echo(f"  [재발    ] {r['resource_id']:<24} {r['title']} ({r['times']}번 열림)")
 
         click.echo(f"\n합계: 위반 {total}건")
+
+        if xlsx:
+            # 화면과 같은 자료를 그대로 쓴다. 정기 보고를 사람이 화면에서
+            # 눌러 받아야 한다면 결국 아무도 안 하게 된다.
+            from app.views.compliance import _report, _customers
+            from app.compliance_xlsx import build, ExcelNotAvailable
+
+            names = _customers()
+            try:
+                reports = [_report(t, names) for t in targets]
+                buf = build(reports)
+            except ExcelNotAvailable as e:
+                raise click.ClickException(str(e))
+            except ComplianceError as e:
+                raise click.ClickException(str(e))
+
+            with open(xlsx, "wb") as fh:
+                fh.write(buf.getvalue())
+            # --severity 를 걸어도 엑셀에는 전부 넣는다. 보고서는 기록이라
+            # 빠진 것이 있으면 안 되고, 심각도 열과 자동 필터가 있어서
+            # 받은 사람이 필요한 만큼 걸러 보면 된다.
+            click.echo(f"엑셀: {xlsx} ({len(buf.getvalue()):,} 바이트, 전체 항목)")
 
         if slack and worst_lines:
             from app import slack as slack_mod

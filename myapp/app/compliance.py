@@ -465,19 +465,29 @@ def drop_exception(exception_id):
 def run_checks(snap, excused=None):
     """스냅샷 한 장을 점검한다. DB 를 보지 않는 순수 함수다.
 
-    excused: {(check_id, resource_id)} 형태의 예외 집합.
-             resource_id 가 빈 문자열이면 그 항목 전체를 뺀다.
+    excused: 예외. 두 형태를 받는다.
+        {(check_id, resource_id)}          - 사유 없이 제외만
+        {(check_id, resource_id): "사유"}   - 사유까지
+
+    resource_id 가 빈 문자열이면 그 항목 전체를 뺀다.
 
     예외에 걸린 것도 빼버리지 않고 excused=True 로 함께 돌려준다.
     목록에서 사라지면 "예외가 몇 개나 쌓여 있는지" 를 아무도 모르게 된다.
     """
-    excused = excused or set()
+    excused = excused or {}
+    # set 으로 받으면 사유가 없는 dict 로 바꿔서 아래를 한 갈래로 만든다.
+    if not hasattr(excused, "get"):
+        excused = {key: "" for key in excused}
+
     found = []
     for check in CHECKS:
         for resource_id, detail in check["fn"](snap):
-            is_excused = (
-                (check["id"], resource_id) in excused
-                or (check["id"], "") in excused
+            # 리소스 하나짜리 예외를 먼저 본다. 계정 전체 예외보다
+            # 구체적인 쪽이 사유도 정확하다.
+            key = next(
+                (k for k in ((check["id"], resource_id), (check["id"], ""))
+                 if k in excused),
+                None,
             )
             found.append({
                 "check_id": check["id"],
@@ -487,7 +497,8 @@ def run_checks(snap, excused=None):
                 "why": check["why"],
                 "resource_id": resource_id,
                 "detail": detail,
-                "excused": is_excused,
+                "excused": key is not None,
+                "excuse_reason": excused.get(key, "") if key else "",
             })
 
     found.sort(key=lambda v: (SEVERITY_ORDER[v["severity"]], v["check_id"], v["resource_id"]))
@@ -502,14 +513,14 @@ def evaluate(snapshot_id, account_id=None):
 
         # 예외 조회를 먼저 끝낸다. 같은 커서로 중간에 다른 질의를 던지면
         # 앞선 결과가 덮어써진다 - 이 프로젝트에서 두 번 겪은 실수다.
-        excused = set()
+        excused = {}
         if _table_ready(cur, "compliance_exceptions") and account_id:
             cur.execute(
-                "SELECT check_id, resource_id FROM compliance_exceptions "
+                "SELECT check_id, resource_id, reason FROM compliance_exceptions "
                 "WHERE account_id = %s AND expires_at > now()",
                 (account_id,),
             )
-            excused = {(r[0], r[1]) for r in cur.fetchall()}
+            excused = {(r[0], r[1]): r[2] for r in cur.fetchall()}
 
         snap = load_snapshot(cur, snapshot_id)
 
@@ -544,14 +555,14 @@ def timeline(account_id, region, limit=20):
         if not _table_ready(cur, "resources"):
             raise ComplianceError("resources 테이블이 없습니다.")
 
-        excused = set()
+        excused = {}
         if _table_ready(cur, "compliance_exceptions"):
             cur.execute(
-                "SELECT check_id, resource_id FROM compliance_exceptions "
+                "SELECT check_id, resource_id, reason FROM compliance_exceptions "
                 "WHERE account_id = %s AND expires_at > now()",
                 (account_id,),
             )
-            excused = {(r[0], r[1]) for r in cur.fetchall()}
+            excused = {(r[0], r[1]): r[2] for r in cur.fetchall()}
 
         cur.execute(
             """
