@@ -8,6 +8,11 @@
 {% block page_title %}운영 리포트{% endblock %}
 
 {% block topbar %}
+  <p class="muted">
+    <a href="{{ url_for('report.msr_page') }}">월간 서비스 리뷰</a>
+    &mdash; 고객사 하나의 한 달치를 한 권으로
+  </p>
+
   <div class="filters">
     {% for d in allowed_days %}
       <a href="{{ url_for('report.index', days=d, summary='1' if want_summary else None) }}"

@@ -7,6 +7,10 @@ from flask import (
     session, flash, Response,
 )
 
+from urllib.parse import quote
+
+from app import msr
+from app.msr import MsrError
 from app.report import collect, to_markdown, resource_diff_summary, generate_summary, ReportError
 from app.report_pptx import build as build_pptx
 from app.agent_core import check_config as agent_check
@@ -194,3 +198,103 @@ def sla_target():
         flash(str(e), "error")
 
     return redirect(url_for("report.sla", customer=customer, days=_sla_days()))
+
+
+# ----------------------------------------------------------------------
+# 월간 서비스 리뷰 (MSR)
+# ----------------------------------------------------------------------
+# 새 블루프린트를 만들지 않고 report 에 붙였다. 접근 정책이 같고,
+# 성격도 같다 - 둘 다 "모은 숫자를 문서로 내보내는" 화면이다.
+#
+# 다른 점은 축이다. /report/ 는 전체를 기간으로 자르고,
+# 여기는 고객사 하나를 달로 자른다.
+
+
+def _msr_args():
+    """고객사와 연·월을 쿼리스트링에서 꺼낸다.
+
+    연·월이 숫자가 아니면 가장 최근 자료가 있는 달로 돌린다.
+    빈 화면을 내는 것보다 낫다.
+    """
+    customer_name = request.args.get("customer", "")
+    try:
+        year = int(request.args.get("year", ""))
+        month = int(request.args.get("month", ""))
+    except ValueError:
+        year = month = 0
+    if not (1 <= month <= 12):
+        year = month = 0
+    return customer_name, year, month
+
+
+@report_bp.route("/msr")
+def msr_page():
+    """고객사 하나의 한 달치를 한 화면에."""
+    from app.customer import names as customer_names, CustomerError
+
+    error, all_names, months, data = None, [], [], None
+    try:
+        all_names = customer_names()
+    except CustomerError as e:
+        error = str(e)
+
+    try:
+        months = msr.available_months()
+    except MsrError as e:
+        error = error or str(e)
+
+    customer_name, year, month = _msr_args()
+    if all_names and customer_name not in all_names:
+        customer_name = all_names[0]
+    if not year and months:
+        year, month = months[0]["year"], months[0]["month"]
+
+    if customer_name and year and not error:
+        try:
+            data = msr.collect(customer_name, year, month)
+        except MsrError as e:
+            error = str(e)
+
+    from app.work import STATUS_LABEL as work_labels
+
+    return render_template(
+        "msr.html",
+        names=all_names, months=months, error=error,
+        customer=customer_name, year=year, month=month, data=data,
+        # 상태 이름은 app/work.py 것을 그대로 쓴다. 여기서 따로 적으면
+        # 작업 화면과 보고서가 같은 상태를 다른 말로 부르게 된다.
+        work_labels=work_labels,
+    )
+
+
+@report_bp.route("/msr/download.pptx")
+def msr_download():
+    """월간 리뷰 자료를 PowerPoint 로 내려받는다."""
+    from app.msr_pptx import build as build_msr
+
+    customer_name, year, month = _msr_args()
+    if not customer_name or not year:
+        flash("고객사와 연·월을 골라 주세요.", "error")
+        return redirect(url_for("report.msr_page"))
+
+    try:
+        data = msr.collect(customer_name, year, month)
+    except MsrError as e:
+        flash(str(e), "error")
+        return redirect(url_for("report.msr_page", customer=customer_name))
+
+    buf = build_msr(data)
+
+    # 파일 이름에 고객사 이름(한글)이 들어간다. HTTP 헤더는 latin-1 이라
+    # 그대로 넣으면 깨진다. 엑셀 내려받기와 같은 방식으로 처리한다.
+    name = f"MSR-{customer_name}-{year}{month:02d}.pptx"
+    ascii_name = f"msr-{year}{month:02d}.pptx"
+    disposition = (
+        f'attachment; filename="{ascii_name}"; '
+        f"filename*=UTF-8''{quote(name)}"
+    )
+    return Response(
+        buf.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={"Content-Disposition": disposition},
+    )

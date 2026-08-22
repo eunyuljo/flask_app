@@ -127,12 +127,23 @@ def delete_target(customer, severity):
 # 집계
 # ----------------------------------------------------------------------
 
-def measure(customer, days=30):
+def measure(customer, days=30, start=None, end=None):
     """이 고객사의 최초 대응 시간을 잰다.
 
     알람 하나마다: 발생 시각 이후 그 계정에 대한 첫 감사 기록까지의 분.
     감사 기록이 없으면 '미대응' 으로 센다.
+
+    기본은 '지금부터 거슬러 days 일'. start/end 를 주면 그 구간만 잰다.
+    월간 서비스 리뷰처럼 '8월' 을 집계할 때는 '지난 30일' 이 8월과
+    맞지 않아서 구간을 직접 받아야 한다.
     """
+    # 구간을 받았으면 그쪽을 쓴다. 두 갈래를 만들지 않으려고 아래 질의는
+    # 항상 start/end 로 쓰고, 안 받았을 때만 여기서 만들어 넣는다.
+    if start is None or end is None:
+        from datetime import datetime, timedelta, timezone
+
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=days)
     with _connect() as conn, conn.cursor() as cur:
         _ensure(cur, "audit_log")
         _ensure(cur, "sla_targets")
@@ -143,8 +154,9 @@ def measure(customer, days=30):
         account_ids = [r[0] for r in cur.fetchall()]
         if not account_ids:
             return {
-                "customer": customer, "days": days, "accounts": [],
-                "by_severity": [], "total": 0, "measured": 0, "unattributed": 0,
+                "customer": customer, "days": days, "start": start, "end": end,
+                "accounts": [], "by_severity": [], "total": 0,
+                "measured": 0, "unattributed": 0,
             }
 
         # 알람마다 '그 계정을 그 시각 이후 처음 들여다본 때' 를 붙인다.
@@ -172,18 +184,18 @@ def measure(customer, days=30):
                      LIMIT 1
                    ) a ON true
              WHERE e.account_id = ANY(%s)
-               AND e.occurred_at >= now() - make_interval(days => %s)
+               AND e.occurred_at >= %s AND e.occurred_at < %s
              GROUP BY e.severity
             """,
-            (account_ids, days),
+            (account_ids, start, end),
         )
         measured = {r["severity"]: r for r in _rows(cur)}
 
         # 계정을 모르는 이벤트. 이 수가 크면 위 숫자가 전체를 대표하지 못한다.
         cur.execute(
             "SELECT count(*) FROM events WHERE account_id = '' "
-            "AND occurred_at >= now() - make_interval(days => %s)",
-            (days,),
+            "AND occurred_at >= %s AND occurred_at < %s",
+            (start, end),
         )
         unattributed = cur.fetchone()[0]
 
@@ -216,6 +228,8 @@ def measure(customer, days=30):
     return {
         "customer": customer,
         "days": days,
+        "start": start,
+        "end": end,
         "accounts": account_ids,
         "by_severity": rows,
         "total": sum(r["total"] for r in rows),

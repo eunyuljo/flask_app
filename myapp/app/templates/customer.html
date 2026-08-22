@@ -12,6 +12,13 @@
     <div class="flash error">{{ error }}</div>
   {% endif %}
 
+  {% if selected %}
+    <p class="muted">
+      <a href="{{ url_for('customer.readiness_page', name=selected) }}">온보딩 준비도</a>
+      &mdash; 이 고객사를 받을 준비가 됐는지
+    </p>
+  {% endif %}
+
   {% if names %}
     <p class="muted">
       고객사:

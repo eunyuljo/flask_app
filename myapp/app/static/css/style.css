@@ -878,3 +878,17 @@ table.sla-table td { padding: 8px 12px 8px 0; white-space: nowrap; }
 .tl-line.open  { color: var(--sev-critical); }
 .tl-line.close { color: var(--ok-fg); }
 .tl-line code { color: inherit; }
+
+/* --- 온보딩 준비도 --- */
+/* 상태를 색으로만 구분하지 않는다. 배지에 글자가 함께 있어서
+   색을 구분하지 못해도 읽을 수 있다. */
+.event.rd-ok      { border-left-color: var(--sev-info); }
+.event.rd-warn    { border-left-color: var(--sev-warning); }
+.event.rd-missing { border-left-color: var(--sev-critical); }
+.event.rd-unknown { border-left-color: var(--border); }
+.rd-ok .badge      { background: var(--ok-bg);   color: var(--ok-fg); }
+.rd-warn .badge    { background: var(--warn-bg); color: var(--warn-fg); }
+.rd-missing .badge { background: var(--err-bg);  color: var(--err-fg); }
+.rd-unknown .badge { background: var(--info-bg); color: var(--info-fg); }
+.rd-how { margin-top: 6px; font-size: .84rem; }
+.rd-how code { white-space: pre-wrap; overflow-wrap: anywhere; }

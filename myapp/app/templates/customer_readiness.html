@@ -1,0 +1,111 @@
+{# templates/customer_readiness.html
+   customer 블루프린트의 readiness_page() 가 렌더링하는 온보딩 준비도.
+
+   컴플라이언스는 '고객사의 AWS 리소스가 기준에 맞는가' 를 보고,
+   여기는 '우리 쪽 설정이 갖춰져 있는가' 를 본다. 구조는 같다. #}
+
+{% extends "base.html" %}
+
+{% block title %}온보딩 준비도{% endblock %}
+{% block page_title %}온보딩 준비도{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    <a href="{{ url_for('customer.index', name=selected) }}">&larr; 고객사 현황</a>
+  </p>
+  <p class="muted">
+    신규 고객사를 받을 때 할 일이 여러 화면과 명령에 흩어져 있습니다.
+    어느 하나만 빠져도 <strong>오류가 아니라 조용한 없음</strong>이 되어,
+    사고가 나고 나서야 압니다. 여기서 한 번에 봅니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if names %}
+    <p class="muted">
+      고객사:
+      {% for n in names %}
+        {% if n == selected %}<strong>{{ n }}</strong>
+        {% else %}<a href="{{ url_for('customer.readiness_page', name=n) }}">{{ n }}</a>{% endif %}
+        {% if not loop.last %}&middot;{% endif %}
+      {% endfor %}
+    </p>
+  {% else %}
+    <p class="muted">
+      등록된 고객사가 없습니다.
+      <code>flask --app run add-account</code> 로 계정을 먼저 등록하세요.
+    </p>
+  {% endif %}
+
+  {% if summary %}
+    <div class="kpis">
+      <div class="kpi"><span class="n">{{ summary.done }}/{{ summary.total }}</span><span class="k">갖춰진 항목</span></div>
+      <div class="kpi"><span class="n">{{ summary.blocking }}</span><span class="k">막고 있는 필수 항목</span></div>
+      {% if summary.unknown %}
+        <div class="kpi"><span class="n">{{ summary.unknown }}</span><span class="k">판단 불가</span></div>
+      {% endif %}
+    </div>
+
+    {# 퍼센트를 쓰지 않는다. 필수가 빠져 있어도 90% 가 나올 수 있고,
+       그러면 "거의 다 됐다" 로 읽힌다. #}
+    {% if summary.ready %}
+      <div class="flash success">
+        <strong>필수 항목이 모두 갖춰졌습니다.</strong>
+        {{ selected }} 을(를) 정식으로 받을 수 있는 상태입니다.
+      </div>
+    {% else %}
+      <div class="flash error">
+        <strong>필수 항목 {{ summary.blocking }}개가 비어 있습니다.</strong>
+        이 상태로 운영을 시작하면 알람은 들어오는데 아무도 안 불리거나,
+        기준이 없어 위반 판정이 안 되는 일이 생깁니다.
+      </div>
+    {% endif %}
+  {% endif %}
+
+  {% for r in results %}
+    <div class="event rd-{{ r.status }}">
+      <div class="event-head">
+        <span class="badge">{{ labels[r.status] }}</span>
+        <strong>{{ r.title }}</strong>
+        <span class="muted">{{ levels[r.level] }}</span>
+      </div>
+      <div>{{ r.detail }}</div>
+      <div class="muted">{{ r.why }}</div>
+      {% if r.status != 'ok' %}
+        <div class="rd-how">
+          {% if r.how.startswith('endpoint:') %}
+            {% set ep = r.how[9:] %}
+            고치는 곳:
+            <a href="{{ url_for(ep) }}">{{ endpoint_labels.get(ep, ep) }}</a>
+          {% else %}
+            <code>{{ r.how }}</code>
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+  {% endfor %}
+
+  {% if facts and facts.runbook_gaps %}
+    <hr>
+    <h2>절차가 없는 알람</h2>
+    <p class="muted">
+      최근 30일간 critical·error 로 들어왔는데 런북이 붙어 있지 않은 것들입니다.
+      잦은 것부터 채우면 당직자가 바뀌어도 대응이 같아집니다.
+    </p>
+    <table class="rows">
+      <tr><th>횟수</th><th>알람</th><th></th></tr>
+      {% for g in facts.runbook_gaps %}
+        <tr>
+          <td>{{ g.times }}회</td>
+          <td>{{ g.sample }}</td>
+          <td>
+            <a href="{{ url_for('runbook.new', fingerprint=g.fingerprint,
+                                sample=g.sample, title=g.sample[:60]) }}">절차 만들기</a>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+{% endblock %}

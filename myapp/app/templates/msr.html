@@ -1,0 +1,213 @@
+{# templates/msr.html
+   report 블루프린트의 msr_page() 가 렌더링하는 월간 서비스 리뷰.
+
+   /report/ 는 전체를 기간으로 자르고, 여기는 고객사 하나를 달로 자른다.
+   숫자는 전부 다른 화면에 이미 있는 것이고, 없던 것은 '한 권으로 묶인 것'이다. #}
+
+{% extends "base.html" %}
+
+{% block title %}월간 서비스 리뷰{% endblock %}
+{% block page_title %}월간 서비스 리뷰{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    <a href="{{ url_for('report.index') }}">&larr; 리포트</a>
+  </p>
+  <p class="muted">
+    고객사 하나의 한 달치입니다. 리포트가 <strong>지난 7일</strong>처럼 지금부터
+    거슬러 세는 것과 달리, 여기는 <strong>달력의 한 달</strong>을 셉니다 &mdash;
+    "8월 보고"는 8월 1일부터 31일까지지, 오늘부터 30일 전까지가 아니기 때문입니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if names %}
+    <p class="muted">
+      고객사:
+      {% for n in names %}
+        {% if n == customer %}<strong>{{ n }}</strong>
+        {% else %}<a href="{{ url_for('report.msr_page', customer=n, year=year, month=month) }}">{{ n }}</a>{% endif %}
+        {% if not loop.last %}&middot;{% endif %}
+      {% endfor %}
+    </p>
+  {% endif %}
+
+  {% if months %}
+    <p class="muted">
+      기간:
+      {% for m in months %}
+        {% if m.year == year and m.month == month %}
+          <strong>{{ m.year }}-{{ '%02d' % m.month }}</strong>
+        {% else %}
+          <a href="{{ url_for('report.msr_page', customer=customer, year=m.year, month=m.month) }}">{{ m.year }}-{{ '%02d' % m.month }}</a>
+        {% endif %}
+        {% if not loop.last %}&middot;{% endif %}
+      {% endfor %}
+    </p>
+  {% else %}
+    <p class="muted">집계할 이벤트가 없습니다.</p>
+  {% endif %}
+
+  {% if data %}
+    <div class="filters">
+      <a class="chip" href="{{ url_for('report.msr_download', customer=customer, year=year, month=month) }}">
+        PowerPoint 로 내려받기
+      </a>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi">
+        <span class="n">{{ data.alarms.total }}</span>
+        <span class="k">알람{% if data.alarms.change is not none %}
+          ({{ '+' if data.alarms.change > 0 }}{{ data.alarms.change }}%){% endif %}</span>
+      </div>
+      <div class="kpi"><span class="n">{{ data.incidents|length }}</span><span class="k">장애</span></div>
+      <div class="kpi"><span class="n">{{ data.works|length }}</span><span class="k">작업</span></div>
+      <div class="kpi">
+        <span class="n">{% if data.compliance %}{{ data.compliance.total }}{% else %}—{% endif %}</span>
+        <span class="k">컴플라이언스 위반</span>
+      </div>
+    </div>
+
+    {% if data.notes %}
+      <div class="flash warn-flash">
+        {% for n in data.notes %}<div>{{ n }}</div>{% endfor %}
+      </div>
+    {% endif %}
+
+    {# 제안을 위에 둔다. 숫자를 다 읽고 나서야 할 일이 나오면,
+       바쁜 사람은 숫자만 보고 닫는다. #}
+    <hr>
+    <h2>다음 달 계획 <span class="muted">(자동 초안 — 미팅 전에 손보세요)</span></h2>
+    {% for a in data.actions %}
+      <div class="event">
+        <div class="event-head">
+          <span class="badge">{{ a.kind }}</span>
+          <strong>{{ a.text }}</strong>
+        </div>
+        <div class="muted">{{ a.why }}</div>
+      </div>
+    {% endfor %}
+
+    <hr>
+    <h2>최초 대응 시간</h2>
+    {% if data.sla and data.sla.by_severity %}
+      <table class="rows">
+        <tr><th>등급</th><th>목표</th><th>알람</th><th>중앙값</th><th>최악</th><th>판정</th></tr>
+        {% for r in data.sla.by_severity %}
+          <tr>
+            <td>{{ r.severity }}</td>
+            <td>{% if r.tracked %}{{ r.target_minutes }}분{% else %}<span class="muted">목표 없음</span>{% endif %}</td>
+            <td>{{ r.total }}건</td>
+            <td>{% if r.tracked %}{{ r.median_minutes }}분{% else %}—{% endif %}</td>
+            <td>{% if r.tracked %}{{ r.worst_minutes }}분{% else %}—{% endif %}</td>
+            <td>
+              {% if not r.tracked %}<span class="muted">집계 제외</span>
+              {% elif r.met %}달성
+              {% else %}<strong>미달</strong>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+      <p class="muted">
+        목표가 0분인 등급은 집계에서 뺍니다 &mdash;
+        목표 없음을 항상 달성으로 보여주면 지표가 거짓말을 합니다.
+      </p>
+    {% else %}
+      <p class="muted">집계할 자료가 없습니다.</p>
+    {% endif %}
+
+    <hr>
+    <h2>장애 <span class="muted">({{ data.incidents|length }}건)</span></h2>
+    {% if data.incidents %}
+      <table class="rows">
+        <tr><th>번호</th><th>제목</th><th>등급</th><th>시작(UTC)</th><th>고객 보고</th></tr>
+        {% for i in data.incidents %}
+          <tr>
+            <td><a href="{{ url_for('incident.detail', incident_id=i.id) }}">#{{ i.id }}</a></td>
+            <td>{{ i.title }}</td>
+            <td>{{ i.severity }}</td>
+            <td>{{ i.started_at.strftime('%m-%d %H:%M') }}</td>
+            <td>
+              {% if i.customer_status == 'sent' %}제출 완료
+              {% else %}<strong>미제출</strong>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <p class="muted">이번 달에 기록된 장애가 없습니다.</p>
+    {% endif %}
+
+    <hr>
+    <h2>작업 <span class="muted">({{ data.works|length }}건)</span></h2>
+    {% if data.works %}
+      <table class="rows">
+        <tr><th>티켓</th><th>작업</th><th>계정</th><th>담당</th><th>상태</th></tr>
+        {% for w in data.works %}
+          <tr>
+            <td><a href="{{ url_for('work.detail', work_id=w.id) }}">{{ w.ticket or '#' ~ w.id }}</a></td>
+            <td>{{ w.title }}</td>
+            <td><code>{{ w.account_id }}</code></td>
+            <td>{{ w.operator }}</td>
+            <td>
+              {%- if w.status == 'closed' %}증적 확정
+              {%- else %}<strong>{{ work_labels.get(w.status, w.status) }}</strong>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <p class="muted">이번 달에 기록된 작업이 없습니다.</p>
+    {% endif %}
+
+    <hr>
+    <h2>자주 발생한 알람</h2>
+    {% if data.top_alarms %}
+      <table class="rows">
+        <tr><th>횟수</th><th>등급</th><th>알람</th><th>대응 절차</th></tr>
+        {% for a in data.top_alarms %}
+          <tr>
+            <td>{{ a.times }}회</td>
+            <td>{{ a.severity }}</td>
+            <td>{{ a.sample }}</td>
+            <td>
+              {% if a.has_runbook %}<span class="muted">있음</span>
+              {% else %}
+                <a href="{{ url_for('runbook.new', fingerprint=a.fingerprint,
+                                    sample=a.sample, title=a.sample[:60]) }}">만들기</a>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <p class="muted">집계할 알람이 없습니다.</p>
+    {% endif %}
+
+    {% if data.compliance %}
+      <hr>
+      <h2>컴플라이언스 <span class="muted">(지금 기준)</span></h2>
+      <p class="muted">
+        지난달 말이 아니라 <strong>지금 남아 있는 위반</strong>을 붙입니다.
+        고객사가 보고서를 받아 드는 시점에 알고 싶은 것은 그쪽이기 때문입니다.
+        <a href="{{ url_for('compliance.index') }}">컴플라이언스 화면</a>
+      </p>
+      <table class="rows">
+        <tr><th>심각도</th><th>항목</th><th>리소스</th><th>근거</th></tr>
+        {% for v in data.compliance.worst %}
+          <tr>
+            <td>{{ v.severity }}</td>
+            <td>{{ v.title }}</td>
+            <td><code>{{ v.resource_id }}</code></td>
+            <td class="muted">{{ v.standard }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="muted">즉시 조치가 필요한 항목이 없습니다.</td></tr>
+        {% endfor %}
+      </table>
+    {% endif %}
+  {% endif %}
+{% endblock %}
