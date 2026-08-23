@@ -1,0 +1,152 @@
+{# templates/report_deliveries.html
+   report 블루프린트의 deliveries() 가 렌더링하는 발송 기록. #}
+
+{% extends "base.html" %}
+
+{% block title %}발송 기록{% endblock %}
+{% block page_title %}발송 기록{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    무엇을 <strong>누구에게 어떤 경로로</strong> 보냈는지 남깁니다.
+    다운로드 기록이 아닙니다 — 파일을 내려받은 것을 발송으로 세면
+    확인하려고 열어본 것까지 전부 발송이 되어, 이 화면이 아무 뜻도
+    없어집니다. 사람이 보냈다고 누른 것만 여기 있습니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if stats and stats.rows %}
+    <h2>최근 {{ stats.days }}일 <span class="muted">고객사별</span></h2>
+    <table class="rows">
+      <tr><th>고객사</th><th>발송</th><th>마지막</th></tr>
+      {% for r in stats.rows %}
+        <tr>
+          <td>{{ r.customer }}</td>
+          <td>
+            {{ r.total }}건
+            <span class="muted">
+              (월간 리뷰 {{ r.msr }} &middot; 장애 보고서 {{ r.incident }})
+            </span>
+          </td>
+          <td>{{ r.last_at.strftime('%Y-%m-%d') }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+
+  <hr>
+  <p class="muted">
+    고객사:
+    {% if not selected %}<strong>전체</strong>
+    {% else %}<a href="{{ url_for('report.deliveries') }}">전체</a>{% endif %}
+    {% for c in customers %}
+      &middot;
+      {% if c == selected %}<strong>{{ c }}</strong>
+      {% else %}
+        <a href="{{ url_for('report.deliveries', customer=c) }}">{{ c }}</a>
+      {% endif %}
+    {% endfor %}
+  </p>
+
+  <h2>기록 <span class="muted">({{ items|length }}건)</span></h2>
+
+  {% if not items %}
+    <p class="muted">
+      {% if selected %}이 고객사에 보낸 기록이 없습니다.
+      {% else %}아직 기록이 없습니다.{% endif %}
+    </p>
+  {% endif %}
+
+  {% for d in items %}
+    <div class="event">
+      <div class="event-head">
+        <span class="badge">{{ kinds.get(d.kind, d.kind) }}</span>
+        <strong>{{ d.title or d.ref or '(제목 없음)' }}</strong>
+        <span class="muted">{{ d.customer }}</span>
+      </div>
+      <div class="muted">
+        {{ d.sent_at.strftime('%Y-%m-%d %H:%M') }}
+        &middot; {{ channels.get(d.channel, d.channel) }}
+        &middot; {{ d.sent_by or '누군가' }}
+      </div>
+      <div class="muted">받는 사람: {{ d.recipients }}</div>
+      {% if d.note %}<div class="rb-body">{{ d.note }}</div>{% endif %}
+    </div>
+  {% endfor %}
+
+  <hr>
+  <h2>발송 기록하기</h2>
+  <p class="muted">
+    보고서를 내려받아 메일로 보냈다면 여기에 한 줄 남겨 주세요.
+    나중에 "그거 받으셨나요"를 물었을 때 답할 근거가 됩니다.
+  </p>
+
+  <form action="{{ url_for('report.deliveries_record') }}" method="post"
+        class="wo-form">
+    <div class="row-2">
+      <label>
+        고객사
+        <select name="customer" required>
+          {% for c in customers %}
+            <option value="{{ c }}" {% if c == selected %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        산출물
+        <select name="kind">
+          {% for key, label in kinds.items() %}
+            <option value="{{ key }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <div class="row-2">
+      <label>
+        경로
+        <select name="channel">
+          {% for key, label in channels.items() %}
+            <option value="{{ key }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        무엇 <span class="muted">기간이나 번호</span>
+        <input type="text" name="ref" placeholder="예) 2026-08">
+      </label>
+    </div>
+
+    <label>
+      제목
+      <input type="text" name="title" placeholder="예) 2026년 8월 월간 리뷰">
+    </label>
+
+    <label>
+      받는 사람
+      <input type="text" name="recipients" required value="{{ suggested }}"
+             placeholder="예) 김운영 &lt;ops@example.com&gt;">
+    </label>
+    {% if selected and suggested %}
+      <p class="muted">
+        고객사 연락처의 '보고 수신' 에서 채웠습니다. 그때 보낸 값이 그대로
+        남으므로, 담당자가 바뀌어도 지난 기록은 바뀌지 않습니다.
+      </p>
+    {% elif selected %}
+      <p class="muted">
+        이 고객사에 <a href="{{ url_for('customer.index', name=selected) }}">보고 수신
+        연락처</a>가 없어 비어 있습니다.
+      </p>
+    {% endif %}
+
+    <label>
+      메모 <span class="muted">비워도 됩니다</span>
+      <input type="text" name="note">
+    </label>
+
+    <button type="submit">기록</button>
+  </form>
+{% endblock %}

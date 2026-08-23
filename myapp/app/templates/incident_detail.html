@@ -174,14 +174,53 @@
     </form>
 
     {% if item.customer_status != 'none' %}
-      <form action="{{ url_for('incident.customer_send', incident_id=item.id) }}" method="post">
+      <form action="{{ url_for('incident.customer_send', incident_id=item.id) }}"
+            method="post" class="wo-form">
         <p class="muted">
           제출하면 더 이상 고칠 수 없습니다. 경과와 원인이 비어 있으면 제출되지 않습니다.
+        </p>
+        {# 상태만 바꾸고 끝내면 누구에게 어떤 경로로 냈는지가 남지 않는다.
+           나중에 "그거 받으셨나요" 에 답할 근거가 여기서 생긴다. #}
+        <div class="row-2">
+          <label>
+            받는 사람
+            <input type="text" name="recipients" value="{{ suggested }}"
+                   placeholder="예) 김운영 &lt;ops@example.com&gt;">
+          </label>
+          <label>
+            경로
+            <select name="channel">
+              {% for key, label in channels.items() %}
+                <option value="{{ key }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+        </div>
+        <p class="muted">
+          비워두면 상태만 바뀌고 발송 기록은 남지 않습니다.
         </p>
         <button type="submit">고객사 제출 상태로 바꾸기</button>
       </form>
     {% endif %}
   {% else %}
+    {% if sent %}
+      <h3>발송 기록</h3>
+      <table class="rows">
+        <tr><th>보낸 때</th><th>누구에게</th></tr>
+        {% for d in sent %}
+          <tr>
+            <td>
+              {{ d.sent_at.strftime('%Y-%m-%d %H:%M') }}
+              <div class="muted">
+                {{ channels.get(d.channel, d.channel) }} &middot; {{ d.sent_by }}
+              </div>
+            </td>
+            <td>{{ d.recipients }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% endif %}
+
     {% for field in ['customer_impact', 'customer_timeline', 'customer_cause',
                      'customer_action', 'customer_prevention'] %}
       <h3>{{ customer_field_labels[field] }}</h3>

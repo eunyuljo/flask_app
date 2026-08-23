@@ -57,6 +57,46 @@
       </a>
     </div>
 
+    {# 자료를 만드는 것과 보내는 것은 다른 일이다. 내려받은 것을 발송으로
+       세면 확인하려고 열어본 것까지 전부 발송이 된다. #}
+    {% if sent %}
+      <div class="flash">
+        이 달치를 보낸 기록이 {{ sent|length }}건 있습니다:
+        {% for d in sent %}
+          {{ d.sent_at.strftime('%Y-%m-%d') }}
+          ({{ channels.get(d.channel, d.channel) }}, {{ d.recipients }}){% if not loop.last %} · {% endif %}
+        {% endfor %}
+      </div>
+    {% else %}
+      <details class="rb-fold">
+        <summary>이 달치를 보냈다고 기록하기</summary>
+        <form action="{{ url_for('report.deliveries_record') }}" method="post"
+              class="wo-form">
+          <input type="hidden" name="customer" value="{{ customer }}">
+          <input type="hidden" name="kind" value="msr">
+          <input type="hidden" name="ref" value="{{ msr_ref }}">
+          <input type="hidden" name="title" value="{{ year }}년 {{ month }}월 월간 리뷰">
+          <input type="hidden" name="back" value="{{ request.full_path }}">
+          <div class="row-2">
+            <label>
+              받는 사람
+              <input type="text" name="recipients" required value="{{ suggested }}"
+                     placeholder="예) 김운영 &lt;ops@example.com&gt;">
+            </label>
+            <label>
+              경로
+              <select name="channel">
+                {% for key, label in channels.items() %}
+                  <option value="{{ key }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </div>
+          <button type="submit">기록</button>
+        </form>
+      </details>
+    {% endif %}
+
     <div class="kpis">
       <div class="kpi">
         <span class="n">{{ data.alarms.total }}</span>

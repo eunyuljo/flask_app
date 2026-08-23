@@ -13,12 +13,13 @@ from flask import (
     session, flash, Response, current_app
 )
 
-from app import handoff, incident
+from app import delivery, handoff, incident
 from app.accounts import list_accounts, get_account, by_customer, AccountError
 from app.incident import (
     IncidentError, STATUS_LABEL, FIELD_LABEL, NARRATIVE_FIELDS,
     CUSTOMER_FIELDS, CUSTOMER_FIELD_LABEL, CUSTOMER_STATUS_LABEL,
 )
+from app.delivery import DeliveryError
 from app.rca import to_markdown, to_customer_markdown, to_jira
 from app import audit
 
@@ -181,6 +182,10 @@ def detail(incident_id):
                     seen.add(other["id"])
                     related.append(other)
 
+    # 이 보고서를 실제로 보낸 기록. customer_status 는 '냈다' 까지만
+    # 알고 누구에게 어떤 경로로 보냈는지는 모른다.
+    sent = delivery.for_ref("incident", incident_id)
+
     # 사람이 지목한 지문. 나머지는 시간 겹침으로 딸려온 것이라 화면에서
     # 구분한다. 못 읽어도 상세 화면은 떠야 한다.
     try:
@@ -203,6 +208,8 @@ def detail(incident_id):
     return render_template(
         "incident_detail.html",
         item=item, data=data, error=error, related=related, origins=origins,
+        sent=sent, channels=delivery.CHANNELS,
+        suggested=delivery.suggest_recipients(item["customer"]),
         labels=STATUS_LABEL, field_labels=FIELD_LABEL,
         customer_labels=CUSTOMER_STATUS_LABEL,
         customer_field_labels=CUSTOMER_FIELD_LABEL,
@@ -311,9 +318,35 @@ def customer_send(incident_id):
     """고객 제출본을 제출 상태로 바꾼다."""
     try:
         incident.send_customer(incident_id)
-        flash("고객사 제출 상태로 바꿨습니다. 이제 내용을 고칠 수 없습니다.", "success")
     except IncidentError as e:
         flash(str(e), "error")
+        return redirect(url_for("incident.detail", incident_id=incident_id))
+
+    # 상태만 바꾸고 끝내지 않는다. 누구에게 어떤 경로로 냈는지가 없으면
+    # 나중에 "그거 받으셨나요" 에 답할 근거가 없다.
+    #
+    # 기록에 실패해도 제출 자체는 되돌리지 않는다. 상태는 이미 바뀌었고,
+    # 부수적인 기록 때문에 사람이 한 일을 무르는 편이 더 나쁘다.
+    item = incident.get(incident_id)
+    recipients = request.form.get("recipients", "")
+    channel = request.form.get("channel", "email")
+    note = ""
+    if recipients.strip():
+        try:
+            delivery.record(
+                customer=(item or {}).get("customer", ""),
+                kind="incident", channel=channel,
+                sent_by=session.get("username", ""),
+                ref=str(incident_id), title=(item or {}).get("title", ""),
+                recipients=recipients,
+            )
+        except DeliveryError as e:
+            note = f" 다만 발송 기록에 실패했습니다: {e}"
+    else:
+        note = " 받는 사람을 적지 않아 발송 기록은 남기지 않았습니다."
+
+    flash("고객사 제출 상태로 바꿨습니다. 이제 내용을 고칠 수 없습니다." + note,
+          "success")
     return redirect(url_for("incident.detail", incident_id=incident_id))
 
 

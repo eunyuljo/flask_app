@@ -9,7 +9,9 @@ from flask import (
 
 from urllib.parse import quote
 
-from app import msr
+from app import delivery, msr
+from app.customer import names as customer_names, CustomerError
+from app.delivery import DeliveryError
 from app.msr import MsrError
 from app.report import collect, to_markdown, resource_diff_summary, generate_summary, ReportError
 from app.report_pptx import build as build_pptx
@@ -257,10 +259,20 @@ def msr_page():
 
     from app.work import STATUS_LABEL as work_labels
 
+    # 이 달치를 실제로 보냈나. 자료를 만드는 것과 보내는 것은 다른 일이고,
+    # 지금까지는 뒤쪽이 아무 데도 안 남았다.
+    ref = f"{year}-{month:02d}" if year and month else ""
+    sent = [d for d in delivery.for_ref("msr", ref)
+            if d["customer"] == customer_name] if ref else []
+
     return render_template(
         "msr.html",
         names=all_names, months=months, error=error,
         customer=customer_name, year=year, month=month, data=data,
+        sent=sent, msr_ref=ref,
+        channels=delivery.CHANNELS,
+        suggested=delivery.suggest_recipients(customer_name)
+                  if customer_name else "",
         # 상태 이름은 app/work.py 것을 그대로 쓴다. 여기서 따로 적으면
         # 작업 화면과 보고서가 같은 상태를 다른 말로 부르게 된다.
         work_labels=work_labels,
@@ -298,3 +310,59 @@ def msr_download():
         mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         headers={"Content-Disposition": disposition},
     )
+
+
+# 최종 URL: /report/deliveries
+@report_bp.route("/deliveries")
+def deliveries():
+    """무엇을 누구에게 언제 보냈나.
+
+    다운로드 기록이 아니다. 파일을 내려받은 것을 발송으로 세면 확인하려고
+    열어본 것까지 전부 발송이 되고, 그러면 이 화면이 아무 뜻도 없어진다.
+    사람이 보냈다고 누른 것만 여기 있다.
+    """
+    error, items, stats, names = None, [], None, []
+    selected = request.args.get("customer", "")
+
+    try:
+        items = delivery.recent(selected)
+        stats = delivery.summary()
+    except DeliveryError as e:
+        error = str(e)
+
+    try:
+        names = customer_names()
+    except CustomerError:
+        names = []
+
+    return render_template(
+        "report_deliveries.html",
+        items=items, stats=stats, error=error,
+        customers=names, selected=selected,
+        kinds=delivery.KINDS, channels=delivery.CHANNELS,
+        suggested=delivery.suggest_recipients(selected) if selected else "",
+    )
+
+
+# 최종 URL: /report/deliveries/record
+@report_bp.route("/deliveries/record", methods=["POST"])
+def deliveries_record():
+    """보냈다는 기록을 남긴다."""
+    name = request.form.get("customer", "")
+    try:
+        delivery.record(
+            customer=name,
+            kind=request.form.get("kind", ""),
+            channel=request.form.get("channel", ""),
+            sent_by=session.get("username", ""),
+            ref=request.form.get("ref", ""),
+            title=request.form.get("title", ""),
+            recipients=request.form.get("recipients", ""),
+            note=request.form.get("note", ""),
+        )
+        flash("발송을 기록했습니다.", "success")
+    except DeliveryError as e:
+        flash(str(e), "error")
+    return redirect(request.form.get("back")
+                    if (request.form.get("back") or "").startswith("/")
+                    else url_for("report.deliveries", customer=name))

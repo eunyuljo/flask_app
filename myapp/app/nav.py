@@ -131,6 +131,9 @@ ITEMS = [
     # 곳이다. 메뉴에 없던 동안에는 온보딩 준비도에서 점검이 실패했을 때
     # 뜨는 링크가 유일한 입구였다 - 그 화면을 안 거친 사람은 존재를 알
     # 방법이 없었다.
+    {"endpoint": "report.deliveries", "label": "발송 기록", "icon": "✉",
+     "category": "report", "match": ("report.deliveries",),
+     "hint": "무엇을 누구에게 보냈나"},
     {"endpoint": "report.sla", "label": "SLA", "icon": "◔",
      "category": "report", "match": ("report.sla",),
      "hint": "고객사별 목표 설정과 달성률"},

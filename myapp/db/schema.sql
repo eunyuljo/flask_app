@@ -394,6 +394,56 @@ CREATE INDEX IF NOT EXISTS idx_contacts_customer
     ON customer_contacts (customer, kind);
 
 -- ======================================================================
+-- 보고서 발송 기록
+-- ----------------------------------------------------------------------
+-- 지금까지 "고객사에 냈다" 는 incidents.customer_status 한 칸이 전부였다.
+-- 누구에게, 어떤 경로로 보냈는지는 어디에도 없다. 나중에 "그거 받으셨나요"
+-- 를 물으면 답할 근거가 없고, 리포트(월간 리뷰 등)는 아예 발송이라는
+-- 개념 자체가 없어서 파일만 만들어졌다.
+--
+-- ── 다운로드는 발송이 아니다 ────────────────────────────────────
+-- 파일을 내려받은 것을 발송으로 세면 안 된다. 확인하려고 열어본 것도
+-- 다 발송이 되고, 그러면 "보냈다" 는 기록이 아무 뜻도 없어진다.
+-- 사람이 보냈다고 눌러야 한 줄이 생긴다(런북 실행 기록과 같은 판단).
+--
+-- ── 받는 사람은 그때 값을 복사해 둔다 ──────────────────────────
+-- customer_contacts 를 참조만 하면, 담당자가 바뀐 뒤에 지난 기록이
+-- 새 사람 이름으로 보인다. "그때 이 사람에게 보냈다" 가 바뀌면 안 된다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS deliveries (
+    id         BIGSERIAL   PRIMARY KEY,
+
+    customer   TEXT        NOT NULL,
+
+    --   incident : 장애 사후 보고서 (ref = incidents.id)
+    --   msr      : 월간 리뷰       (ref = '2026-08')
+    --   report   : 기간 리포트     (ref = '최근 30일' 등)
+    --   other    : 그 밖의 산출물
+    kind       TEXT        NOT NULL
+               CHECK (kind IN ('incident', 'msr', 'report', 'other')),
+    ref        TEXT        NOT NULL DEFAULT '',
+    title      TEXT        NOT NULL DEFAULT '',
+
+    --   email / slack / jira / hand(직접 전달·구두)
+    channel    TEXT        NOT NULL
+               CHECK (channel IN ('email', 'slack', 'jira', 'hand')),
+
+    -- 받는 사람. 보낼 때의 값을 그대로 적어 둔다(참조가 아니다).
+    recipients TEXT        NOT NULL DEFAULT '',
+
+    note       TEXT        NOT NULL DEFAULT '',
+    sent_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    sent_by    TEXT        NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_deliveries_customer
+    ON deliveries (customer, sent_at DESC);
+-- "이 보고서 보냈나?" 를 상세 화면에서 묻는다.
+CREATE INDEX IF NOT EXISTS idx_deliveries_ref
+    ON deliveries (kind, ref);
+
+-- ======================================================================
 -- 장애 (사후 보고서 / RCA)
 -- ----------------------------------------------------------------------
 -- 장애 하나에 대해 "언제 무슨 일이 있었나" 를 앱이 모아주고,
