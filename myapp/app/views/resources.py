@@ -6,12 +6,15 @@ from flask import (
     Blueprint, render_template, request, redirect, url_for, session, flash, current_app
 )
 
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 from flask import Response
 
-from app import compliance, graph, inventory
+from app import alarm_advice, compliance, graph, inventory
+from app.alarm_advice import AdviceError
 from app.compliance import ComplianceError
+from app.customer import names as customer_names, CustomerError
 from app.inventory import InventoryError
 from app.resources import diff, list_snapshots, psycopg_uri, ResourceError
 
@@ -175,4 +178,66 @@ def impact_page():
         snapshots=snapshots, selected_snapshot=selected_snapshot,
         choices=choices, islands=islands, target=target,
         result=result, blind=graph.BLIND, error=error,
+    )
+
+
+# 최종 URL: /resources/alarm-advice
+@resources_bp.route("/alarm-advice")
+def alarm_advice_page():
+    """이 고객사 리소스에 어떤 알람을 걸어야 하는가.
+
+    걸려 있는지는 보지 않는다. 실제 알람은 모니터링 서버에 있고 이 도구는
+    그 설정을 읽지 않는다. 그래서 '없음' 이라고 말하지 않는다.
+    """
+    error, data, names = None, None, []
+    try:
+        names = customer_names()
+    except CustomerError as e:
+        error = str(e)
+
+    selected = request.args.get("customer") or (names[0] if names else "")
+
+    if selected and not error:
+        try:
+            data = alarm_advice.for_customer(selected)
+        except AdviceError as e:
+            error = str(e)
+
+    return render_template(
+        "resources_alarm_advice.html",
+        customers=names, selected=selected, data=data, error=error,
+        levels=alarm_advice.LEVELS,
+    )
+
+
+# 최종 URL: /resources/alarm-advice.xlsx
+@resources_bp.route("/alarm-advice.xlsx")
+def alarm_advice_download():
+    """권고 표를 엑셀로 내려받는다.
+
+    이 표를 읽을 사람은 이 앱을 쓰지 않는다. 모니터링 서버 담당자가
+    목록을 받아 하나씩 설정하는 것이라, 화면으로만 두면 스크린샷을 찍어
+    보내게 된다.
+    """
+    from app.alarm_advice_xlsx import build as build_xlsx, ExcelNotAvailable
+
+    name = request.args.get("customer", "")
+    try:
+        data = alarm_advice.for_customer(name)
+        blob = build_xlsx(data)
+    except (AdviceError, ExcelNotAvailable) as e:
+        flash(str(e), "error")
+        return redirect(url_for("resources.alarm_advice_page", customer=name))
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    filename = f"알람권고_{name}_{stamp}.xlsx"
+    return Response(
+        blob,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            # 한글 파일명은 latin-1 헤더에 그대로 못 들어간다. RFC 5987 로 낸다.
+            "Content-Disposition":
+                "attachment; filename=alarm-advice.xlsx; "
+                f"filename*=UTF-8''{quote(filename)}",
+        },
     )
