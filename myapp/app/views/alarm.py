@@ -78,6 +78,16 @@ def index():
         # DB 가 없으면 목록은 못 보여주지만 제출 폼은 떠야 한다.
         store_error = str(e)
 
+    # 어댑터가 못 읽은 발신자. 목록 안에 섞여 있으면 20건 밖으로 밀려
+    # 아무도 못 보므로 위에 따로 세워 둔다. 못 읽은 알람이 조용히 쌓이는
+    # 것이 이 화면에서 제일 위험한 상태다.
+    unparsed = None
+    try:
+        unparsed = event_store.unparsed_summary()
+    except EventStoreError:
+        # 목록도 못 읽는 상황이면 이미 위에서 store_error 로 말했다.
+        pass
+
     # 이벤트마다 find() 를 부르면 20건에 질의가 20번 나간다. 한 번에 가져온다.
     fingerprints = [e["record"].get("fingerprint", "") for e in events]
 
@@ -125,6 +135,7 @@ def index():
         diagnosed=diagnosed,
         diagnoses=_DIAGNOSES,
         unacked=unacked,
+        unparsed=unparsed,
         unacked_only=unacked_only,
         severity=severity,
     )

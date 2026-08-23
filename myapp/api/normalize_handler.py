@@ -9,6 +9,8 @@ import re
 import uuid
 from datetime import datetime, timezone
 
+from api.adapters import adapt
+
 # ----------------------------------------------------------------------
 # 정규화 규칙
 # ----------------------------------------------------------------------
@@ -159,18 +161,107 @@ def _fingerprint(event_type, source, message, meta=None):
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+# 어댑터가 알아보지 못한 페이로드에 붙는 표시.
+# event_type 으로 두는 이유: 화면과 질의가 이미 event_type 으로 걸러내고 있어서
+# 새 컬럼을 만들지 않아도 "정규화 못 한 것만" 을 뽑을 수 있다.
+UNPARSED_TYPE = "unparsed"
+
+# 원본을 meta 에 남길 때의 상한. 이걸 넘으면 잘라서 넣되, 잘렸다는 사실을 같이 남긴다.
+RAW_KEEP = 4000
+
+
+def _shape_key(payload):
+    """모르는 페이로드를 '모양' 으로 묶는 열쇠.
+
+    최상위 키 이름들만 본다. 값은 매번 다르지만 모양은 발신자마다 같다.
+
+    지문에 페이로드 내용을 쓰면 안 된다. 같은 발신자가 보낸 100건이 전부
+    다른 지문이 되어 목록이 밀리고, 사람이 "이 발신자 하나만 붙이면 된다" 는
+    사실을 볼 수 없게 된다. 모양으로 묶으면 미확인 목록에 한 줄로 뜬다.
+    """
+    if not isinstance(payload, dict):
+        return f"type:{type(payload).__name__}"
+    return "keys:" + ",".join(sorted(str(k).strip().lower() for k in payload))
+
+
+def _unparsed(payload, source_hint=""):
+    """알아보지 못한 페이로드를 버리지 않고 레코드로 만든다.
+
+    이 프로젝트에서 제일 피해온 실패 방식이 '조용히 사라지는 것' 이다.
+    새 발신자가 생겼을 때 예외로 떨어뜨리면 알람은 없던 일이 되고,
+    없어졌다는 사실조차 아무 화면에도 안 뜬다.
+
+    심각도는 warning 으로 고정한다.
+      - info 로 두면 목록 아래로 가라앉아 아무도 안 본다.
+      - error/critical 로 두면 파싱 실패로 사람을 새벽에 깨우게 된다.
+        내용을 못 읽었으니 급한 건인지 아닌지 우리는 모른다.
+      warning 은 ALARM_SEVERITIES 밖이라 SNS 로도 나가지 않는다.
+    """
+    try:
+        dumped = json.dumps(payload, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        dumped = str(payload)
+
+    meta = {
+        "unparsed": True,
+        "raw_payload": dumped[:RAW_KEEP],
+        "shape": _shape_key(payload),
+    }
+    if len(dumped) > RAW_KEEP:
+        meta["raw_truncated"] = True
+
+    source = str(source_hint or "unknown").strip().lower() or "unknown"
+    message = f"정규화 못 함: {dumped}"
+
+    # 지문은 모양으로 직접 계산한다. _fingerprint() 를 거치면 message_template
+    # 이 키 이름까지 마스킹해서(<hex>, <n>) 서로 다른 발신자가 한 지문으로
+    # 뭉칠 수 있다. 여기서는 모양이 곧 열쇠라 가공하면 안 된다.
+    fingerprint = hashlib.sha256(
+        f"{UNPARSED_TYPE}|{source}|{meta['shape']}".encode("utf-8")
+    ).hexdigest()[:16]
+
+    return {
+        "event_id": uuid.uuid4().hex,
+        "event_type": UNPARSED_TYPE,
+        "source": source,
+        "severity": "warning",
+        "message": message[:1000],
+        # 페이로드 안의 시각을 믿고 읽을 수 없다(어떤 키가 시각인지 모른다).
+        # 받은 시각을 쓴다.
+        "occurred_at": _now_iso(),
+        "received_at": _now_iso(),
+        "fingerprint": fingerprint,
+        "account_id": "",
+        "meta": meta,
+    }
+
+
 def normalize(raw):
     """원본 이벤트(dict)를 표준 형태로 바꾼다.
 
     이 함수는 부수효과가 전혀 없다(DB 도 네트워크도 건드리지 않는다).
     그래서 테스트하기 쉽고, Flask 쪽에서도 그대로 재사용할 수 있다.
+
+    순서: 어댑터 -> 별칭표 -> 표준 레코드.
+    어댑터는 AWS 가 실제로 보내는 모양(CloudWatch/GuardDuty/Health/EventBridge)을
+    표준 필드로 옮긴다. 별칭표만으로는 이 모양들을 못 읽었다 -
+    CloudWatch 페이로드와 별칭표가 겹치는 이름은 AWSAccountId 하나뿐이었다.
+
+    어댑터에는 모델을 쓰지 않는다. 정규화는 결정적이어야 한다.
+    같은 페이로드에 매번 같은 지문이 나와야 억제도 집계도 런북 연결도 성립한다.
     """
     if not isinstance(raw, dict):
         raise ValueError("이벤트는 JSON 객체여야 합니다.")
 
+    # 0) AWS 발신자 모양을 표준 필드로 옮긴다. 봉투(SNS/SQS)도 여기서 벗는다.
+    #    아무도 못 알아보면 (원본, None) 이 온다 - 예외가 아니다.
+    adapted, adapter_name = adapt(raw)
+    if not isinstance(adapted, dict):
+        return _unparsed(adapted)
+
     # 1) 필드 이름을 표준 이름으로 바꾼다.
     data = {}
-    for key, value in raw.items():
+    for key, value in adapted.items():
         standard_key = FIELD_ALIASES.get(str(key).strip().lower(), str(key).strip().lower())
         # 이미 표준 이름으로 들어온 값이 있으면 그걸 우선한다.
         if standard_key not in data or data[standard_key] in (None, ""):
@@ -179,7 +270,15 @@ def normalize(raw):
     # 2) 문자열 값의 앞뒤 공백을 정리한다.
     message = str(data.get("message") or "").strip()
     if not message:
-        raise ValueError("message 는 비어 있을 수 없습니다.")
+        # 여기서 두 가지를 갈라야 한다.
+        #
+        #  (a) 우리가 아는 필드로 왔는데 내용이 비었다 -> 보관할 게 없다. 거부한다.
+        #      보낸 쪽이 우리 형식을 쓰고 있으니 고쳐 보내면 된다.
+        #  (b) 아는 필드가 아예 없다 -> 모양을 모를 뿐 내용은 다 들어 있다.
+        #      버리면 그 내용이 사라진다. "정규화 못 함" 으로 적재한다.
+        if "message" in data:
+            raise ValueError("message 는 비어 있을 수 없습니다.")
+        return _unparsed(adapted, source_hint=data.get("source") or "")
 
     event_type = str(data.get("event_type") or "unknown").strip().lower()
     source = str(data.get("source") or "unknown").strip().lower()
@@ -204,6 +303,9 @@ def normalize(raw):
     # 확인할 수 있어야 고칠 수 있다.
     if data.get("account_id") and not account_id:
         meta["account_id_raw"] = data["account_id"]
+    # 어느 어댑터가 읽었는지 남긴다. 지문이 이상할 때 어디를 고칠지 이게 알려준다.
+    if adapter_name:
+        meta["adapter"] = adapter_name
 
     # 5) 표준 레코드 완성
     return {

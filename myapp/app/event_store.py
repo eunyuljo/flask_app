@@ -15,6 +15,8 @@
 
 from flask import current_app
 
+from api.normalize_handler import UNPARSED_TYPE
+
 
 class EventStoreError(Exception):
     """이벤트를 읽지 못했을 때."""
@@ -157,6 +159,40 @@ def unacked_count(hours=24):
         )
         counts = {r["severity"]: r["n"] for r in _rows(cur)}
     return {"by_severity": counts, "total": sum(counts.values()), "hours": hours}
+
+
+def unparsed_summary(hours=168):
+    """어댑터가 알아보지 못해 "정규화 못 함" 으로 들어온 것들.
+
+    모양(meta->>'shape')별로 묶어서 돌려준다. 하나의 모양은 하나의 발신자이고,
+    어댑터 하나를 쓰면 그 줄이 통째로 사라진다. 건수가 아니라 '어댑터 몇 개가
+    빠졌나' 를 보여주는 것이 이 목록의 목적이다.
+
+    기본 기간을 1주로 잡은 이유: 새 발신자는 하루 이틀 조용하다 몰려오는
+    일이 잦아서, 24시간만 보면 어제 붙은 발신자를 놓친다.
+    """
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure(cur)
+        cur.execute(
+            """
+            SELECT COALESCE(meta->>'shape', '(모양 없음)') AS shape,
+                   count(*) AS n,
+                   max(received_at) AS last_seen,
+                   min(event_id) AS sample_id
+              FROM events
+             WHERE event_type = %s
+               AND received_at > now() - make_interval(hours => %s)
+             GROUP BY 1
+             ORDER BY n DESC
+            """,
+            (UNPARSED_TYPE, hours),
+        )
+        shapes = _rows(cur)
+    return {
+        "shapes": shapes,
+        "total": sum(r["n"] for r in shapes),
+        "hours": hours,
+    }
 
 
 def get(event_id):

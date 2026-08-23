@@ -9,6 +9,10 @@
 {% block page_title %}이벤트 접수{% endblock %}
 
 {% block content %}
+  {# 이벤트지만 '대응할 알람' 이 아닌 것들. 런북·작업·진단 버튼을 붙이지 않는다.
+     diagnose/console 은 우리가 남긴 기록이고, unparsed 는 내용을 못 읽은 것이라
+     절차를 쓸 대상이 아니다. 세 군데에서 따로 나열하던 것을 여기 하나로 모은다. #}
+  {% set NOT_ACTIONABLE = ('diagnose', 'console', 'unparsed') %}
   <p class="muted">
     실행 모드: <code>{{ mode }}</code>
     {% if mode == 'aws' %}
@@ -62,6 +66,37 @@
     </div>
   {% endif %}
 
+  {# 어댑터가 못 읽은 발신자. 건수가 아니라 '모양' 을 센다 - 한 모양이
+     한 발신자이고, 어댑터 하나를 붙이면 그 줄이 통째로 사라진다. #}
+  {% if unparsed and unparsed.total %}
+    <div class="flash error">
+      최근 {{ unparsed.hours // 24 }}일 동안 정규화하지 못한 이벤트
+      <strong>{{ unparsed.total }}건</strong>
+      ({{ unparsed.shapes|length }}가지 모양).
+      버리지 않고 적재했지만, 심각도와 발생 시각을 읽지 못해 알람으로는 나가지 않았습니다.
+      <details>
+        <summary class="muted">모양별로 보기</summary>
+        <table>
+          <thead><tr><th>페이로드 모양(최상위 키)</th><th>건수</th><th>마지막</th></tr></thead>
+          <tbody>
+            {% for sh in unparsed.shapes %}
+              <tr>
+                <td><code>{{ sh.shape }}</code></td>
+                <td>{{ sh.n }}</td>
+                <td>{{ sh.last_seen.strftime('%m-%d %H:%M') }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <p class="muted">
+          고치는 방법: <code>api/adapters.py</code> 에 이 모양을 읽는 함수를 하나 더
+          쓰고 <code>ADAPTERS</code> 에 등록합니다. 모델이 아니라 코드로 고정합니다 &mdash;
+          같은 페이로드에서 매번 같은 지문이 나와야 억제도 집계도 성립합니다.
+        </p>
+      </details>
+    </div>
+  {% endif %}
+
   <p class="muted">
     보기:
     {% if not unacked_only %}<strong>전체</strong>
@@ -100,6 +135,15 @@
         &middot; 지문 <code>{{ item.record.fingerprint }}</code>
       </div>
       <div class="muted">발생 {{ item.record.occurred_at }}</div>
+      {% if item.record.event_type == 'unparsed' %}
+        <div class="muted">
+          <strong>정규화 못 함</strong> &mdash; 이 발신자의 모양을 읽는 어댑터가 없습니다.
+          원본은 아래 meta 에 그대로 있습니다. 발생 시각은 페이로드에서 읽지 못해
+          <em>받은 시각</em>입니다.
+        </div>
+      {% elif item.record.meta and item.record.meta.adapter %}
+        <div class="muted">읽은 어댑터: <code>{{ item.record.meta.adapter }}</code></div>
+      {% endif %}
 
       {# 확인(ack). SLA 의 '최초 대응 시각' 이 여기서 나온다. #}
       {% if item.record.acknowledged_at %}
@@ -138,7 +182,7 @@
 
       {# 이 알람에 등록된 대응 절차. 있으면 접어서 보여주고, 없으면 쓰러 가는 링크만. #}
       {% set rb = runbooks.get(item.record.fingerprint) %}
-      {% if item.record.event_type != 'diagnose' and item.record.event_type != 'console' %}
+      {% if item.record.event_type not in NOT_ACTIONABLE %}
         {% if rb %}
           <details class="rb-fold">
             <summary>
@@ -176,7 +220,7 @@
          고르고 발생 시각을 손으로 옮겨 적는 구조였다.
          런북을 쓸 때 이미 같은 판단을 했다(지문을 쿼리스트링으로 넘긴다). #}
       {% set h = handoffs.get(item.record.event_id) %}
-      {% if h and item.record.event_type not in ('diagnose', 'console') %}
+      {% if h and item.record.event_type not in NOT_ACTIONABLE %}
         <div class="muted">
           이 알람으로:
           <a href="{{ url_for('work.index', **h.work) }}">작업 만들기</a>
@@ -187,7 +231,7 @@
 
       {# 같은 알람이 관련됐던 지난 장애. 확정된 사후 보고서가 쌓일수록 채워진다. #}
       {% set pi = past.get(item.record.fingerprint) %}
-      {% if pi and item.record.event_type not in ('diagnose', 'console') %}
+      {% if pi and item.record.event_type not in NOT_ACTIONABLE %}
         <details class="rb-fold">
           <summary>
             지난번 이 알람: <a href="{{ url_for('incident.detail', incident_id=pi.id) }}">{{ pi.title }}</a>
@@ -198,7 +242,7 @@
       {% endif %}
 
       {# 진단은 실제 알람에만 붙인다. 진단 기록 자체를 또 진단할 이유는 없다. #}
-      {% if grouped and item.record.event_type != 'diagnose' and item.record.event_type != 'console' %}
+      {% if grouped and item.record.event_type not in NOT_ACTIONABLE %}
         <form action="{{ url_for('alarm.diagnose') }}" method="post" class="diag-form">
           <input type="hidden" name="event_id" value="{{ item.record.event_id }}">
           <select name="account_id" required>
