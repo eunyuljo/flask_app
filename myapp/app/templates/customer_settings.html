@@ -10,6 +10,17 @@
 {% block page_title %}설정 현황{% endblock %}
 
 {% block content %}
+  {# 같은 점검 항목(readiness.CHECKS)의 두 가지 보기. 예전에는 메뉴가
+     둘이었는데, 어느 쪽을 봐야 하는지를 매번 묻게 돼서 합쳤다. #}
+  <p class="muted">
+    보기:
+    {% if true %}<a href="{{ url_for('customer.readiness_page') }}">고객사 하나 깊게</a>
+    {% else %}<strong>고객사 하나 깊게</strong>{% endif %}
+    &middot;
+    {% if true %}<strong>전부 넓게</strong>
+    {% else %}<a href="{{ url_for('customer.readiness_page', view='all') }}">전부 넓게</a>{% endif %}
+  </p>
+
   <p class="muted">
     고객사별로 <strong>무엇이 설정됐고 무엇이 비었는지</strong>를 한 표로 봅니다.
     점검 항목은 <a href="{{ url_for('customer.readiness_page') }}">온보딩 준비도</a>와

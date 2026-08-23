@@ -3,12 +3,17 @@
 # 이 앱에 처음 생기는 '고객사 축' 화면이다. 나머지는 전부 기능 축이다.
 
 from flask import (
-    Blueprint, render_template, request, redirect, url_for, session, flash
+    Blueprint, render_template, request, redirect, url_for, session, flash,
+    Response,
 )
 
-from app import access, audit, contacts, customer, readiness, routines, standards
+from datetime import datetime, timezone
+
+from app import (access, audit, contacts, customer, customer_brief,
+                 readiness, routines, standards)
 from app.access import AccessError
 from app.contacts import ContactError
+from app.customer_brief import BriefError
 from app.accounts import list_accounts, get_account, AccountError
 from app.customer import CustomerError
 from app.readiness import ReadinessError
@@ -71,7 +76,27 @@ def index():
 # 이 화면도 "고객사 하나를 놓고 본다".
 @customer_bp.route("/readiness")
 def readiness_page():
-    """이 고객사를 받을 준비가 됐는가."""
+    """준비 상태. 고객사 하나를 깊게(기본) / 전부를 넓게(?view=all).
+
+    두 화면으로 나눠 뒀다가 합쳤다. 점검 항목이 readiness.CHECKS 하나로
+    같고 축만 달라서, 메뉴를 둘로 두면 "어느 쪽을 봐야 하지" 를 매번
+    묻게 된다. 같은 자료의 두 가지 보기라면 탭이 맞다.
+    """
+    # 전부를 넓게 보는 쪽. 매트릭스는 고객사를 고르지 않는다.
+    if request.args.get("view") == "all":
+        error, data = None, None
+        try:
+            data = readiness.matrix(customer.names())
+        except (CustomerError, ReadinessError) as e:
+            error = str(e)
+        return render_template(
+            "customer_settings.html",
+            data=data, error=error,
+            status_label=readiness.STATUS_LABEL,
+            level_label=readiness.LEVELS,
+            endpoint_labels=readiness.ENDPOINT_LABELS,
+        )
+
     error, all_names, results, summary, facts = None, [], [], None, None
     try:
         all_names = customer.names()
@@ -234,27 +259,12 @@ def routines_active(routine_id):
     return redirect(request.referrer or url_for("customer.routines_page"))
 
 
-# 최종 URL: /customer/settings
+# /customer/settings 은 없어졌다. 준비도 화면의 ?view=all 탭으로 흡수했다.
+# 점검 항목이 같은데 메뉴가 둘이면 "어느 쪽을 봐야 하지" 를 매번 묻게 된다.
+# 예전 주소로 들어오는 링크(북마크·문서)를 위해 넘겨만 준다.
 @customer_bp.route("/settings")
 def settings_page():
-    """고객사별로 무엇이 설정됐고 무엇이 비었는가.
-
-    온보딩 준비도와 점검 항목이 같다(readiness.CHECKS). 축만 다르다.
-    저쪽은 고객사 하나를 깊게, 여기는 전부를 넓게 본다.
-    """
-    error, data = None, None
-    try:
-        data = readiness.matrix(customer.names())
-    except (CustomerError, ReadinessError) as e:
-        error = str(e)
-
-    return render_template(
-        "customer_settings.html",
-        data=data, error=error,
-        status_label=readiness.STATUS_LABEL,
-        level_label=readiness.LEVELS,
-        endpoint_labels=readiness.ENDPOINT_LABELS,
-    )
+    return redirect(url_for("customer.readiness_page", view="all"))
 
 
 # 최종 URL: /customer/contacts/add
@@ -349,3 +359,62 @@ def standards_delete(standard_id):
     except StandardError as e:
         flash(str(e), "error")
     return redirect(request.referrer or url_for("customer.standards_page"))
+
+
+# 최종 URL: /customer/brief
+@customer_bp.route("/brief")
+def brief_page():
+    """이 고객사에 대해 아는 것을 한 장으로.
+
+    담당자가 바뀔 때 넘겨야 할 것이 화면 여섯 개에 흩어져 있어서, 실제
+    인수인계 때는 사람이 화면을 돌며 다시 정리한다. 자료는 이미 다 있다.
+    """
+    error, text, all_names = None, "", []
+    try:
+        all_names = customer.names()
+    except CustomerError as e:
+        error = str(e)
+
+    selected = request.args.get("customer") or (all_names[0] if all_names else "")
+
+    if selected and not error:
+        try:
+            text = customer_brief.to_markdown(customer_brief.collect(selected))
+        except BriefError as e:
+            error = str(e)
+
+    return render_template(
+        "customer_brief.html",
+        customers=all_names, selected=selected, text=text, error=error,
+    )
+
+
+# 최종 URL: /customer/brief.md
+@customer_bp.route("/brief.md")
+def brief_download():
+    """인수인계 문서를 Markdown 으로 내려받는다.
+
+    받는 사람이 이 앱을 쓰지 않을 수도 있고, 위키나 티켓에 그대로
+    붙일 수 있어야 한다.
+    """
+    from urllib.parse import quote
+
+    name = request.args.get("customer", "")
+    try:
+        text = customer_brief.to_markdown(customer_brief.collect(name))
+    except BriefError as e:
+        flash(str(e), "error")
+        return redirect(url_for("customer.brief_page", customer=name))
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    filename = f"인수인계_{name}_{stamp}.md"
+    return Response(
+        text,
+        mimetype="text/markdown; charset=utf-8",
+        headers={
+            # 한글 파일명은 latin-1 헤더에 그대로 못 들어간다. RFC 5987 로 낸다.
+            "Content-Disposition":
+                "attachment; filename=handover.md; "
+                f"filename*=UTF-8''{quote(filename)}",
+        },
+    )

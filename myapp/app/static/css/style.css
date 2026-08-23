@@ -947,6 +947,15 @@ table.matrix .cell {
 .cell-missing { color: var(--sev-critical); }
 .cell-unknown { color: var(--muted); }
 
+/* 인수인계 문서. 만들어진 Markdown 을 그대로 보여준다 - 화면용으로
+   다시 그리면 화면과 내려받은 파일이 언젠가 갈라진다. */
+.brief {
+  max-height: 70vh;
+  overflow: auto;
+  font-size: .9rem;
+  line-height: 1.7;
+}
+
 /* 계정 접속 화면의 지적 사항. 카드 안에 여러 건이 쌓일 수 있어서
    왼쪽 띠로만 등급을 구분한다 - 배경까지 칠하면 카드가 벽이 된다. */
 .acc-finding {

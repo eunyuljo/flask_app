@@ -411,6 +411,7 @@ ENDPOINT_LABELS = {
     "report.sla": "보고 > SLA",
     "customer.access_page": "고객사 > 계정 접속",
     "customer.index": "고객사 > 고객사 현황",
+    "customer.readiness_page": "고객사 > 준비 상태",
     "customer.routines_page": "고객사 > 정기 점검",
     "runbook.index": "런북 화면",
     "work.index": "작업 기록 화면",

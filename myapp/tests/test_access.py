@@ -193,14 +193,24 @@ class TestRoutes:
 
 @pytest.mark.db
 class TestSettingsMatrix:
-    """설정 현황 화면. 점검 목록은 온보딩 준비도와 하나를 쓴다."""
+    """전부를 넓게 보는 화면. 점검 목록은 한 곳 깊게 보는 쪽과 하나를 쓴다.
+
+    예전에는 /customer/settings 라는 별도 메뉴였는데, 점검 항목이 같아서
+    준비 상태 화면의 ?view=all 탭으로 합쳤다. 옛 주소는 넘겨만 준다.
+    """
+
+    WIDE = "/customer/readiness?view=all"
 
     def test_page(self, db_client):
-        assert db_client.get("/customer/settings").status_code == 200
+        assert db_client.get(self.WIDE).status_code == 200
+
+    def test_old_url_still_works(self, db_client):
+        assert db_client.get("/customer/settings",
+                             follow_redirects=True).status_code == 200
 
     def test_shows_every_check_column(self, db_client):
         from app import readiness
 
-        body = db_client.get("/customer/settings").get_data(as_text=True)
+        body = db_client.get(self.WIDE).get_data(as_text=True)
         for check in readiness.CHECKS:
             assert check["title"] in body, check["id"]
