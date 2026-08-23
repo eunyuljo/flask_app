@@ -5,6 +5,7 @@
 # 컴플라이언스와 같은 방식이다 - 자료 모으기(gather)와 판정(check)을
 # 나눠 둔 이유가 이것이다.
 
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -28,6 +29,8 @@ def facts(**over):
         "last_snapshot": datetime.now(timezone.utc),
         "runbook_gaps": [],
         "work_orders": 3,
+        "routines": [{"name": "월간 점검", "interval_days": 30, "active": True,
+                      "last_done_at": datetime.now(timezone.utc)}],
         "missing_tables": [],
     }
     base.update(over)
@@ -36,6 +39,24 @@ def facts(**over):
 
 def status_of(results, check_id):
     return next(r["status"] for r in results if r["id"] == check_id)
+
+
+def test_helper_mirrors_gather():
+    """이 파일의 facts() 가 gather() 와 어긋나면 점검 함수가 KeyError 로 터진다.
+
+    점검을 하나 추가하면서 gather 에 자료를 늘렸는데 여기를 안 고치면,
+    화면은 멀쩡한데 테스트만 무더기로 깨진다. 어느 쪽이 문제인지 바로
+    알 수 있게 이 한 줄을 둔다.
+    """
+    import inspect
+
+    source = inspect.getsource(R.gather)
+    # gather 가 facts 에 처음 채워 넣는 키들.
+    declared = set(re.findall(r'^\s{8}"(\w+)":', source, re.M))
+    assert declared <= set(facts()), (
+        "gather() 에는 있는데 테스트 헬퍼에 없는 키: "
+        f"{sorted(declared - set(facts()))}"
+    )
 
 
 class TestAllGood:
@@ -263,3 +284,114 @@ class TestAgainstRealData:
         with db_app.app_context():
             results, _ = R.evaluate("있을리 없는 고객사")
             assert R.summarize(results)["ready"] is False
+
+
+class TestMatrix:
+    """고객사 × 점검 항목 표.
+
+    온보딩 준비도와 점검 목록을 공유한다. 여기서 항목을 새로 정의하면
+    두 화면이 반드시 어긋나므로, 그것부터 고정한다.
+    """
+
+    def fake_evaluate(self, monkeypatch, per_customer):
+        """고객사 이름 -> facts 덮어쓰기. DB 없이 표를 만들어 본다."""
+        def evaluate(name):
+            f = facts(**per_customer.get(name, {}))
+            return R.check(f), f
+        monkeypatch.setattr(R, "evaluate", evaluate)
+
+    def test_uses_the_same_checks_as_readiness(self, monkeypatch):
+        self.fake_evaluate(monkeypatch, {})
+        data = R.matrix(["가고객"])
+        assert [c["id"] for c in data["checks"]] == [c["id"] for c in R.CHECKS]
+
+    def test_every_customer_gets_every_check(self, monkeypatch):
+        self.fake_evaluate(monkeypatch, {})
+        data = R.matrix(["가고객", "나고객"])
+        for row in data["rows"]:
+            assert set(row["results"]) == {c["id"] for c in R.CHECKS}
+
+    def test_gaps_list_who_is_missing(self, monkeypatch):
+        self.fake_evaluate(monkeypatch, {"나고객": {"oncall": []}})
+        data = R.matrix(["가고객", "나고객"])
+        assert data["gaps"]["oncall"] == ["나고객"]
+
+    def test_gaps_include_warnings_not_only_missing(self, monkeypatch):
+        """'확인 필요' 도 빈 곳이다. ok 가 아닌 것을 전부 센다."""
+        self.fake_evaluate(monkeypatch, {
+            "나고객": {"oncall": [{"name": "김", "level": 1, "slack_id": "",
+                                   "customer": "나고객"}]},
+        })
+        data = R.matrix(["가고객", "나고객"])
+        assert data["gaps"]["oncall"] == ["나고객"]
+
+    def test_worst_customer_first(self, monkeypatch):
+        """다 채운 곳은 볼 일이 없다. 빈 곳이 많은 순으로 온다."""
+        self.fake_evaluate(monkeypatch, {
+            "빈곳많음": {"accounts": [], "oncall": [], "sla_targets": []},
+        })
+        data = R.matrix(["가고객", "빈곳많음"])
+        assert data["rows"][0]["customer"] == "빈곳많음"
+
+    def test_one_broken_customer_does_not_hide_the_others(self, monkeypatch):
+        """계정 하나가 이상해서 표 전체가 안 보이면 다른 고객사의 빈 칸을 못 본다."""
+        def evaluate(name):
+            if name == "터진고객":
+                raise R.ReadinessError("이 고객사를 읽지 못했습니다")
+            f = facts()
+            return R.check(f), f
+        monkeypatch.setattr(R, "evaluate", evaluate)
+
+        data = R.matrix(["터진고객", "가고객"])
+        assert data["rows"][0]["error"] == "이 고객사를 읽지 못했습니다"
+        assert data["rows"][0]["results"] == []
+        # 멀쩡한 고객사는 그대로 채워진다.
+        other = [r for r in data["rows"] if r["customer"] == "가고객"][0]
+        assert other["summary"]["total"] == len(R.CHECKS)
+
+    def test_broken_customer_is_not_counted_as_a_gap(self, monkeypatch):
+        """읽지 못한 것을 '비었다' 로 세면 없는 문제를 만들어 낸다."""
+        def evaluate(name):
+            raise R.ReadinessError("못 읽음")
+        monkeypatch.setattr(R, "evaluate", evaluate)
+
+        data = R.matrix(["터진고객"])
+        assert all(who == [] for who in data["gaps"].values())
+
+    def test_no_customers(self, monkeypatch):
+        self.fake_evaluate(monkeypatch, {})
+        data = R.matrix([])
+        assert data["rows"] == []
+        assert set(data["gaps"]) == {c["id"] for c in R.CHECKS}
+
+
+class TestNewChecks:
+    def test_external_id_missing_is_flagged(self):
+        results = R.check(facts(accounts=[{
+            "account_id": "1", "alias": "", "regions": ["ap-northeast-2"],
+            "enabled": True, "role_arn": "arn:...:role/R", "external_id": "",
+        }]))
+        assert status_of(results, "external-id") == "missing"
+
+    def test_demo_only_is_unknown_not_ok(self):
+        """확인할 대상이 없는 것을 '완료' 로 적으면 안 한 것을 한 것처럼 만든다."""
+        results = R.check(facts(accounts=[{
+            "account_id": "1", "alias": "", "regions": ["ap-northeast-2"],
+            "enabled": True, "role_arn": "", "external_id": "",
+        }]))
+        assert status_of(results, "external-id") == "unknown"
+
+    def test_routines_missing(self):
+        assert status_of(R.check(facts(routines=[])), "routines") == "missing"
+
+    def test_overdue_routine_is_a_warning(self):
+        old = datetime.now(timezone.utc) - timedelta(days=90)
+        results = R.check(facts(routines=[
+            {"name": "월간 점검", "interval_days": 30, "active": True,
+             "last_done_at": old},
+        ]))
+        assert status_of(results, "routines") == "warn"
+
+    def test_missing_table_is_unknown(self):
+        results = R.check(facts(missing_tables=["customer_routines"]))
+        assert status_of(results, "routines") == "unknown"

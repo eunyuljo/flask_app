@@ -189,3 +189,18 @@ class TestRoutes:
                            data={"account_id": "000000000000", "region": "x"},
                            follow_redirects=True)
         assert "등록되지 않은 계정" in r.get_data(as_text=True)
+
+
+@pytest.mark.db
+class TestSettingsMatrix:
+    """설정 현황 화면. 점검 목록은 온보딩 준비도와 하나를 쓴다."""
+
+    def test_page(self, db_client):
+        assert db_client.get("/customer/settings").status_code == 200
+
+    def test_shows_every_check_column(self, db_client):
+        from app import readiness
+
+        body = db_client.get("/customer/settings").get_data(as_text=True)
+        for check in readiness.CHECKS:
+            assert check["title"] in body, check["id"]

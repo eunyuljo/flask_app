@@ -1,0 +1,136 @@
+{# templates/customer_settings.html
+   customer 블루프린트의 settings_page() 가 렌더링하는 고객사 설정 현황.
+
+   온보딩 준비도와 같은 점검 목록(readiness.CHECKS)을 쓴다. 여기서 항목을
+   새로 정의하면 두 화면이 반드시 어긋난다. #}
+
+{% extends "base.html" %}
+
+{% block title %}설정 현황{% endblock %}
+{% block page_title %}설정 현황{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    고객사별로 <strong>무엇이 설정됐고 무엇이 비었는지</strong>를 한 표로 봅니다.
+    점검 항목은 <a href="{{ url_for('customer.readiness_page') }}">온보딩 준비도</a>와
+    같습니다 — 저쪽은 고객사 하나를 깊게, 여기는 전부를 넓게 봅니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if data and not data.rows %}
+    <p class="muted">
+      등록된 고객사가 없습니다.
+      <code>flask --app run add-account ...</code> 로 먼저 등록하세요.
+    </p>
+  {% endif %}
+
+  {% if data and data.rows %}
+    <div class="kpis">
+      <div class="kpi">
+        <span class="n">{{ data.rows|length }}</span>
+        <span class="k">고객사</span>
+      </div>
+      <div class="kpi">
+        <span class="n">
+          {{ data.rows | selectattr('summary') | rejectattr('summary.ready') | list | length }}
+        </span>
+        <span class="k">필수 항목이 빈 곳</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ data.checks|length }}</span>
+        <span class="k">점검 항목</span>
+      </div>
+    </div>
+
+    {# 표가 넓다. 화면이 좁으면 표만 가로로 밀리게 하고, 페이지 자체는
+       밀리지 않게 한다(사이드바 때와 같은 문제다). #}
+    <div class="matrix-scroll">
+      <table class="matrix">
+        <tr>
+          <th>고객사</th>
+          {% for c in data.checks %}
+            <th title="{{ c.why }}">
+              {{ c.title }}
+              <div class="muted">{{ level_label.get(c.level, c.level) }}</div>
+            </th>
+          {% endfor %}
+        </tr>
+
+        {% for row in data.rows %}
+          <tr>
+            <td>
+              <a href="{{ url_for('customer.readiness_page', customer=row.customer) }}">
+                {{ row.customer }}
+              </a>
+              {% if row.summary %}
+                <div class="muted">
+                  {% if row.summary.ready %}필수 충족
+                  {% else %}필수 {{ row.summary.blocking }}건 빔{% endif %}
+                </div>
+              {% endif %}
+            </td>
+
+            {% if row.error %}
+              <td colspan="{{ data.checks|length }}" class="muted">{{ row.error }}</td>
+            {% else %}
+              {% for c in data.checks %}
+                {% set r = row.results[c.id] %}
+                <td class="cell cell-{{ r.status }}" title="{{ r.detail }}">
+                  {% if r.status == 'ok' %}&check;
+                  {% elif r.status == 'missing' %}&times;
+                  {% elif r.status == 'warn' %}&excl;
+                  {% else %}?{% endif %}
+                </td>
+              {% endfor %}
+            {% endif %}
+          </tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    <p class="muted">
+      &check; 완료 &middot; &excl; 확인 필요 &middot; &times; 없음 &middot; ? 판단 불가.
+      칸에 마우스를 올리면 이유가 나옵니다.
+      <strong>?는 &check;가 아닙니다</strong> — 판단할 자료가 없다는 뜻이라
+      비어 있을 수도 있습니다.
+    </p>
+
+    <hr>
+    <h2>항목별로 몇 곳이 비었나</h2>
+    <p class="muted">
+      표를 가로로 읽으면 고객사가 보이고, 세로로 읽으면
+      <strong>우리가 전반적으로 안 하고 있는 것</strong>이 보입니다.
+    </p>
+
+    {% for c in data.checks %}
+      {% set who = data.gaps[c.id] %}
+      {% if who %}
+        <div class="event {% if c.level == 'required' %}sev-error{% else %}sev-warning{% endif %}">
+          <div class="event-head">
+            <span class="badge">{{ who|length }}곳</span>
+            <strong>{{ c.title }}</strong>
+            <span class="muted">{{ level_label.get(c.level, c.level) }}</span>
+          </div>
+          <div class="muted">{{ who | join(', ') }}</div>
+          <div class="muted">{{ c.why }}</div>
+          <div class="muted">
+            고치는 곳:
+            {% if c.how.startswith('endpoint:') %}
+              {% set ep = c.how[9:] %}
+              <a href="{{ url_for(ep) }}">{{ endpoint_labels.get(ep, ep) }}</a>
+            {% else %}
+              <code>{{ c.how }}</code>
+            {% endif %}
+          </div>
+        </div>
+      {% endif %}
+    {% endfor %}
+
+    {% if not data.gaps.values() | select | list %}
+      <p class="muted">비어 있는 항목이 없습니다.</p>
+    {% endif %}
+  {% endif %}
+{% endblock %}

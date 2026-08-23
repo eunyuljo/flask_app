@@ -89,6 +89,7 @@ def gather(customer):
         "last_snapshot": None,
         "runbook_gaps": [],
         "work_orders": 0,
+        "routines": [],
         "missing_tables": [],
     }
 
@@ -98,7 +99,8 @@ def gather(customer):
         present = {
             name: _has(cur, name)
             for name in ("aws_accounts", "events", "sla_targets", "oncall_members",
-                         "resource_snapshots", "runbooks", "work_orders")
+                         "resource_snapshots", "runbooks", "work_orders",
+                         "customer_routines")
         }
         facts["missing_tables"] = sorted(n for n, ok in present.items() if not ok)
 
@@ -114,6 +116,24 @@ def gather(customer):
         )
         facts["accounts"] = _rows(cur)
         account_ids = [a["account_id"] for a in facts["accounts"]]
+
+        if present["customer_routines"]:
+            # 마지막 수행을 함께 붙인다. 판정(app/routines.judge)은 순수
+            # 함수라 여기서는 자료만 모은다.
+            cur.execute(
+                """
+                SELECT r.name, r.interval_days, r.active, last.done_at AS last_done_at
+                  FROM customer_routines r
+                  LEFT JOIN LATERAL (
+                        SELECT done_at FROM routine_runs
+                         WHERE routine_id = r.id
+                         ORDER BY done_at DESC LIMIT 1
+                  ) last ON true
+                 WHERE r.customer = %s
+                """,
+                (customer,),
+            )
+            facts["routines"] = _rows(cur)
 
         if present["events"] and account_ids:
             cur.execute(
@@ -220,6 +240,47 @@ def _check_assume_role(facts):
     return "ok", "모든 계정에 AssumeRole 이 설정되어 있습니다."
 
 
+def _check_external_id(facts):
+    """ExternalId 가 있는가.
+
+    없으면 제3자가 우리에게 그 역할을 대신 맡게 만드는 혼동된 대리인
+    (confused deputy) 공격을 막을 수 없다. 자세한 것은 app/access.py 에 있고,
+    여기서는 온보딩 체크리스트의 한 줄로만 다룬다.
+    """
+    if not facts["accounts"]:
+        return "missing", "등록된 계정이 없습니다."
+    real = [a for a in facts["accounts"] if a["role_arn"]]
+    if not real:
+        # 데모 계정뿐이면 확인할 대상이 없다. 'ok' 로 적으면 안 된다 -
+        # 안 한 것을 한 것처럼 보이게 만든다.
+        return "unknown", "실계정이 없어 판단할 것이 없습니다(전부 데모)."
+    naked = [a["account_id"] for a in real if not a["external_id"]]
+    if naked:
+        return "missing", f"ExternalId 가 없습니다: {', '.join(naked)}"
+    return "ok", f"실계정 {len(real)}개 모두 ExternalId 가 설정되어 있습니다."
+
+
+def _check_routines(facts):
+    """약속한 주기 업무가 등록되어 있고 밀리지 않았는가."""
+    from app.routines import judge
+
+    if "customer_routines" in facts["missing_tables"]:
+        return "unknown", "customer_routines 테이블이 없습니다."
+    if not facts["routines"]:
+        return "missing", "등록된 정기 점검이 없습니다."
+
+    active = [r for r in facts["routines"] if r["active"]]
+    if not active:
+        return "warn", f"{len(facts['routines'])}건이 전부 멈춰 있습니다."
+
+    late = [r for r in active
+            if judge(r, r["last_done_at"])[0] in ("overdue", "never")]
+    if late:
+        return "warn", f"밀린 점검 {len(late)}건: " + ", ".join(
+            r["name"] for r in late[:3])
+    return "ok", f"정기 점검 {len(active)}건이 제때 돌고 있습니다."
+
+
 def _check_regions(facts):
     empty = [a["account_id"] for a in facts["accounts"] if not a["regions"]]
     if not facts["accounts"]:
@@ -321,6 +382,8 @@ def _check_work_orders(facts):
 ENDPOINT_LABELS = {
     "alarm.index": "이벤트 화면",
     "report.sla": "보고 > SLA",
+    "customer.access_page": "고객사 > 계정 접속",
+    "customer.routines_page": "고객사 > 정기 점검",
     "runbook.index": "런북 화면",
     "work.index": "작업 기록 화면",
 }
@@ -345,6 +408,16 @@ CHECKS = [
                "화면에는 값이 보이지만 전부 합성 자료입니다.",
         "how": "flask --app run add-account ... --role-arn arn:aws:iam::<계정>:role/<역할>",
         "fn": _check_assume_role,
+    },
+        {
+        "id": "external-id",
+        "title": "ExternalId 가 설정되어 있다",
+        "level": "required",
+        "why": "없으면 제3자가 우리에게 이 역할을 대신 맡게 만드는 "
+               "혼동된 대리인(confused deputy) 공격을 막을 수 없습니다. "
+               "고객사 신뢰 정책과 짝을 이루는 값입니다.",
+        "how": "endpoint:customer.access_page",
+        "fn": _check_external_id,
     },
     {
         "id": "regions",
@@ -409,6 +482,16 @@ CHECKS = [
         "how": "endpoint:work.index",
         "fn": _check_work_orders,
     },
+    {
+        "id": "routines",
+        "title": "정기 점검이 돌고 있다",
+        "level": "recommended",
+        "why": "계약에 붙은 주기 업무(월간 점검, 분기 리뷰)를 지키고 있는지 "
+               "확인할 곳이 없으면, 안 한 것을 알아채는 시점이 고객사가 "
+               "물어볼 때가 됩니다.",
+        "how": "endpoint:customer.routines_page",
+        "fn": _check_routines,
+    },
 ]
 
 CHECKS_BY_ID = {c["id"]: c for c in CHECKS}
@@ -462,3 +545,60 @@ def summarize(results):
         "ready": not blocking,
         "unknown": len([r for r in results if r["status"] == "unknown"]),
     }
+
+
+# ----------------------------------------------------------------------
+# 전체 고객사 한눈에
+# ----------------------------------------------------------------------
+# evaluate() 가 '고객사 하나를 깊게' 라면 여기는 '전부를 넓게' 다.
+# 축이 다르다. 한 고객사를 받을 준비가 됐는지는 온보딩 때 한 번 보지만,
+# "지금 우리 고객사 중 누가 무엇이 비어 있나" 는 계속 봐야 한다.
+#
+# 점검 항목을 여기서 새로 정의하지 않는다. CHECKS 하나만 고치면 두 화면이
+# 함께 바뀌어야지, 목록이 둘이 되면 반드시 어긋난다.
+
+def matrix(customers):
+    """고객사 × 점검 항목 표.
+
+    돌려주는 것:
+      {"checks": [...], "rows": [{customer, results, summary, error}], "gaps": {...}}
+
+    고객사 하나가 실패해도 나머지는 채운다. 계정 하나가 이상해서 표
+    전체가 안 보이면, 정작 다른 고객사의 빈 칸을 못 본다.
+
+    비용: 고객사마다 gather() 가 한 번씩 돈다. 고객사 수만큼 질의가
+    나가므로 수백 곳이 되면 한 번에 모으도록 바꿔야 한다. 지금 규모에서
+    미리 복잡하게 만들지 않는다.
+    """
+    rows = []
+    for name in customers:
+        try:
+            results, _ = evaluate(name)
+        except ReadinessError as e:
+            rows.append({"customer": name, "results": [], "summary": None,
+                         "error": str(e)})
+            continue
+        rows.append({
+            "customer": name,
+            "results": {r["id"]: r for r in results},
+            "summary": summarize(results),
+            "error": None,
+        })
+
+    # 항목별로 몇 곳이 비었나. 표를 가로로 읽으면 고객사가 보이고,
+    # 이걸 보면 '우리가 전반적으로 안 하고 있는 것' 이 보인다.
+    gaps = {}
+    for c in CHECKS:
+        missing = [r["customer"] for r in rows
+                   if r["results"] and
+                   r["results"][c["id"]]["status"] in ("missing", "warn")]
+        gaps[c["id"]] = missing
+
+    # 빈 곳이 많은 고객사부터. 다 채운 곳은 볼 일이 없다.
+    rows.sort(key=lambda r: (
+        0 if r["error"] else 1,
+        -(r["summary"]["blocking"] if r["summary"] else 0),
+        -(r["summary"]["total"] - r["summary"]["done"] if r["summary"] else 0),
+        r["customer"],
+    ))
+    return {"checks": CHECKS, "rows": rows, "gaps": gaps}

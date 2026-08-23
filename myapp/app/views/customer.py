@@ -219,3 +219,26 @@ def routines_active(routine_id):
     except RoutineError as e:
         flash(str(e), "error")
     return redirect(request.referrer or url_for("customer.routines_page"))
+
+
+# 최종 URL: /customer/settings
+@customer_bp.route("/settings")
+def settings_page():
+    """고객사별로 무엇이 설정됐고 무엇이 비었는가.
+
+    온보딩 준비도와 점검 항목이 같다(readiness.CHECKS). 축만 다르다.
+    저쪽은 고객사 하나를 깊게, 여기는 전부를 넓게 본다.
+    """
+    error, data = None, None
+    try:
+        data = readiness.matrix(customer.names())
+    except (CustomerError, ReadinessError) as e:
+        error = str(e)
+
+    return render_template(
+        "customer_settings.html",
+        data=data, error=error,
+        status_label=readiness.STATUS_LABEL,
+        level_label=readiness.LEVELS,
+        endpoint_labels=readiness.ENDPOINT_LABELS,
+    )
