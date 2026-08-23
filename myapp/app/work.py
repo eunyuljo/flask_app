@@ -324,3 +324,171 @@ def close(work_id, note=""):
                 f"작업 후 스냅샷을 찍어야 확정할 수 있습니다 "
                 f"(지금: {STATUS_LABEL[current['status']]})."
             )
+
+
+# ----------------------------------------------------------------------
+# 흐름이 멈춘 작업
+# ----------------------------------------------------------------------
+# 작업 한 건에는 사람이 여섯 번 손을 댄다. 그중 어디서든 멈출 수 있는데,
+# 멈춘 것을 아무도 안 본다. app/jobs.py 가 배치에 대해 하는 일을 작업
+# 흐름에 대해서도 한다 - 무서운 건 실패가 아니라 침묵이다.
+#
+# 가장 위험한 것은 before_taken 이다. 작업 전 스냅샷만 찍고 멈춘 상태에서
+# 리소스가 바뀌면, "요청한 것만 바뀌었다" 를 증명할 방법이 없다.
+# 반쪽 증적은 없느니만 못하다 - 있다고 착각하게 만들기 때문이다.
+
+# 상태별로 이 시간을 넘기면 멈춘 것으로 본다.
+#
+# 값이 다른 이유: 승인은 사람을 기다리는 일이라 하루쯤 걸릴 수 있지만,
+# 작업 전 스냅샷을 찍어놓고 반나절이 지났다면 그건 작업이 끊긴 것이다.
+STALE_HOURS = {
+    "requested":    24,   # 승인자가 모르고 있을 수 있다
+    "open":         72,   # 승인해 놓고 시작을 안 했다
+    "before_taken":  8,   # 증적이 반쪽 - 가장 위험
+    "after_taken":  48,   # 차이를 아무도 안 봤다
+}
+
+# 왜 문제인지. 알림과 화면이 같은 문장을 쓴다.
+STALE_WHY = {
+    "requested":   "승인을 기다리는 중입니다. 승인자가 요청을 못 봤을 수 있습니다.",
+    "open":        "승인됐는데 시작하지 않았습니다. 작업창이 지났을 수도 있습니다.",
+    "before_taken": "작업 전 스냅샷만 있습니다. 지금 리소스가 바뀌면 "
+                    "'요청한 것만 바뀌었다' 를 증명할 수 없습니다.",
+    "after_taken": "차이를 확인하지 않았습니다. 증적이 확정되지 않은 채 남아 있습니다.",
+}
+
+# 손대야 하는 순서. 위험한 것이 위로 온다.
+STALE_ORDER = ("before_taken", "after_taken", "open", "requested")
+
+
+def stalled(now=None):
+    """흐름이 멈춘 작업. 상태마다 다른 기준으로 본다.
+
+    돌려주는 것: [{...작업, "stale_hours": 경과, "why": 설명}, ...]
+
+    기준 시각을 인자로 받는 이유는 테스트에서 시간을 옮겨보기 위해서다
+    (jobs._judge, routines.judge 와 같은 이유).
+    """
+    from datetime import datetime, timezone
+
+    now = now or datetime.now(timezone.utc)
+
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure_table(cur)
+        # 상태가 바뀐 시각을 따로 저장하는 칼럼은 없다. 대신 그 상태에서
+        # 마지막으로 일어난 일의 시각을 쓴다 - 스냅샷을 찍은 시각은
+        # resource_snapshots.collected_at 에 이미 있다.
+        #
+        # 새 칼럼을 더하는 것보다, 이미 있는 사실로 답할 수 있으면 그쪽이 낫다.
+        # (칼럼을 더하면 지난 작업들은 그 값이 비어 있어 판정에서 빠진다.)
+        cur.execute(
+            """
+            SELECT w.*,
+                   COALESCE(af.collected_at, bf.collected_at,
+                            w.approved_at, w.created_at) AS last_move
+              FROM work_orders w
+              LEFT JOIN resource_snapshots bf
+                     ON bf.snapshot_id = w.before_snapshot_id
+              LEFT JOIN resource_snapshots af
+                     ON af.snapshot_id = w.after_snapshot_id
+             WHERE w.status = ANY(%s)
+             ORDER BY last_move
+            """,
+            (list(STALE_HOURS),),
+        )
+        rows = _rows(cur)
+
+    out = []
+    for row in rows:
+        hours = (now - row["last_move"]).total_seconds() / 3600
+        if hours < STALE_HOURS[row["status"]]:
+            continue
+        out.append({**row, "stale_hours": int(hours),
+                    "limit_hours": STALE_HOURS[row["status"]],
+                    "why": STALE_WHY[row["status"]]})
+
+    out.sort(key=lambda r: (STALE_ORDER.index(r["status"]), -r["stale_hours"]))
+    return out
+
+
+def stalled_summary(rows):
+    """화면과 알림 위쪽 숫자."""
+    counts = {state: 0 for state in STALE_HOURS}
+    for row in rows:
+        counts[row["status"]] += 1
+    return {
+        "total": len(rows),
+        "by_status": counts,
+        # 증적이 반쪽인 것. 다른 것과 무게가 다르다.
+        "evidence_at_risk": counts["before_taken"],
+    }
+
+
+def to_slack_stalled(rows, base_url=""):
+    """멈춘 작업을 Slack mrkdwn 으로."""
+    from app.slack import escape
+
+    if not rows:
+        return ""
+
+    counts = stalled_summary(rows)
+    L = [f"*멈춘 작업 {counts['total']}건*"]
+    if counts["evidence_at_risk"]:
+        L.append(f"이 중 *{counts['evidence_at_risk']}건은 증적이 반쪽*입니다 "
+                 "(작업 전 스냅샷만 있음).")
+    L.append("")
+
+    for row in rows[:10]:
+        label = STATUS_LABEL.get(row["status"], row["status"])
+        line = (f"• `{label}` {row['stale_hours']}시간 — "
+                f"{escape(row['title'])} ({escape(row['customer'])})")
+        if base_url:
+            line += f" <{base_url.rstrip('/')}/work/{row['id']}|열기>"
+        L.append(line)
+
+    if len(rows) > 10:
+        L.append(f"_외 {len(rows) - 10}건_")
+    return "\n".join(L)
+
+
+def due_for_auto_snapshot(now=None, grace_minutes=30):
+    """작업창이 시작됐는데 작업 전 스냅샷이 아직 없는 작업.
+
+    작업창을 새벽 2시로 잡아놓고 그 시각에 사람이 로그인해서 버튼을
+    누르는 것은 기계가 할 일이다.
+
+    ── 무엇을 자동으로 하지 않는가 ──────────────────────────────
+    작업 후 스냅샷은 자동으로 찍지 않는다. 작업이 끝났는지 기계가 알 수
+    없어서, 창 종료 시각에 찍으면 작업 도중 상태가 '작업 후' 로 남는다.
+    그건 증적이 아니라 잘못된 증적이다. 대신 '창이 끝났는데 작업 후가
+    없다' 는 stalled() 가 잡는다.
+
+    승인도 자동으로 하지 않는다. 자기 승인 금지가 이 흐름의 핵심이다.
+
+    grace_minutes: 창 시작 직후 이만큼은 기다린다. 사람이 직접 찍으려고
+        들어오는 중일 수 있고, 그 경우 사람이 찍은 것이 '작업 직전' 에
+        더 가깝다. 자동은 사람이 안 할 때의 보험이다.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=grace_minutes)
+
+    with _connect() as conn, conn.cursor() as cur:
+        _ensure_table(cur)
+        cur.execute(
+            """
+            SELECT * FROM work_orders
+             WHERE status = 'open'
+               AND before_snapshot_id IS NULL
+               AND window_start IS NOT NULL
+               AND window_start <= %s
+               -- 창이 이미 끝난 것은 자동으로 찍지 않는다. 그때 찍은
+               -- 스냅샷은 '작업 전' 이 아니라 '한참 뒤' 이고, 오히려
+               -- 증적을 어지럽힌다. 그건 stalled() 가 잡는다.
+               AND (window_end IS NULL OR window_end >= %s)
+             ORDER BY window_start
+            """,
+            (cutoff, now),
+        )
+        return _rows(cur)

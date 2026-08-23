@@ -207,8 +207,22 @@ def mention(member):
     return member["name"]
 
 
-def to_slack(item, level, people):
-    """한 알람의 한 단계에 대한 Slack 메시지."""
+# Slack 메시지에 실을 절차의 길이 상한.
+# 런북 전문을 그대로 보내면 채널이 글로 막히고, 정작 누가 불려 나왔는지가
+# 스크롤 위로 밀려 올라간다. 앞부분만 싣고 전체는 화면에서 본다.
+RUNBOOK_EXCERPT = 700
+
+
+def to_slack(item, level, people, runbook=None, base_url=""):
+    """한 알람의 한 단계에 대한 Slack 메시지.
+
+    runbook: app.runbook.find() 결과. 있으면 절차를 함께 싣는다.
+
+    이 메시지를 받는 사람은 새벽에 깬 당직자다. 알람 내용만 보내면
+    절차를 보려고 도구에 로그인해야 하는데, 그 순간이 가장 로그인하기
+    싫은 순간이다. 런북을 만들어 두고 정작 가장 필요할 때 안 보내는 것은
+    앞뒤가 안 맞는다.
+    """
     from app.slack import escape
 
     who = " ".join(mention(m) for m in people) if people else "_(담당자 미등록)_"
@@ -225,11 +239,35 @@ def to_slack(item, level, people):
         "",
         "_아직 이 계정을 들여다본 기록이 없습니다(감사 로그 기준)._",
     ]
+
+    if runbook:
+        scope = f"{runbook['customer']} 전용" if runbook["customer"] else "공통"
+        body = (runbook["body"] or "").strip()
+        clipped = len(body) > RUNBOOK_EXCERPT
+        if clipped:
+            body = body[:RUNBOOK_EXCERPT].rstrip()
+
+        lines += ["", f"*대응 절차 — {escape(runbook['title'])}* ({scope})",
+                  escape(body)]
+        if clipped:
+            lines.append("_… 이어집니다. 전체는 런북 화면에서._")
+        if base_url:
+            lines.append(
+                f"<{base_url.rstrip('/')}/runbook/{runbook['id']}/edit|절차 전체 보기>")
+    else:
+        # 절차가 없다는 것도 정보다. 불려 나온 사람이 "어딘가에 있겠지" 하고
+        # 찾아 헤매는 것보다, 없다고 알려주는 편이 낫다.
+        lines += ["", "_이 알람에는 등록된 대응 절차가 없습니다._"]
+
     return "\n".join(lines)
 
 
-def to_jira(item, level):
-    """Jira 이슈 제목과 본문."""
+def to_jira(item, level, runbook=None):
+    """Jira 이슈 제목과 본문.
+
+    Jira 는 길이 제한이 Slack 만큼 빡빡하지 않고, 티켓을 받는 사람이
+    나중에 열어볼 수도 있다. 절차는 잘라내지 않고 그대로 싣는다.
+    """
     over = int(float(item["elapsed_minutes"]) - float(item["minutes"]))
     summary = (f"[SLA {level}단계] {item['customer']} · "
                f"{item['sample'][:80]}")
@@ -250,4 +288,17 @@ def to_jira(item, level):
         "대응 여부는 감사 로그(콘솔 조회·AI 진단) 기준입니다.",
         "다른 경로로 대응했다면 여기 잡히지 않습니다.",
     ])
+
+    if runbook:
+        scope = f"{runbook['customer']} 전용" if runbook["customer"] else "공통"
+        description += "\n".join([
+            "",
+            "",
+            f"h3. 대응 절차 — {runbook['title']} ({scope})",
+            "",
+            runbook["body"] or "",
+        ])
+    else:
+        description += "\n\n등록된 대응 절차가 없습니다."
+
     return summary, description

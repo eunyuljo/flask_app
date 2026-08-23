@@ -471,6 +471,145 @@ def register_cli(app):
         return {"summary": f"{ref} 발송 {len(done)}건 / 건너뜀 {len(skipped)}건",
                 "sent": len(done), "skipped": len(skipped)}
 
+    @app.cli.command("auto-snapshot")
+    @click.option("--grace", default=30,
+                  help="창 시작 후 이만큼은 사람을 기다린다(분, 기본 30)")
+    @click.option("--dry-run", is_flag=True, help="찍지 않고 대상만 보여준다")
+    @tracked("auto-snapshot")
+    def auto_snapshot(grace, dry_run):
+        """작업창이 시작된 작업의 '작업 전' 스냅샷을 자동으로 찍는다.
+
+        작업창을 새벽 2시로 잡아놓고 그 시각에 사람이 로그인해서 버튼을
+        누르는 것은 기계가 할 일이다.
+
+        작업 후 스냅샷은 자동으로 찍지 않는다 - 작업이 끝났는지 기계가
+        알 수 없고, 작업 도중 상태를 '작업 후' 로 남기면 그건 증적이
+        아니라 잘못된 증적이다.
+
+        \b
+        cron 예시 (10분마다):
+          */10 * * * *  cd /path/to/myapp && \
+            .venv/bin/flask --app run auto-snapshot
+        """
+        from app import work
+        from app.accounts import get_account, AccountError
+        from app.aws_session import SessionError
+        from app.collect import snapshot_for_account, CollectError
+        from app.resources import psycopg_uri as res_uri
+        from app.work import WorkError
+
+        try:
+            todo = work.due_for_auto_snapshot(grace_minutes=grace)
+        except WorkError as e:
+            raise click.ClickException(str(e))
+
+        if not todo:
+            click.echo("자동으로 찍을 작업이 없습니다.")
+            return {"summary": "대상 없음", "taken": 0}
+
+        click.echo(f"대상 {len(todo)}건")
+        done, failed = [], []
+
+        for item in todo:
+            label = f"#{item['id']} {item['title'][:36]} ({item['customer']})"
+            if dry_run:
+                click.echo(f"  [건너뜀] {label} - dry-run")
+                continue
+
+            try:
+                account = get_account(item["account_id"])
+                if account is None:
+                    raise WorkError(f"계정 {item['account_id']} 이 등록 목록에 없습니다.")
+
+                # 사람이 누를 때와 같은 검사를 거친다. 자동이라고 상태
+                # 전이를 건너뛰면 이 흐름의 보증이 무너진다.
+                work.check_transition(item, "before")
+
+                snapshot_id = snapshot_for_account(
+                    res_uri(), account, item["region"],
+                    note=f"작업 #{item['id']} 작업 전 (자동)",
+                )
+                work.attach_snapshot(item["id"], "before", snapshot_id)
+            except (WorkError, CollectError, SessionError, AccountError) as e:
+                # 한 건이 안 된다고 나머지를 안 찍을 이유는 없다.
+                failed.append((label, str(e).splitlines()[0]))
+                click.echo(f"  [실패] {label} - {str(e).splitlines()[0]}")
+                continue
+
+            done.append(label)
+            click.echo(f"  [완료] {label} - 스냅샷 #{snapshot_id}")
+
+        click.echo(f"자동 스냅샷 {len(done)}건, 실패 {len(failed)}건")
+
+        if failed:
+            raise click.ClickException(
+                f"{len(failed)}건을 찍지 못했습니다: "
+                + ", ".join(label for label, _ in failed)
+            )
+
+        return {"summary": f"자동 스냅샷 {len(done)}건", "taken": len(done)}
+
+    @app.cli.command("stalled-work")
+    @click.option("--slack", is_flag=True, help="Slack 으로 보낸다")
+    @click.option("--base-url", default="", help="링크에 쓸 앱 주소")
+    @tracked("stalled-work")
+    def stalled_work(slack, base_url):
+        """흐름이 멈춘 작업을 찾는다.
+
+        작업 한 건에는 사람이 여섯 번 손을 댄다. 그중 어디서든 멈출 수
+        있는데 멈춘 것을 아무도 안 본다. 배치(job_runs)에 대해 하는 일을
+        작업 흐름에 대해서도 한다.
+
+        가장 위험한 것은 작업 전 스냅샷만 찍고 멈춘 것이다. 그 상태에서
+        리소스가 바뀌면 "요청한 것만 바뀌었다" 를 증명할 수 없다.
+
+        \b
+        cron 예시 (평일 09:00, 13:00):
+          0 9,13 * * 1-5  cd /path/to/myapp && \
+            .venv/bin/flask --app run stalled-work --slack
+        """
+        from app import work
+        from app.work import WorkError
+
+        try:
+            rows = work.stalled()
+        except WorkError as e:
+            raise click.ClickException(str(e))
+
+        counts = work.stalled_summary(rows)
+        if not rows:
+            click.echo("멈춘 작업이 없습니다.")
+            return {"summary": "멈춘 작업 없음", "stalled": 0}
+
+        click.echo(f"멈춘 작업 {counts['total']}건")
+        if counts["evidence_at_risk"]:
+            click.echo(f"  이 중 {counts['evidence_at_risk']}건은 증적이 반쪽입니다.")
+        for row in rows:
+            click.echo(f"  [{row['status']:<13}] {row['stale_hours']:>4}시간  "
+                       f"#{row['id']} {row['title'][:40]} ({row['customer']})")
+
+        if slack:
+            from app import slack as slack_mod
+            from app.slack import SlackError, SlackNotConfigured
+
+            try:
+                slack_mod.post(work.to_slack_stalled(rows, base_url),
+                               purpose="work")
+                click.echo(f"\nSlack 으로 보냈습니다 ({counts['total']}건)")
+            except SlackNotConfigured as e:
+                click.echo(f"\n알림 건너뜀: {e}")
+            except SlackError as e:
+                click.echo(f"\n알림 실패: {e}")
+
+        # 멈춘 작업이 있다는 것 자체는 배치 실패가 아니다. 사람이 손대야
+        # 하는 일이고, 여기서 실패로 끝내면 운영 상태 화면이 늘 빨갛다.
+        return {
+            "summary": f"멈춘 작업 {counts['total']}건 "
+                       f"(증적 반쪽 {counts['evidence_at_risk']}건)",
+            "stalled": counts["total"],
+            "evidence_at_risk": counts["evidence_at_risk"],
+        }
+
     @app.cli.command("backfill-account-ids")
     @click.option("--dry-run", is_flag=True, help="바꾸지 않고 몇 건인지만 센다")
     def backfill_account_ids(dry_run):
@@ -695,10 +834,12 @@ def register_cli(app):
     @click.option("--slack", is_flag=True, help="Slack 으로 보낸다")
     @click.option("--all", "send_all", is_flag=True,
                   help="이미 알린 것도 다시 보낸다(억제 무시)")
+    @click.option("--base-url", default="",
+                  help="Slack 메시지의 링크에 쓸 앱 주소")
     @click.option("--escalate", is_flag=True,
                   help="단계를 올려 담당자를 부르고, 일정 단계부터 Jira 로 넘긴다")
     @tracked("sla-check")
-    def sla_check(hours, slack, send_all, escalate):
+    def sla_check(hours, slack, send_all, base_url, escalate):
         """목표를 넘겼는데 대응 기록이 없는 알람을 찾는다.
 
         \b
@@ -753,9 +894,9 @@ def register_cli(app):
             click.echo("\n새로 알릴 것이 없습니다(억제 창 안).")
 
         if escalate:
-            _run_escalation(found)
+            _run_escalation(found, base_url)
 
-    def _run_escalation(found):
+    def _run_escalation(found, base_url=""):
         """위반 목록으로 단계를 올린다. sla-check --escalate 에서만 부른다."""
         from app import escalation
         from app.escalation import EscalationError
@@ -779,8 +920,20 @@ def register_cli(app):
         from app.slack import SlackError, SlackNotConfigured
         from app.jira import JiraError, JiraNotConfigured
 
+        from app.runbook import find as find_runbook, RunbookError
+
         for item in todo:
             people_all = escalation.members(item["customer"])
+
+            # 불려 나온 사람이 절차를 보려고 도구에 로그인해야 하는 것은
+            # 앞뒤가 안 맞는다. 런북을 메시지에 함께 싣는다.
+            # 못 읽어도 호출 자체는 나가야 한다 - 절차가 없어서 사람을
+            # 안 부르는 것이 훨씬 나쁘다.
+            try:
+                book = find_runbook(item["fingerprint"], item["customer"])
+            except RunbookError:
+                book = None
+
             for level in item["levels"]:
                 people = escalation._for_level(people_all, level)
                 names = ", ".join(m["name"] for m in people) or "(담당자 미등록)"
@@ -790,7 +943,8 @@ def register_cli(app):
                 # 한 채널이 막혔다고 에스컬레이션 전체가 멎으면 안 된다.
                 try:
                     slack_mod.post(
-                        escalation.to_slack(item, level, people), purpose="sla"
+                        escalation.to_slack(item, level, people, book, base_url),
+                        purpose="sla"
                     )
                 except SlackNotConfigured:
                     click.echo("      (Slack 미설정 - 건너뜀)")
@@ -799,7 +953,7 @@ def register_cli(app):
 
                 jira_key = ""
                 if level >= jira_from:
-                    summary, description = escalation.to_jira(item, level)
+                    summary, description = escalation.to_jira(item, level, book)
                     try:
                         jira_key = jira_mod.create_issue(
                             summary, description,

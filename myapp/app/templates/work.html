@@ -99,6 +99,38 @@
 
   {# 승인 대기를 목록 위에 따로 둔다. 승인자가 가장 먼저 보는 것이고,
      섞여 있으면 자기가 눌러야 할 것이 있는지 훑어야 알게 된다. #}
+  {# 흐름이 멈춘 작업. 승인 대기보다 위에 둔다 - 증적이 반쪽으로 남아
+     있는 상태가 승인이 밀린 것보다 위험하다. #}
+  {% if stalled %}
+    <hr>
+    <h2>멈춘 작업 <span class="muted">({{ stalled_counts.total }}건)</span></h2>
+    {% if stalled_counts.evidence_at_risk %}
+      <div class="flash error">
+        <strong>{{ stalled_counts.evidence_at_risk }}건은 증적이 반쪽입니다.</strong>
+        작업 전 스냅샷만 있는 상태에서 리소스가 바뀌면
+        "요청한 것만 바뀌었다"를 증명할 수 없습니다.
+      </div>
+    {% endif %}
+
+    {% for w in stalled %}
+      <div class="event {% if w.status == 'before_taken' %}sev-error
+                        {% else %}sev-warning{% endif %}">
+        <div class="event-head">
+          <span class="badge">{{ w.stale_hours }}시간</span>
+          <strong><a href="{{ url_for('work.detail', work_id=w.id) }}">{{ w.title }}</a></strong>
+          <span class="muted">
+            {{ w.customer }} &middot; {{ stale_labels.get(w.status, w.status) }}
+          </span>
+        </div>
+        <div class="muted">{{ w.why }}</div>
+        <div class="muted">
+          기준 {{ w.limit_hours }}시간 &middot; 작업자 {{ w.operator }}
+          {% if w.ticket %} &middot; {{ w.ticket }}{% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  {% endif %}
+
   {% if waiting %}
     <hr>
     <h2>승인 대기 <span class="muted">({{ waiting|length }}건)</span></h2>

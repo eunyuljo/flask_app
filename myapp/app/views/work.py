@@ -73,10 +73,21 @@ def index():
     except WorkError:
         pass
 
+    # 흐름이 멈춘 작업. 승인 대기와 같은 이유로 목록 위에 따로 둔다 -
+    # 섞여 있으면 멈춘 것이 있는지 훑어야 알게 된다.
+    stalled, stalled_counts = [], None
+    try:
+        stalled = work.stalled()
+        stalled_counts = work.stalled_summary(stalled)
+    except WorkError:
+        pass
+
     return render_template(
         "work.html",
         items=items,
         waiting=waiting,
+        stalled=stalled, stalled_counts=stalled_counts,
+        stale_labels=work.STATUS_LABEL,
         # 알람 화면에서 넘어왔으면 폼이 채워진 채로 열린다.
         # 아는 이름만 통과시킨다 - 주소창에 아무 값이나 넣어도 폼에
         # 들어가면 안 된다.
