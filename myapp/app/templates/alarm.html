@@ -161,9 +161,12 @@
           </details>
         {% else %}
           <div class="muted">
+            {# 심각도와 출처도 넘긴다. 초안을 만들 때 근거가 된다. #}
             <a href="{{ url_for('runbook.new',
                                 fingerprint=item.record.fingerprint,
-                                sample=item.record.message[:120]) }}">이 알람에 절차 쓰기</a>
+                                sample=item.record.message[:120],
+                                severity=item.record.severity,
+                                source=item.record.source) }}">이 알람에 절차 쓰기</a>
           </div>
         {% endif %}
       {% endif %}

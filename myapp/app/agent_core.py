@@ -682,3 +682,168 @@ def draft_rca(item, data, past=None, runbooks=None):
            for f in ("impact", "cause", "action", "prevention")}
     out["uncertain"] = [str(x).strip() for x in (draft.get("uncertain") or []) if str(x).strip()]
     return out
+
+
+# ----------------------------------------------------------------------
+# 6) 런북 초안
+# ----------------------------------------------------------------------
+# 런북 화면이 비어 있는 채로 오래 남는 이유는 하나다. 빈 칸에서 시작하는
+# 것이 어렵기 때문이다. 잦은 알람 목록은 이미 있으니(주간 리포트·노이즈
+# 화면), 거기서 바로 초안을 만들어 사람이 고치게 한다.
+#
+# 저장하지 않는다. draft_rca 와 같은 규칙이다 - 모델이 쓴 절차가 사람
+# 확인 없이 당직자의 행동 지침이 되면 안 된다.
+
+RUNBOOK_SYSTEM_PROMPT = """\
+당신은 AWS 운영(MSP) 당직자를 위한 대응 절차(런북) 초안을 씁니다.
+
+읽는 사람은 새벽 3시에 깨어난 당직자입니다. 배경 설명이 아니라
+지금 무엇을 할지가 필요합니다.
+
+원칙:
+- 확인부터, 조치는 나중에. 무엇이 벌어지는지 모르는 채로 고치지 않습니다.
+- 되돌릴 수 없는 조치(삭제, 종료, 스케일 다운) 앞에는 반드시 확인 단계를
+  두고, 그 단계에서 무엇을 보고 판단하는지 적습니다.
+- 명령은 읽기 전용을 우선합니다. 이 조직의 도구는 조회만 하도록 되어 있고,
+  변경은 별도 승인 절차를 거칩니다.
+- 주어진 근거(과거 발생 이력, 지난 장애 기록)에 없는 사실을 지어내지
+  않습니다. 확인이 필요한 것은 uncertain 에 적습니다.
+- 언제 사람을 부르는지(에스컬레이션 기준)를 반드시 포함합니다.
+
+절차는 번호를 붙인 짧은 문장으로 씁니다. 한 단계에 한 가지만 합니다.
+"""
+
+RUNBOOK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "steps": {"type": "array", "items": {"type": "string"}},
+        "escalate_when": {"type": "string"},
+        "uncertain": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["title", "steps", "escalate_when", "uncertain"],
+    "additionalProperties": False,
+}
+
+
+def _format_alarm_kind(sample, severity, source, history=None, past=None,
+                       customer=""):
+    """모델에게 넘길 근거. 화면이 이미 모아둔 것을 그대로 쓴다."""
+    L = []
+    a = L.append
+
+    a("이 알람 종류에 대한 대응 절차를 써 주세요.")
+    a("")
+    a(f"메시지 예: {sample}")
+    a(f"심각도: {severity}")
+    if source:
+        a(f"출처: {source}")
+    if customer:
+        a(f"고객사: {customer}")
+
+    if history:
+        a("")
+        a("발생 이력")
+        a(f"- 전체 {history.get('total', 0)}회")
+        if history.get("first_seen"):
+            a(f"- 처음 {history['first_seen']}, 마지막 {history.get('last_seen')}")
+        for s in (history.get("samples") or [])[:5]:
+            a(f"  · {s.get('occurred_at')} [{s.get('severity')}] {s.get('message')}")
+
+    if past:
+        a("")
+        a("같은 알람이 관련됐던 지난 장애")
+        for item in past:
+            a(f"- {item['title']} ({item['started_at']:%Y-%m-%d})")
+            if item.get("cause"):
+                a(f"  원인: {item['cause']}")
+            if item.get("action"):
+                a(f"  조치: {item['action']}")
+    else:
+        a("")
+        a("지난 장애 기록이 없습니다. 일반적인 확인 절차부터 쓰되, "
+          "이 환경에서 확인이 필요한 것은 uncertain 에 적어 주세요.")
+
+    return "\n".join(L)
+
+
+def draft_runbook(sample, severity, source="", history=None, past=None,
+                  customer=""):
+    """런북 초안을 만든다.
+
+    돌려주는 것: {"title":..., "body":..., "uncertain": [...]}
+
+    저장하지 않는다. 화면이 사람에게 보여주고, 사람이 고쳐서 저장한다.
+    모델이 쓴 절차가 확인 없이 당직자의 행동 지침이 되면 안 된다.
+    """
+    import json
+
+    problem = check_config()
+    if problem:
+        raise AgentNotConfigured(problem)
+
+    cfg = current_app.config
+    provider = cfg["AGENT_PROVIDER"]
+    client = _build_client(provider, cfg)
+
+    try:
+        response = client.beta.messages.create(
+            model=_resolve_model(provider, cfg["AGENT_MODEL"]),
+            max_tokens=16_000,
+            system=RUNBOOK_SYSTEM_PROMPT,
+            messages=[{"role": "user",
+                       "content": _format_alarm_kind(sample, severity, source,
+                                                     history, past, customer)}],
+            # 도구가 없으니 반복도 없다. 생각은 켠다 - 확인 순서를 정하는
+            # 일이라 그냥 나열보다 어렵다.
+            thinking={"type": "adaptive"},
+            output_config={
+                "effort": cfg["AGENT_EFFORT"],
+                "format": {"type": "json_schema", "schema": RUNBOOK_SCHEMA},
+            },
+            **_provider_kwargs(provider, cfg),
+        )
+    except Exception as e:
+        is_botocore = type(e).__module__.split(".")[0] == "botocore"
+        if is_botocore or (isinstance(e, RuntimeError) and "AWS credentials" in str(e)):
+            raise AgentNotConfigured(f"AWS 자격증명을 확인할 수 없습니다: {e}") from e
+        raise
+
+    # refusal 이면 content 가 비어 있다. 먼저 보지 않으면 빈 문자열을
+    # JSON 으로 파싱하려다 엉뚱한 에러가 난다.
+    if getattr(response, "stop_reason", None) == "refusal":
+        detail = getattr(response, "stop_details", None)
+        raise AgentNotConfigured(
+            "모델이 이 요청을 처리하지 않았습니다"
+            + (f" ({detail.category})" if detail else "") + "."
+        )
+
+    text = next((b.text for b in response.content if b.type == "text"), "")
+    try:
+        draft = json.loads(text)
+    except ValueError as e:
+        raise AgentNotConfigured(f"모델 응답을 읽지 못했습니다: {e}") from e
+
+    return {
+        "title": str(draft.get("title", "") or "").strip(),
+        # 화면의 런북 본문은 여러 줄 글이다. 단계 목록을 그 형태로 맞춰
+        # 넘긴다 - 저장할 때 형식을 또 바꾸면 사람이 고친 것이 틀어진다.
+        "body": _steps_to_body(draft),
+        "uncertain": [str(x).strip() for x in (draft.get("uncertain") or [])
+                      if str(x).strip()],
+    }
+
+
+def _steps_to_body(draft):
+    """단계 목록과 에스컬레이션 기준을 런북 본문 한 덩어리로 만든다."""
+    lines = []
+    for index, step in enumerate(draft.get("steps") or [], start=1):
+        text = str(step or "").strip()
+        if text:
+            lines.append(f"{index}. {text}")
+
+    escalate = str(draft.get("escalate_when", "") or "").strip()
+    if escalate:
+        lines.append("")
+        lines.append(f"사람을 부를 때: {escalate}")
+    return "\n".join(lines)

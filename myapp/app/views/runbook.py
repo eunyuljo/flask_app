@@ -8,6 +8,7 @@ from flask import (
 )
 
 from app import runbook
+from app.agent_core import draft_runbook, AgentNotConfigured, check_config
 from app.accounts import list_accounts, by_customer, AccountError
 from app.runbook import RunbookError, OUTCOMES
 
@@ -61,19 +62,33 @@ def new():
     지문은 알람 화면에서 넘어온 쿼리스트링으로 채운다.
     사람이 16자리 해시를 손으로 옮겨 적게 하면 안 된다.
     """
+    fingerprint = request.args.get("fingerprint", "")
+    sample = request.args.get("sample", "")
+
+    # 방금 만든 초안이 있으면 빈 칸에만 채워 보여준다. 저장은 하지 않는다 -
+    # 모델이 쓴 절차가 사람 확인 없이 당직자의 행동 지침이 되면 안 된다
+    # (사후 보고서 초안과 같은 규칙).
+    draft = _DRAFTS.pop(session.get("username", ""), None)
+    if draft and draft.get("fingerprint") != fingerprint:
+        draft = None
+
     return render_template(
         "runbook_edit.html",
         item={
             "id": None,
-            "fingerprint": request.args.get("fingerprint", ""),
+            "fingerprint": fingerprint,
             "customer": "",
-            "title": request.args.get("title", ""),
-            "body": "",
-            "sample": request.args.get("sample", ""),
+            "title": (draft or {}).get("title") or request.args.get("title", ""),
+            "body": (draft or {}).get("body", ""),
+            "sample": sample,
         },
         customers=_customers(),
         runs=[],
         outcomes=OUTCOMES,
+        draft=draft,
+        # 설정이 없으면 버튼 자체를 숨긴다. 눌렀는데 매번 실패하는 버튼은
+        # 없느니만 못하다.
+        agent_ready=check_config() is None,
     )
 
 
@@ -196,3 +211,55 @@ def runs():
         error = str(e)
     return render_template("runbook_runs.html", items=items, stats=stats,
                            outcomes=OUTCOMES, error=error)
+
+
+# 초안 보관소. 사용자마다 방금 만든 것 하나만.
+# POST 로 만들고 GET 으로 보여준다(PRG) - 새로고침이 모델을 다시 부르면
+# 그때마다 비용이 나간다. 진단 화면(_DIAGNOSES)과 같은 처리다.
+_DRAFTS = {}
+
+
+# 최종 URL: /runbook/draft
+@runbook_bp.route("/draft", methods=["POST"])
+def draft():
+    """이 알람 종류의 대응 절차 초안을 모델에게 맡긴다.
+
+    저장하지 않는다. 작성 화면의 빈 칸을 채워줄 뿐이고, 사람이 고쳐서
+    저장 버튼을 눌러야 남는다.
+    """
+    from app.incident import past_incidents, IncidentError
+    from app.stats import fingerprint_history, StatsUnavailable
+
+    fingerprint = request.form.get("fingerprint", "").strip()
+    sample = request.form.get("sample", "").strip()
+    if not fingerprint:
+        flash("지문이 없습니다.", "error")
+        return redirect(url_for("runbook.index"))
+
+    # 근거는 화면이 이미 쓰는 것과 같은 함수에서 가져온다. 여기서 따로
+    # 질의하면 초안과 화면이 서로 다른 근거를 보게 된다.
+    try:
+        history = fingerprint_history(fingerprint)
+    except StatsUnavailable:
+        history = None
+    try:
+        past = past_incidents(fingerprint, limit=3)
+    except IncidentError:
+        past = []
+
+    try:
+        result = draft_runbook(
+            sample=sample or "(예시 메시지 없음)",
+            severity=request.form.get("severity", "") or "unknown",
+            source=request.form.get("source", ""),
+            history=history,
+            past=past,
+            customer=request.form.get("customer", ""),
+        )
+    except AgentNotConfigured as e:
+        flash(f"초안을 만들지 못했습니다: {e}", "error")
+        return redirect(url_for("runbook.new", fingerprint=fingerprint,
+                                sample=sample))
+
+    _DRAFTS[session.get("username", "")] = {**result, "fingerprint": fingerprint}
+    return redirect(url_for("runbook.new", fingerprint=fingerprint, sample=sample))
