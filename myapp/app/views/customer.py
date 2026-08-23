@@ -6,13 +6,14 @@ from flask import (
     Blueprint, render_template, request, redirect, url_for, session, flash
 )
 
-from app import access, audit, contacts, customer, readiness, routines
+from app import access, audit, contacts, customer, readiness, routines, standards
 from app.access import AccessError
 from app.contacts import ContactError
 from app.accounts import list_accounts, get_account, AccountError
 from app.customer import CustomerError
 from app.readiness import ReadinessError
 from app.routines import RoutineError
+from app.standards import StandardError
 
 customer_bp = Blueprint("customer", __name__)
 
@@ -286,3 +287,65 @@ def contacts_active(contact_id):
     except ContactError as e:
         flash(str(e), "error")
     return redirect(request.referrer or url_for("customer.index"))
+
+
+# 최종 URL: /customer/standards
+@customer_bp.route("/standards")
+def standards_page():
+    """이 고객사와 합의한 구성은 무엇이고, 지켜지고 있는가.
+
+    컴플라이언스가 '누구에게나 통하는 모범사례' 라면 여기는 '이 고객사와
+    합의한 것' 이다. 필수 태그는 여기서 정한 것이 컴플라이언스의 기본값을
+    이긴다.
+    """
+    error, result, counts = None, None, None
+    try:
+        all_names = customer.names()
+    except CustomerError as e:
+        all_names, error = [], str(e)
+
+    selected = request.args.get("customer") or (all_names[0] if all_names else "")
+
+    if selected and not error:
+        try:
+            result = standards.evaluate(selected)
+            counts = standards.summarize(result)
+        except StandardError as e:
+            error = str(e)
+
+    return render_template(
+        "customer_standards.html",
+        customers=all_names, selected=selected,
+        result=result, counts=counts, error=error,
+        rules=standards.RULES,
+    )
+
+
+# 최종 URL: /customer/standards/save
+@customer_bp.route("/standards/save", methods=["POST"])
+def standards_save():
+    """규칙을 등록하거나 고친다."""
+    name = request.form.get("customer", "")
+    try:
+        standards.save(
+            customer=name,
+            rule=request.form.get("rule", ""),
+            value=request.form.get("value", ""),
+            note=request.form.get("note", ""),
+        )
+        flash("구성 표준을 저장했습니다.", "success")
+    except StandardError as e:
+        flash(str(e), "error")
+    return redirect(url_for("customer.standards_page", customer=name))
+
+
+# 최종 URL: /customer/standards/<번호>/delete
+@customer_bp.route("/standards/<int:standard_id>/delete", methods=["POST"])
+def standards_delete(standard_id):
+    """규칙을 지운다."""
+    try:
+        standards.remove(standard_id)
+        flash("규칙을 지웠습니다.", "success")
+    except StandardError as e:
+        flash(str(e), "error")
+    return redirect(request.referrer or url_for("customer.standards_page"))

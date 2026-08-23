@@ -248,12 +248,20 @@ def _check_s3_versioning(snap):
 
 
 def _check_required_tags(snap):
+    """필수 태그. 고객사가 정한 것이 있으면 그쪽을 쓴다.
+
+    REQUIRED_TAGS 는 코드에 박힌 기본값이라 고객사가 둘째부터 맞지 않는다.
+    고객사 표준(app/standards.py)에 required_tags 가 있으면 스냅샷을 읽는
+    쪽이 snap.meta 에 넣어 준다 - 여기서 DB 를 보면 점검 함수가 순수하지
+    않게 되고, 그러면 테스트에서 손으로 만들어 먹일 수 없다.
+    """
+    required = snap.meta.get("required_tags") or REQUIRED_TAGS
     for item in snap.items:
         # 태그를 붙일 수 없는 리소스가 있으므로, 태그 항목 자체가 없으면 넘어간다.
         attrs = item["attributes"]
         if "tags" not in attrs:
             continue
-        missing = [t for t in REQUIRED_TAGS if not (attrs.get("tags") or {}).get(t)]
+        missing = [t for t in required if not (attrs.get("tags") or {}).get(t)]
         if missing:
             yield item["resource_id"], f"필수 태그가 없습니다: {', '.join(missing)}"
 
@@ -444,7 +452,7 @@ def _table_ready(cur, name):
     return cur.fetchone()[0] is not None
 
 
-def load_snapshot(cur, snapshot_id):
+def load_snapshot(cur, snapshot_id, meta=None):
     # 무엇을 수집했는지 먼저 읽는다. 같은 커서로 리소스를 읽은 뒤에
     # 질의를 하나 더 던지면 앞의 결과가 덮어써진다.
     cur.execute(
@@ -459,7 +467,7 @@ def load_snapshot(cur, snapshot_id):
         "WHERE snapshot_id = %s",
         (snapshot_id,),
     )
-    return Snapshot(snapshot_id, _rows(cur), collected_types=collected)
+    return Snapshot(snapshot_id, _rows(cur), meta=meta, collected_types=collected)
 
 
 def coverage(snap):
@@ -630,7 +638,30 @@ def run_checks(snap, excused=None):
 
 
 def evaluate(snapshot_id, account_id=None):
-    """스냅샷 하나를 점검한다."""
+    """스냅샷 하나를 점검한다.
+
+    계정을 주면 그 고객사의 구성 표준을 함께 반영한다. 필수 태그는
+    고객사마다 다른데 REQUIRED_TAGS 는 코드에 박힌 값이라, 고객사가
+    정한 것이 있으면 그쪽이 이긴다(런북·SLA 와 같은 규칙).
+    """
+    meta = {}
+    if account_id:
+        # 표준을 못 읽는다고 점검 전체가 멎으면 안 된다. 그때는 기본값으로
+        # 돈다 - 다만 그건 '고객사 표준을 지킨다' 가 아니므로 meta 에
+        # 남겨서 화면이 그 사실을 말할 수 있게 한다.
+        try:
+            from app.accounts import get_account
+            from app.standards import required_tags_for
+
+            account = get_account(account_id)
+            if account and account.get("customer"):
+                tags = required_tags_for(account["customer"])
+                if tags:
+                    meta["required_tags"] = tags
+                    meta["required_tags_from"] = account["customer"]
+        except Exception:                        # noqa: BLE001
+            meta["required_tags_from"] = ""
+
     with _connect() as conn, conn.cursor() as cur:
         if not _table_ready(cur, "resources"):
             raise ComplianceError("resources 테이블이 없습니다.")
@@ -646,7 +677,7 @@ def evaluate(snapshot_id, account_id=None):
             )
             excused = {(r[0], r[1]): r[2] for r in cur.fetchall()}
 
-        snap = load_snapshot(cur, snapshot_id)
+        snap = load_snapshot(cur, snapshot_id, meta=meta)
 
     return run_checks(snap, excused), snap
 
