@@ -947,6 +947,16 @@ table.matrix .cell {
 .cell-missing { color: var(--sev-critical); }
 .cell-unknown { color: var(--muted); }
 
+/* 같은 자료의 여러 보기를 잇는 탭 줄. 화면 맨 위에 한 줄로 둔다 -
+   커다란 탭 UI 를 만들면 정작 내용이 아래로 밀린다. */
+.view-tabs {
+  margin: 0 0 18px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: .92rem;
+}
+.view-tabs strong { color: var(--text); }
+
 /* 인수인계 문서. 만들어진 Markdown 을 그대로 보여준다 - 화면용으로
    다시 그리면 화면과 내려받은 파일이 언젠가 갈라진다. */
 .brief {

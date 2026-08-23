@@ -1,0 +1,28 @@
+{# templates/_tabs.html
+   같은 자료의 여러 보기를 잇는 탭.
+
+   ── 왜 매크로로 뺐나 ────────────────────────────────────────────
+   화면을 합칠 때마다 탭 줄을 새로 쓰면 세 쌍이 조금씩 달라진다. 한 곳에서
+   그린다.
+
+   ── 왜 라우트를 하나로 합치지 않은 쌍이 있나 ────────────────────
+   준비 상태는 ?view= 하나로 합쳤다. 넓게 보는 쪽에 딥링크가 없어서
+   그래도 됐다. 리소스와 런북은 다르다 - 필터 링크가 url_for 로 여러 곳에
+   박혀 있어서, 라우트를 합치면 필터를 누를 때마다 리다이렉트가 한 번씩
+   더 붙는다. 사람에게 보이는 것(메뉴 하나, 탭 두 개)이 같으면 라우트
+   모양은 그 다음 문제다. #}
+
+{% macro views(items) -%}
+  <p class="view-tabs">
+    보기:
+    {% for it in items %}
+      {% if not loop.first %} &middot; {% endif %}
+      {% if it.active %}
+        <strong>{{ it.label }}</strong>
+      {% else %}
+        <a href="{{ it.href }}">{{ it.label }}</a>
+      {% endif %}
+      <span class="muted">— {{ it.hint }}</span>
+    {% endfor %}
+  </p>
+{%- endmacro %}

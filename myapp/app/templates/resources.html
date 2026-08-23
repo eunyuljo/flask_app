@@ -3,6 +3,7 @@
    변경된 것은 '이전 값 -> 현재 값' 을 나란히 놓는데, 이전 값이 곧 되돌릴 목표값이다. #}
 
 {% extends "base.html" %}
+{% from "_tabs.html" import views %}
 
 {% block title %}리소스 변경{% endblock %}
 {% block page_title %}리소스 변경{% endblock %}
@@ -16,6 +17,12 @@
 {% endblock %}
 
 {% block content %}
+{{ views([
+     {"label": "지금 목록", "hint": "무엇이 떠 있나",
+      "href": url_for('resources.inventory_page'), "active": false},
+     {"label": "변경", "hint": "두 시점의 차이",
+      "href": url_for('resources.index'), "active": true},
+   ]) }}
 
   {% if error %}
     <div class="flash error" style="white-space:pre-wrap">{{ error }}</div>

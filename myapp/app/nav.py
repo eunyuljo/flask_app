@@ -93,12 +93,13 @@ ITEMS = [
      "category": "alarm", "hint": "시끄러운 알람 순위와 억제 규칙"},
 
     # ---- 인프라 ----
-    {"endpoint": "resources.inventory_page", "label": "리소스 목록", "icon": "▣",
-     "category": "infra", "match": ("resources.inventory",),
-     "hint": "지금 무엇이 떠 있는가"},
-    {"endpoint": "resources.index", "label": "리소스 변경", "icon": "▩",
-     "category": "infra", "match": ("resources.",),
-     "hint": "두 시점의 인프라 차이"},
+    # 목록과 변경은 같은 자료(resources 테이블)를 다른 각도로 보는 것이라
+    # 한 메뉴에 탭 두 개로 뒀다. 라우트를 하나로 합치지 않은 이유는
+    # templates/_tabs.html 에 적었다(필터 링크가 리다이렉트를 타게 된다).
+    {"endpoint": "resources.inventory_page", "label": "리소스", "icon": "▣",
+     "category": "infra",
+     "match": ("resources.inventory", "resources.index"),
+     "hint": "지금 무엇이 있나 / 무엇이 바뀌었나"},
     {"endpoint": "resources.alarm_advice_page", "label": "알람 권고", "icon": "◑",
      "category": "infra", "match": ("resources.alarm_advice",),
      "hint": "이 리소스에 무엇을 걸어야 하나"},
@@ -111,12 +112,12 @@ ITEMS = [
     # ---- 대응 ----
     {"endpoint": "handover.index", "label": "당직 인계", "icon": "☾",
      "category": "respond", "hint": "지난 근무 구간 요약"},
+    # 절차와 그 절차를 따른 일. 나눠 뒀다가 한 메뉴의 탭 두 개로 합쳤다 -
+    # 실행 기록만 따로 열 일이 거의 없고, 절차를 보러 왔다가 "이거 통하나" 를
+    # 묻는 흐름이 자연스럽다.
     {"endpoint": "runbook.index", "label": "런북", "icon": "▦",
      "category": "respond", "match": ("runbook.",),
-     "hint": "알람 종류별 대응 절차"},
-    {"endpoint": "runbook.runs", "label": "런북 실행 기록", "icon": "▨",
-     "category": "respond", "match": ("runbook.runs",),
-     "hint": "그 절차가 실제로 통했는가"},
+     "hint": "대응 절차와 그 절차가 통했는가"},
     {"endpoint": "work.index", "label": "작업 기록", "icon": "✎",
      "category": "respond", "hint": "작업 전/후 증적"},
 

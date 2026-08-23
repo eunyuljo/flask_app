@@ -2,11 +2,18 @@
    runbook 블루프린트의 index() 가 렌더링하는 런북 목록. #}
 
 {% extends "base.html" %}
+{% from "_tabs.html" import views %}
 
 {% block title %}런북{% endblock %}
 {% block page_title %}런북{% endblock %}
 
 {% block content %}
+{{ views([
+     {"label": "절차", "hint": "이럴 땐 이렇게 한다",
+      "href": url_for('runbook.index'), "active": true},
+     {"label": "실행 기록", "hint": "그 절차가 통했나",
+      "href": url_for('runbook.runs'), "active": false},
+   ]) }}
   <p class="muted">
     알람 종류별 대응 절차입니다. 알람의 <strong>지문(fingerprint)</strong>에 절차를 붙여두면,
     같은 알람이 다시 왔을 때 이벤트 목록에서 바로 펼쳐볼 수 있습니다.
@@ -16,11 +23,7 @@
     <div class="flash error">{{ error }}</div>
   {% endif %}
 
-  <p>
-    <a href="{{ url_for('runbook.new') }}">새 런북 작성</a>
-    &middot;
-    <a href="{{ url_for('runbook.runs') }}">실행 기록</a>
-  </p>
+  <p><a href="{{ url_for('runbook.new') }}">새 런북 작성</a></p>
 
   <hr>
   <h2>등록된 런북 <span class="muted">({{ items|length }}건)</span></h2>
