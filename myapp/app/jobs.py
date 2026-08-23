@@ -25,6 +25,9 @@ EXPECTED = {
     "sla-check":        {"hours": 2,  "why": "한 시간마다"},
     "handover":         {"hours": 26, "why": "근무 교대마다"},
     "collect-resources": {"hours": 26, "why": "매일 한 번"},
+    # 주 단위라 넉넉하게 잡는다. 하루쯤 늦게 도는 것보다, 한 주를
+    # 통째로 안 보낸 것을 놓치는 쪽이 문제다.
+    "weekly-report": {"hours": 24 * 8, "why": "매주 한 번"},
     "prune-events":     {"hours": 24 * 8, "why": "주 한 번"},
 }
 

@@ -351,6 +351,126 @@ def register_cli(app):
             "targets": len(pairs),
         }
 
+    @app.cli.command("weekly-report")
+    @click.option("--customer", default="", help="이 고객사만. 기본은 전부")
+    @click.option("--days", default=7, help="집계 기간 (기본 7일)")
+    @click.option("--slack", is_flag=True, help="Slack 으로 보낸다")
+    @click.option("--base-url", default="", help="링크에 쓸 앱 주소")
+    @click.option("--force", is_flag=True,
+                  help="이미 보낸 주라도 다시 보낸다")
+    @tracked("weekly-report")
+    def weekly_report(customer, days, slack, base_url, force):
+        """고객사별 주간 리포트를 만들고 Slack 으로 보낸다.
+
+        월간 리뷰와 같은 수집기를 쓴다. 주간과 월간의 숫자가 다른 곳에서
+        나오면 언젠가 갈라지고, 그때 고객사는 두 보고서를 나란히 놓고 본다.
+
+        같은 주에 이미 보낸 고객사는 건너뛴다. cron 이 두 번 돌거나 사람이
+        손으로 한 번 더 실행해도 고객사가 같은 것을 두 번 받으면 안 된다
+        (sla_notices 와 같은 발상이다). --force 로 무를 수 있다.
+
+        \b
+        cron 예시 (매주 월요일 09:00):
+          0 9 * * 1  cd /path/to/myapp && \
+            .venv/bin/flask --app run weekly-report --slack
+        """
+        from datetime import datetime, timezone
+
+        from app import delivery, msr
+        from app.customer import names as customer_names, CustomerError
+        from app.delivery import DeliveryError
+        from app.msr import MsrError
+
+        try:
+            targets_ = [customer] if customer else customer_names()
+        except CustomerError as e:
+            raise click.ClickException(str(e))
+
+        if not targets_:
+            raise click.ClickException(
+                "등록된 고객사가 없습니다.\n"
+                "  flask --app run add-account 로 계정을 먼저 등록하세요."
+            )
+
+        now = datetime.now(timezone.utc)
+        ref = msr.week_key(now)
+        sent_by = "cron"
+
+        done, skipped, failed = [], [], []
+        for name in targets_:
+            # 이미 보낸 주인가. 발송 기록이 그대로 중복 방지 장치가 된다 -
+            # 따로 '보냈음' 표를 두면 진실이 둘이 된다.
+            if not force:
+                already = [d for d in delivery.for_ref("report", ref)
+                           if d["customer"] == name]
+                if already:
+                    skipped.append(name)
+                    click.echo(f"  [건너뜀] {name} - {ref} 은 이미 보냈습니다")
+                    continue
+
+            try:
+                data = msr.collect_week(name, end=now, days=days)
+                text = msr.to_slack_week(data, base_url)
+            except MsrError as e:
+                # 한 고객사를 못 모았다고 나머지를 안 보낼 이유는 없다.
+                failed.append((name, str(e).splitlines()[0]))
+                click.echo(f"  [실패] {name} - {str(e).splitlines()[0]}")
+                continue
+
+            if not slack:
+                click.echo(f"\n----- {name} -----")
+                click.echo(text)
+                done.append(name)
+                continue
+
+            from app import slack as slack_mod
+            from app.slack import SlackError, SlackNotConfigured
+
+            try:
+                slack_mod.post(text, purpose="weekly")
+            except SlackNotConfigured as e:
+                # 설정이 없는 것은 이 고객사만의 문제가 아니다. 전부 같은
+                # 이유로 실패하므로 여기서 멈춘다.
+                raise click.ClickException(
+                    f"{e}\n  .env 에 SLACK_WEEKLY_WEBHOOK 또는 "
+                    "SLACK_WEBHOOK_URL 을 넣으세요."
+                )
+            except SlackError as e:
+                failed.append((name, str(e).splitlines()[0]))
+                click.echo(f"  [실패] {name} - {str(e).splitlines()[0]}")
+                continue
+
+            # 보냈으면 남긴다. 이 기록이 다음 실행의 중복 방지가 된다.
+            try:
+                delivery.record(
+                    customer=name, kind="report", channel="slack",
+                    sent_by=sent_by, ref=ref,
+                    title=f"주간 리포트 {data['label']}",
+                    recipients="Slack 채널",
+                    note=f"weekly-report 자동 발송 ({days}일)",
+                )
+            except DeliveryError as e:
+                # 보내기는 이미 나갔다. 되돌릴 수 없으므로 실패로 세되
+                # 그 사실을 분명히 적는다 - 다음 실행이 또 보낼 것이다.
+                failed.append((name, f"보냈지만 기록 실패: {e}"))
+                click.echo(f"  [주의] {name} - 보냈지만 기록에 실패했습니다: {e}")
+                continue
+
+            done.append(name)
+            click.echo(f"  [완료] {name} - 알람 {data['alarms']['total']}건")
+
+        click.echo(f"{ref}: 발송 {len(done)}건, 건너뜀 {len(skipped)}건, "
+                   f"실패 {len(failed)}건 (대상 {len(targets_)}건)")
+
+        if failed:
+            raise click.ClickException(
+                f"{len(failed)}건을 처리하지 못했습니다: "
+                + ", ".join(name for name, _ in failed)
+            )
+
+        return {"summary": f"{ref} 발송 {len(done)}건 / 건너뜀 {len(skipped)}건",
+                "sent": len(done), "skipped": len(skipped)}
+
     @app.cli.command("backfill-account-ids")
     @click.option("--dry-run", is_flag=True, help="바꾸지 않고 몇 건인지만 센다")
     def backfill_account_ids(dry_run):
