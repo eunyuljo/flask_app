@@ -126,10 +126,16 @@
   {% for item in events %}
     {# item.record = DB 에서 읽은 정규화된 표준 레코드 #}
     <div class="event sev-{{ item.record.severity }}">
+      {# 알람 이름이 있으면 그것을 앞에 세운다. CloudWatch 메시지는
+         NewStateReason 이라 측정값으로 시작해서, 목록에서는 어느 알람인지
+         구분이 안 된다. 측정값은 바로 아래 줄에 그대로 남긴다. #}
       <div class="event-head">
         <span class="badge">{{ item.record.severity }}</span>
-        <strong>{{ item.record.message }}</strong>
+        <strong>{{ item.record.meta.alarmname or item.record.message }}</strong>
       </div>
+      {% if item.record.meta.alarmname %}
+        <div>{{ item.record.message }}</div>
+      {% endif %}
       <div class="muted">
         {{ item.record.source }} &middot; {{ item.record.event_type }}
         &middot; 지문 <code>{{ item.record.fingerprint }}</code>

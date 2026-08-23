@@ -69,6 +69,12 @@ def ranking(hours=168, limit=30):
                    -- 커버리지 판정에서 가려내는 데 쓴다.
                    min(e.event_type) AS event_type,
                    (array_agg(e.message  ORDER BY e.occurred_at DESC))[1] AS sample,
+                   -- 알람 이름. 사람이 목록에서 알아보는 것은 이 값이지
+                   -- 메시지가 아니다. CloudWatch 메시지는 NewStateReason 이라
+                   -- "Threshold Crossed: 1 datapoint [243.2 ...]" 로 시작한다 -
+                   -- 측정값이라 쓸모는 있지만 한눈에 구분이 안 된다.
+                   (array_agg(e.meta->>'alarmname' ORDER BY e.occurred_at DESC))[1]
+                       AS alarm_name,
                    (array_agg(e.source   ORDER BY e.occurred_at DESC))[1] AS source,
                    (array_agg(e.severity ORDER BY {SEVERITY_RANK.replace('severity', 'e.severity')}))[1]
                        AS severity,

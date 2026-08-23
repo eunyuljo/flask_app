@@ -104,7 +104,8 @@
                 {% else %}반복{% endif %}
               </td>
               <td>
-                {{ g.sample }}
+                <strong>{{ g.alarm_name or g.sample }}</strong>
+                {% if g.alarm_name %}<div class="muted">{{ g.sample }}</div>{% endif %}
                 <div class="muted">{{ g.coverage_why }}</div>
                 <div class="muted">{{ g.source }} &middot; 지문 <code>{{ g.fingerprint }}</code></div>
               </td>
@@ -165,10 +166,16 @@
 
   {% for i in items %}
     <div class="event sev-{{ i.severity }}">
+      {# 알람 이름을 앞에 세운다. CloudWatch 메시지는 NewStateReason 이라
+         "Threshold Crossed: 1 datapoint [243.2 ...]" 로 시작해서, 목록으로
+         쌓아 놓으면 어느 알람인지 구분이 안 된다. 측정값은 아래 줄에 남긴다. #}
       <div class="event-head">
         <span class="badge">{{ i.c }}건</span>
-        <strong>{{ i.sample }}</strong>
+        <strong>{{ i.alarm_name or i.sample }}</strong>
       </div>
+      {% if i.alarm_name %}
+        <div class="muted">{{ i.sample }}</div>
+      {% endif %}
       <div class="muted">
         {{ i.severity }} &middot; {{ i.source }}
         &middot; {{ i.first_seen.strftime('%m-%d %H:%M') }} ~ {{ i.last_seen.strftime('%m-%d %H:%M') }}

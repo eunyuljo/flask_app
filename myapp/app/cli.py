@@ -160,11 +160,21 @@ def register_cli(app):
     @click.option("--count", default=200, help="만들 이벤트 수 (기본 200)")
     @click.option("--hours", default=48, help="몇 시간에 걸쳐 흩뿌릴지 (기본 48)")
     @click.option("--clear", is_flag=True, help="기존 이벤트를 모두 지우고 시작")
-    def seed_events(count, hours, clear):
-        """대시보드를 채워볼 샘플 이벤트를 만들어 넣는다.
+    @click.option("--seed", type=int, default=None,
+                  help="같은 값을 주면 같은 샘플이 나온다 (화면을 두고 이야기할 때)")
+    @click.option("--dry-run", is_flag=True, help="넣지 않고 무엇이 만들어지는지만 본다")
+    def seed_events(count, hours, clear, seed, dry_run):
+        """샘플 알람을 '실제로 들어오는 모양' 그대로 만들어 넣는다.
 
-        원본 표기를 일부러 제각각으로 만들어서(FATAL, p1, msg 등)
-        Lambda 의 정규화가 실제로 동작하는 것도 함께 확인할 수 있게 했다.
+        CloudWatch(SNS 봉투) · GuardDuty · Health · EventBridge · 자체 모니터링,
+        그리고 아직 어댑터가 없는 발신자까지 섞는다.
+
+        만든 페이로드는 정규화기를 그대로 통과한다. 어댑터가 깨지면 이 명령도
+        깨진다 - 그게 목적이다. 샘플이 진짜 경로를 밟지 않으면 값어치가 없다.
+
+        예전에는 우리 형식(msg/level)으로 만들어 events 에 직접 INSERT 했다.
+        그래서 진짜 CloudWatch 페이로드가 거부되고 있다는 사실이 프로젝트
+        내내 드러나지 않았고, account_id 를 안 넣어서 SLA 는 전부 '미귀속' 이었다.
         """
         try:
             import psycopg
@@ -173,45 +183,98 @@ def register_cli(app):
                 "psycopg 가 설치되어 있지 않습니다. pip install -r requirements.txt 를 실행하세요."
             )
 
-        # 실제로 들어올 법한 값들. 표기가 제각각인 것이 핵심이다.
-        sources = ["web-01", "web-02", "pay-api", "api-gw", "batch", "db-primary"]
-        types = ["disk", "http", "deploy", "auth", "query"]
-        # (원본 심각도 표기, 가중치) - info 가 가장 흔하고 critical 이 드물게
-        severities = [
-            ("FATAL", 3), ("p1", 2),
-            ("error", 8), ("high", 4),
-            ("warn", 14), ("p3", 6),
-            ("info", 40), ("debug", 13),
-        ]
-        messages = [
-            "디스크 사용률 {n}% 초과", "응답 지연 {n}ms 감지", "결제 실패율 {n}% 급증",
-            "메모리 사용률 {n}%", "커넥션 풀 {n}% 점유", "배포 완료 (빌드 #{n})",
-            "헬스체크 실패 {n}회 연속", "느린 쿼리 {n}ms",
-        ]
-
-        sev_values = [s for s, _ in severities]
-        sev_weights = [w for _, w in severities]
-        now = datetime.now(timezone.utc)
-
-        records = []
-        for i in range(count):
-            # 시간은 최근일수록 촘촘하게. 그냥 균등분포로 두면 그래프가 밋밋하다.
-            offset = random.random() ** 1.6 * hours
-            occurred = now - timedelta(hours=offset)
-            raw = {
-                # 필드 이름도 일부러 섞는다. 정규화가 별칭을 흡수하는지 보기 위함이다.
-                random.choice(["msg", "message", "text"]):
-                    random.choice(messages).format(n=random.randint(1, 999)),
-                random.choice(["level", "severity", "priority"]):
-                    random.choices(sev_values, weights=sev_weights)[0],
-                random.choice(["source", "service", "origin"]): random.choice(sources),
-                random.choice(["type", "kind"]): random.choice(types),
-                "occurred_at": occurred.isoformat(),
-                "seeded": True,
-            }
-            records.append(normalize(raw))
+        from app import samples
 
         uri = _psycopg_uri()
+
+        # 등록된 고객사 계정과 실제로 수집된 리소스를 재료로 쓴다.
+        # 지어낸 계정 번호를 넣으면 고객사 화면에서 영영 안 보인다.
+        accounts, resources = [], {}
+        try:
+            with psycopg.connect(uri) as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT account_id, regions FROM aws_accounts "
+                    " WHERE COALESCE(enabled, true) ORDER BY account_id"
+                )
+                accounts = [{"account_id": a, "regions": list(r or [])}
+                            for a, r in cur.fetchall()]
+
+                # 차원에 실제 있는 인스턴스를 넣어야 알람과 리소스가 이어진다.
+                cur.execute("SELECT to_regclass('public.resources')")
+                if cur.fetchone()[0] is not None:
+                    cur.execute(
+                        """
+                        SELECT s.account_id, r.resource_id
+                          FROM resources r
+                          JOIN resource_snapshots s ON s.snapshot_id = r.snapshot_id
+                         WHERE r.resource_type = 'ec2:instance'
+                         GROUP BY s.account_id, r.resource_id
+                        """
+                    )
+                    for account_id, resource_id in cur.fetchall():
+                        resources.setdefault(account_id, []).append(resource_id)
+        except psycopg.errors.UndefinedTable:
+            raise click.ClickException(
+                "테이블이 없습니다. flask --app run init-db 를 먼저 실행하세요."
+            )
+        except psycopg.OperationalError as e:
+            raise click.ClickException(f"DB 에 접속하지 못했습니다.\n  {e}")
+
+        if not accounts:
+            click.echo(
+                "등록된 고객사 계정이 없어 AWS 발신자를 만들 수 없습니다. "
+                "자체 모니터링 형식으로만 만듭니다.\n"
+                "  계정을 먼저 등록하세요: flask --app run add-account <고객사> <계정번호>"
+            )
+
+        payloads = samples.make(count, hours, accounts, resources, seed=seed)
+
+        # 정규화기를 그대로 통과시킨다. 여기가 핵심이다 - 화면에 들어가는
+        # 것과 진짜 알람이 밟는 길이 같아야 한다.
+        records, by_kind, failed = [], {}, []
+        for raw, kind in payloads:
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+            try:
+                records.append(normalize(raw))
+            except ValueError as e:
+                # 여기서 걸리면 어댑터나 정규화에 구멍이 있다는 뜻이다.
+                # 조용히 건너뛰지 않고 세어서 알린다.
+                failed.append((kind, str(e)))
+
+        click.echo("발신자 구성:")
+        for kind, n in sorted(by_kind.items(), key=lambda kv: -kv[1]):
+            click.echo(f"  {kind:12} {n:4}건")
+
+        # 무엇이 무엇을 읽었는지. 숫자가 위의 발신자 구성과 맞아떨어져야 한다 -
+        # 안 맞으면 어딘가에서 조용히 사라지고 있다는 뜻이다.
+        adapters_used = {}
+        unparsed = aliased = 0
+        for r in records:
+            name = r["meta"].get("adapter")
+            if r["event_type"] == "unparsed":
+                unparsed += 1
+            elif name:
+                adapters_used[name] = adapters_used.get(name, 0) + 1
+            else:
+                # 어댑터 없이 별칭표만으로 읽힌 것(자체 모니터링 형식).
+                aliased += 1
+        click.echo("무엇이 읽었나:")
+        for name, n in sorted(adapters_used.items(), key=lambda kv: -kv[1]):
+            click.echo(f"  어댑터 {name:16} {n:4}건")
+        click.echo(f"  별칭표 (자체 형식)      {aliased:4}건")
+        click.echo(f"  아무도 못 읽음          {unparsed:4}건")
+        click.echo(f"  {'합계':<22} {sum(adapters_used.values()) + aliased + unparsed:4}건"
+                   f"  (만든 것 {len(payloads)}건)")
+
+        if failed:
+            click.echo(f"거부됨 {len(failed)}건:")
+            for kind, why in failed[:5]:
+                click.echo(f"  {kind}: {why}")
+
+        if dry_run:
+            click.echo("\n--dry-run 이므로 넣지 않았습니다.")
+            return
+
         try:
             with psycopg.connect(uri) as conn:
                 with conn.cursor() as cur:
@@ -220,19 +283,23 @@ def register_cli(app):
                         click.echo("기존 이벤트를 모두 삭제했습니다.")
 
                     # executemany 로 한 번에 보낸다. 건마다 왕복하면 느리다.
+                    # account_id 를 반드시 함께 넣는다 - 이게 빠지면 SLA·리포트·
+                    # 고객사 화면이 전부 이 이벤트를 '미귀속' 으로 흘려버린다.
                     cur.executemany(
                         """
                         INSERT INTO events (
-                            event_id, event_type, source, severity,
-                            message, occurred_at, received_at, fingerprint, meta
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            event_id, event_type, source, severity, message,
+                            occurred_at, received_at, fingerprint, account_id, meta
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (event_id) DO NOTHING
                         """,
                         [
                             (
-                                r["event_id"], r["event_type"], r["source"], r["severity"],
-                                r["message"], r["occurred_at"], r["received_at"],
-                                r["fingerprint"], json.dumps(r["meta"], ensure_ascii=False),
+                                r["event_id"], r["event_type"], r["source"],
+                                r["severity"], r["message"], r["occurred_at"],
+                                r["received_at"], r["fingerprint"],
+                                r.get("account_id", ""),
+                                json.dumps(r["meta"], ensure_ascii=False),
                             )
                             for r in records
                         ],
@@ -244,6 +311,15 @@ def register_cli(app):
                         "GROUP BY severity ORDER BY 2 DESC"
                     )
                     rows = cur.fetchall()
+                    cur.execute(
+                        "SELECT count(*) FROM events WHERE account_id <> ''"
+                    )
+                    attributed = cur.fetchone()[0]
+                    cur.execute(
+                        "SELECT count(*) FROM events "
+                        " WHERE meta ? 'resource_id'"
+                    )
+                    with_resource = cur.fetchone()[0]
         except psycopg.errors.UndefinedTable:
             raise click.ClickException(
                 "events 테이블이 없습니다. flask --app run init-db 를 먼저 실행하세요."
@@ -253,9 +329,12 @@ def register_cli(app):
                 f"DB 에 접속하지 못했습니다.\n  {e}"
             )
 
-        click.echo(f"{count} 건을 최근 {hours} 시간에 걸쳐 넣었습니다. (현재 총 {total} 건)")
+        click.echo(f"\n{len(records)} 건을 최근 {hours} 시간에 걸쳐 넣었습니다. "
+                   f"(현재 총 {total} 건)")
         for severity, c in rows:
             click.echo(f"  {severity:9} {c}")
+        click.echo(f"계정에 묶인 이벤트 {attributed}/{total} "
+                   f"· 리소스가 붙은 이벤트 {with_resource}/{total}")
         click.echo("대시보드에서 확인하세요: http://127.0.0.1:5000/dashboard/")
 
     @app.cli.command("collect-resources")
