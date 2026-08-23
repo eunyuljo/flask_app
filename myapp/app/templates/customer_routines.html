@@ -1,0 +1,149 @@
+{# templates/customer_routines.html
+   customer 블루프린트의 routines_page() 가 렌더링하는 고객사 정기 점검. #}
+
+{% extends "base.html" %}
+
+{% block title %}정기 점검{% endblock %}
+{% block page_title %}정기 점검{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    고객사에 <strong>약속한 주기 업무</strong>를 지키고 있는지 봅니다.
+    <a href="{{ url_for('admin.health_page') }}">운영 상태</a>가 "우리 cron 이
+    살아 있나"라면, 여기는 "이 고객사 이번 달 것 했나"입니다 — 기계가 아니라
+    사람이 하는 일입니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if counts.total %}
+    <div class="kpis">
+      <div class="kpi">
+        <span class="n">{{ counts.total }}</span>
+        <span class="k">등록된 항목</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ counts.overdue }}</span>
+        <span class="k">기한 지남</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ counts.never }}</span>
+        <span class="k">한 번도 안 함</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ counts.soon }}</span>
+        <span class="k">곧 도래</span>
+      </div>
+    </div>
+  {% endif %}
+
+  <p class="muted">
+    고객사:
+    {% if not selected %}<strong>전체</strong>
+    {% else %}<a href="{{ url_for('customer.routines_page') }}">전체</a>{% endif %}
+    {% for c in customers %}
+      &middot;
+      {% if c == selected %}<strong>{{ c }}</strong>
+      {% else %}
+        <a href="{{ url_for('customer.routines_page', customer=c) }}">{{ c }}</a>
+      {% endif %}
+    {% endfor %}
+  </p>
+
+  {% if not items %}
+    <p class="muted">
+      {% if selected %}이 고객사에 등록된 점검 항목이 없습니다.
+      {% else %}아직 등록된 점검 항목이 없습니다.{% endif %}
+      아래에서 추가하세요.
+    </p>
+  {% endif %}
+
+  {% for item in items %}
+    <div class="event {% if item.state == 'overdue' %}sev-error
+                      {% elif item.state == 'never' %}sev-warning{% endif %}">
+      <div class="event-head">
+        <span class="badge">{{ state_label.get(item.state, item.state) }}</span>
+        <strong>{{ item.name }}</strong>
+        <span class="muted">{{ item.customer }} &middot; {{ item.interval_days }}일 주기</span>
+      </div>
+
+      <div class="muted">
+        {{ item.detail }}
+        {% if item.last_done_at %}
+          &middot; 마지막 {{ item.last_done_at.strftime('%Y-%m-%d') }}
+          ({{ item.last_done_by or '누군가' }})
+        {% endif %}
+      </div>
+
+      {% if item.why %}<div class="muted">왜: {{ item.why }}</div>{% endif %}
+      {% if item.last_note %}<div class="rb-body">{{ item.last_note }}</div>{% endif %}
+
+      {% if item.active %}
+        <form action="{{ url_for('customer.routines_done', routine_id=item.id) }}"
+              method="post" class="wo-form">
+          <label>
+            수행 메모 <span class="muted">비워도 됩니다</span>
+            <input type="text" name="note" placeholder="예) 스냅샷 확인, 용량 여유 40%">
+          </label>
+          <button type="submit">이번 주기 완료</button>
+        </form>
+        <form action="{{ url_for('customer.routines_active', routine_id=item.id) }}"
+              method="post" class="form inline">
+          <input type="hidden" name="active" value="0">
+          <button type="submit" class="linkish">멈추기</button>
+        </form>
+      {% else %}
+        <form action="{{ url_for('customer.routines_active', routine_id=item.id) }}"
+              method="post" class="form inline">
+          <input type="hidden" name="active" value="1">
+          <button type="submit">다시 시작</button>
+        </form>
+      {% endif %}
+    </div>
+  {% endfor %}
+
+  <hr>
+  <h2>점검 항목 추가</h2>
+  <p class="muted">
+    주기는 달력이 아니라 <strong>경과일</strong>로 셉니다. 달력으로 하면
+    "2월은 28일이라 미달" 같은 판정이 생기고, 그때부터 영업시간과 공휴일을
+    전부 따져야 합니다.
+  </p>
+
+  <form action="{{ url_for('customer.routines_add') }}" method="post" class="wo-form">
+    <label>
+      고객사
+      <select name="customer" required>
+        {% for c in customers %}
+          <option value="{{ c }}" {% if c == selected %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      점검 이름
+      <input type="text" name="name" required placeholder="예) 월간 리소스 점검">
+    </label>
+
+    <label>
+      주기(일)
+      <select name="interval_days">
+        {% for days, label in presets %}
+          <option value="{{ days }}" {% if days == 30 %}selected{% endif %}>
+            {{ label }} ({{ days }}일)
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      왜 하는가 <span class="muted">인수인계 때 이게 없으면 형식만 따라 하게 됩니다</span>
+      <textarea name="why" rows="2"
+                placeholder="예) 스냅샷 누락과 용량 여유를 확인해 다음 달 증설 여부를 판단"></textarea>
+    </label>
+
+    <button type="submit">추가</button>
+  </form>
+{% endblock %}

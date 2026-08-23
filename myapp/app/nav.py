@@ -71,6 +71,9 @@ ITEMS = [
     {"endpoint": "customer.access_page", "label": "계정 접속", "icon": "⚿",
      "category": "customer", "match": ("customer.access",),
      "hint": "고객사 계정에 들어갈 수 있는가"},
+    {"endpoint": "customer.routines_page", "label": "정기 점검", "icon": "↻",
+     "category": "customer", "match": ("customer.routines",),
+     "hint": "약속한 주기 업무를 지키고 있는가"},
 
     # ---- 알람 ----
     {"endpoint": "dashboard.index", "label": "대시보드", "icon": "▤",

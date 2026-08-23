@@ -6,11 +6,12 @@ from flask import (
     Blueprint, render_template, request, redirect, url_for, session, flash
 )
 
-from app import access, audit, customer, readiness
+from app import access, audit, customer, readiness, routines
 from app.access import AccessError
 from app.accounts import list_accounts, get_account, AccountError
 from app.customer import CustomerError
 from app.readiness import ReadinessError
+from app.routines import RoutineError
 
 customer_bp = Blueprint("customer", __name__)
 
@@ -147,3 +148,74 @@ def access_probe():
 
     flash(f"{account_id} / {region}: {detail}", "success" if ok else "error")
     return redirect(url_for("customer.access_page"))
+
+
+# 최종 URL: /customer/routines
+@customer_bp.route("/routines")
+def routines_page():
+    """고객사에 약속한 주기 업무를 지키고 있는가."""
+    error, items, counts = None, [], {}
+    selected = request.args.get("customer", "")
+
+    try:
+        items = routines.listing(selected)
+        counts = routines.summary(items)
+    except RoutineError as e:
+        error = str(e)
+
+    try:
+        all_names = customer.names()
+    except CustomerError:
+        all_names = []
+
+    return render_template(
+        "customer_routines.html",
+        items=items, counts=counts, error=error,
+        customers=all_names, selected=selected,
+        presets=routines.PRESETS, state_label=routines.STATE_LABEL,
+        alert_states=routines.ALERT_STATES,
+    )
+
+
+# 최종 URL: /customer/routines/add
+@customer_bp.route("/routines/add", methods=["POST"])
+def routines_add():
+    """주기 업무를 등록한다."""
+    try:
+        routines.add(
+            customer=request.form.get("customer", ""),
+            name=request.form.get("name", ""),
+            interval_days=request.form.get("interval_days", 0),
+            why=request.form.get("why", ""),
+        )
+        flash("점검 항목을 등록했습니다.", "success")
+    except RoutineError as e:
+        flash(str(e), "error")
+    return redirect(url_for("customer.routines_page",
+                            customer=request.form.get("customer", "")))
+
+
+# 최종 URL: /customer/routines/<번호>/done
+@customer_bp.route("/routines/<int:routine_id>/done", methods=["POST"])
+def routines_done(routine_id):
+    """이번 주기 것을 했다고 남긴다."""
+    try:
+        routines.mark_done(routine_id, session.get("username", ""),
+                           request.form.get("note", ""))
+        flash("수행 기록을 남겼습니다.", "success")
+    except RoutineError as e:
+        flash(str(e), "error")
+    return redirect(request.referrer or url_for("customer.routines_page"))
+
+
+# 최종 URL: /customer/routines/<번호>/active
+@customer_bp.route("/routines/<int:routine_id>/active", methods=["POST"])
+def routines_active(routine_id):
+    """멈추거나 다시 시작한다."""
+    active = request.form.get("active") == "1"
+    try:
+        routines.set_active(routine_id, active)
+        flash("멈췄습니다." if not active else "다시 시작했습니다.", "success")
+    except RoutineError as e:
+        flash(str(e), "error")
+    return redirect(request.referrer or url_for("customer.routines_page"))

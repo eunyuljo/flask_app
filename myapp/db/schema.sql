@@ -294,6 +294,57 @@ CREATE INDEX IF NOT EXISTS idx_runbook_runs_fingerprint
     ON runbook_runs (fingerprint, ran_at DESC);
 
 -- ======================================================================
+-- 고객사 정기 점검
+-- ----------------------------------------------------------------------
+-- MSP 계약에는 보통 "월 1회 점검", "분기 리뷰" 같은 주기 업무가 붙는다.
+-- 그런데 이 도구에는 "이 고객사 이번 달 것 했나" 를 볼 곳이 없었다.
+--
+-- job_runs 와 헷갈리면 안 된다. 저쪽은 '우리 cron 이 살아 있나' 이고
+-- 이쪽은 '고객사에 약속한 일을 했나' 다. 하나는 기계가 하고 하나는
+-- 사람이 한다.
+--
+-- ── 왜 시간대가 없나 ────────────────────────────────────────────
+-- 주기를 달력(매월 1일)이 아니라 경과일로 잡는다. 달력으로 하면
+-- "2월은 28일이라 미달" 같은 판정이 생기고, 그 순간 영업시간·공휴일·
+-- 시간대를 전부 따져야 한다. SLA 가 어려운 이유가 정확히 그것이었다.
+-- 경과일이면 그 함정이 통째로 없고, "지난번 언제 했나" 만 보면 된다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS customer_routines (
+    id            BIGSERIAL   PRIMARY KEY,
+
+    customer      TEXT        NOT NULL,
+    name          TEXT        NOT NULL,          -- '월간 리소스 점검'
+    interval_days INTEGER     NOT NULL CHECK (interval_days > 0),
+
+    -- 왜 하는 일인지. 인수인계 때 이게 없으면 다음 사람이 형식만 따라 한다.
+    why           TEXT        NOT NULL DEFAULT '',
+
+    -- 계약이 끝났거나 잠시 멈춘 것. 지우지 않는 이유는 수행 이력을
+    -- 남기기 위해서다.
+    active        BOOLEAN     NOT NULL DEFAULT true,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (customer, name)
+);
+
+CREATE TABLE IF NOT EXISTS routine_runs (
+    id         BIGSERIAL   PRIMARY KEY,
+
+    -- 약속을 지워도 "그때 했다" 는 남는다. runbook_runs 와 같은 판단이다.
+    routine_id BIGINT      REFERENCES customer_routines (id) ON DELETE SET NULL,
+    customer   TEXT        NOT NULL DEFAULT '',
+    name       TEXT        NOT NULL DEFAULT '',
+
+    done_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    done_by    TEXT        NOT NULL DEFAULT '',
+    note       TEXT        NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_routine_runs_routine
+    ON routine_runs (routine_id, done_at DESC);
+
+-- ======================================================================
 -- 장애 (사후 보고서 / RCA)
 -- ----------------------------------------------------------------------
 -- 장애 하나에 대해 "언제 무슨 일이 있었나" 를 앱이 모아주고,
