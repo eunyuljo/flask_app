@@ -337,6 +337,58 @@ def register_cli(app):
                    f"· 리소스가 붙은 이벤트 {with_resource}/{total}")
         click.echo("대시보드에서 확인하세요: http://127.0.0.1:5000/dashboard/")
 
+    @app.cli.command("seed-demo")
+    @click.option("--clear", is_flag=True,
+                  help="넣지 않고, 예전에 넣은 샘플만 지운다")
+    @click.option("--replace", is_flag=True,
+                  help="예전 샘플을 지우고 새로 넣는다")
+    @click.option("--force", is_flag=True,
+                  help="운영 설정에서도 실행한다 (권하지 않습니다)")
+    def seed_demo(clear, replace, force):
+        """사람이 채우는 표에 샘플을 넣는다 — 런북·장애·작업·연락처·점검 주기.
+
+        seed-events 가 기계 쪽(events)을 채운다면 이쪽은 사람 쪽을 채운다.
+        표 25개 중 18개가 비어 있었고, 비어 있는 쪽은 전부 사람이 채우는
+        것이었다. 그래서 로컬에서 화면을 열면 절반이 "아직 없습니다" 였다.
+
+        지어내지 않는다. 런북은 events 에 실제로 있는 지문에 붙이고, 장애는
+        그 지문과 잇고, 작업은 등록된 계정에 만든다.
+
+        모든 행에 '(샘플)' 표시가 붙는다. --clear 는 그 표시가 붙은 것만
+        지운다 - 손으로 쓴 것은 건드리지 않는다.
+        """
+        from app import demo
+
+        # 샘플은 가짜다. 운영 DB 에 들어가면 고객사에 나가는 문서에 섞인다.
+        if app.config.get("CONFIG_NAME") == "production" and not force:
+            raise click.ClickException(
+                "운영 설정입니다. 샘플 데이터는 넣지 않습니다.\n"
+                "  정말 필요하면 --force 를 주세요."
+            )
+
+        if clear or replace:
+            removed = demo.clear(echo=click.echo)
+            total = sum(removed.values())
+            if total:
+                click.echo(f"샘플 {total}건을 지웠습니다.")
+                for table, n in sorted(removed.items(), key=lambda kv: -kv[1]):
+                    click.echo(f"  {table:22} {n}")
+            else:
+                click.echo("지울 샘플이 없습니다.")
+            if clear:
+                return
+            click.echo("")
+
+        made = demo.seed(echo=click.echo)
+        total = sum(made.values())
+        click.echo(f"샘플 {total}건을 넣었습니다.")
+        for table, n in made.items():
+            mark = " " if n else "-"
+            click.echo(f" {mark}{table:22} {n}")
+        click.echo("")
+        click.echo("모두 '(샘플)' 표시가 붙어 있습니다. "
+                   "지우려면: flask --app run seed-demo --clear")
+
     @app.cli.command("collect-resources")
     @click.option("--demo", is_flag=True,
                   help="등록된 계정이 없어도 합성 계정 하나로 돌린다")
