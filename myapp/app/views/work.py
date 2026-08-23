@@ -9,10 +9,10 @@ from flask import (
 
 from app import audit, users, work
 from app.accounts import list_accounts, get_account, by_customer, AccountError
-from app.aws_session import get_env, is_demo, SessionError
-from app.collect import demo_resources, aws_resources, CollectError
+from app.aws_session import SessionError
+from app.collect import snapshot_for_account, CollectError
 from app.evidence import to_markdown
-from app.resources import save_snapshot, diff, psycopg_uri, ResourceError
+from app.resources import diff, psycopg_uri, ResourceError
 from app.work import WorkError, STATUS_LABEL
 
 work_bp = Blueprint("work", __name__)
@@ -27,31 +27,15 @@ def require_login():
 
 
 def _take_snapshot(account, region, note):
-    """그 계정의 리소스를 한 벌 수집해 스냅샷으로 저장하고 snapshot_id 를 돌려준다.
+    """작업 전/후 스냅샷 한 벌.
 
-    데모 계정은 drift=0 으로 수집한다. 작업 전후로 두 번 찍는 게 목적인데,
-    합성 데이터가 저 혼자 바뀌면 '작업 때문에 바뀐 것' 과 구분할 수 없어
-    증적이 통째로 의미를 잃기 때문이다.
+    수집 자체는 app/collect.py 로 옮겼다. 정기 수집(CLI)이 고객사 계정에
+    안 들어가고 있었는데, 제대로 들어가는 코드가 하필 이 뷰 안에만 있었다.
+    도메인으로 내리고 양쪽이 같은 경로를 쓰게 했다.
+
+    drift 는 기본값 0 을 그대로 쓴다. 이유는 snapshot_for_account 주석에 있다.
     """
-    uri = psycopg_uri()
-    account_id = account["account_id"]
-
-    if is_demo(account):
-        items = demo_resources(uri, account_id, region, drift=0)
-        source = "demo"
-    else:
-        env = get_env(account, region)
-        items, real_account_id = aws_resources(region, env)
-        # 실제로 들어간 계정이 고른 계정과 다르면 증적이 엉뚱한 계정 것이 된다.
-        if real_account_id != account_id:
-            raise CollectError(
-                f"자격증명이 가리키는 계정이 다릅니다: "
-                f"선택 {account_id}, 실제 {real_account_id}"
-            )
-        source = "aws"
-
-    return save_snapshot(uri, items, account_id=account_id, region=region,
-                         source=source, note=note)
+    return snapshot_for_account(psycopg_uri(), account, region, note=note)
 
 
 def _diff_for(item):

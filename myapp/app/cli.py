@@ -13,8 +13,10 @@ from flask import current_app
 # Lambda 핸들러의 정규화 함수를 그대로 가져다 쓴다.
 # 샘플 데이터도 실제와 똑같은 경로를 거치게 하려는 것이다.
 from api.normalize_handler import normalize
-from app.accounts import upsert_account, list_accounts
-from app.collect import demo_resources, aws_resources, CollectError
+from app.accounts import upsert_account, list_accounts, AccountError
+from app.aws_session import SessionError
+from app.collect import (demo_resources, aws_resources, snapshot_for_account,
+                         targets, CollectError)
 from app.resources import save_snapshot, psycopg_uri
 
 # schema.sql 은 프로젝트 루트의 db/ 에 있다.
@@ -257,45 +259,97 @@ def register_cli(app):
         click.echo("대시보드에서 확인하세요: http://127.0.0.1:5000/dashboard/")
 
     @app.cli.command("collect-resources")
-    @click.option("--demo", is_flag=True, help="AWS 대신 합성 리소스를 만들어 넣는다")
-    @click.option("--drift", default=0.15, help="--demo 에서 변경이 일어날 확률 (기본 0.15)")
-    @click.option("--region", default=None, help="수집 리전 (기본: AWS_REGION 설정값)")
+    @click.option("--demo", is_flag=True,
+                  help="등록된 계정이 없어도 합성 계정 하나로 돌린다")
+    @click.option("--drift", default=0.15,
+                  help="데모 계정에서 변경이 일어날 확률 (기본 0.15)")
+    @click.option("--account", "account_id", default="",
+                  help="이 계정만 수집 (12자리). 기본은 등록된 계정 전부")
+    @click.option("--region", default="",
+                  help="이 리전만 수집. 기본은 계정마다 허용된 리전 전부")
     @tracked("collect-resources")
-    def collect_resources(demo, drift, region):
+    def collect_resources(demo, drift, account_id, region):
         """AWS 리소스 상태를 한 벌 수집해 스냅샷으로 저장한다.
 
-        두 번 이상 실행하면 /resources/ 화면에서 스냅샷 간 차이를 볼 수 있다.
-        --demo 는 AWS 없이 합성 리소스를 만들며, 두 번째 실행부터 일부를
-        무작위로 바꿔서 diff 가 어떻게 보이는지 확인할 수 있게 한다.
+        등록된 고객사 계정을 전부 돌면서, 계정마다 허용된 리전을 수집한다.
+        고객사 계정에는 그 계정의 역할로 들어간다(role_arn 이 없는 계정은
+        데모로 취급해 합성 리소스를 만든다).
+
+        예전에는 이 명령이 이 도구 자신의 자격증명으로 한 리전만 훑었다.
+        컴플라이언스·리소스 목록·리소스 변경이 전부 이 스냅샷 위에서 도는데,
+        고객사가 몇이든 실제로 담기는 건 계정 하나뿐이었다.
+
+        한 고객사가 실패해도 나머지는 계속 수집한다. 대신 하나라도 실패하면
+        이 명령 자체는 실패로 끝난다 - 부분 실패를 성공으로 적으면
+        cron 이 잘 돌고 있는 줄 안다.
         """
-        region = region or current_app.config["AWS_REGION"]
         uri = psycopg_uri()
 
         try:
-            if demo:
-                account_id = "123456789012"
-                items = demo_resources(uri, account_id, region, drift)
-                source = "demo"
-            else:
-                items, account_id = aws_resources(region)
-                source = "aws"
-        except CollectError as e:
+            accounts = list_accounts()
+        except AccountError as e:
             raise click.ClickException(str(e))
 
-        try:
-            snapshot_id = save_snapshot(
-                uri, items, account_id=account_id, region=region, source=source
-            )
-        except Exception as e:
-            if type(e).__module__.split(".")[0] == "psycopg":
-                raise click.ClickException(
-                    f"DB 작업에 실패했습니다.\n  {e}\n"
-                    "  resources 테이블이 없다면 flask --app run init-db 를 실행하세요."
-                )
-            raise
+        if not accounts and demo:
+            # 계정을 하나도 안 넣고 화면부터 보고 싶은 경우.
+            # 등록된 계정이 있으면 그쪽이 이긴다 - 합성 데이터가 진짜
+            # 고객사 스냅샷 옆에 섞이면 어느 쪽이 진짜인지 알 수 없다.
+            accounts = [{"account_id": "123456789012", "customer": "(데모)",
+                         "role_arn": "", "regions": [region or
+                                                     current_app.config["AWS_REGION"]]}]
 
-        click.echo(f"스냅샷 #{snapshot_id} 저장 ({source}, {region}, 리소스 {len(items)}개)")
+        pairs = targets(accounts, account_id=account_id, region=region)
+        if not pairs:
+            raise click.ClickException(
+                "수집할 대상이 없습니다.\n"
+                "  등록된 계정: " + (str(len(accounts)) + "개" if accounts else "없음") + "\n"
+                "  계정을 등록하려면: flask --app run add-account ...\n"
+                "  --region 을 줬다면 그 계정에 허용된 리전인지 확인하세요."
+            )
+
+        done, failed = [], []
+        for account, r in pairs:
+            label = f"{account.get('customer') or '?'} / {account['account_id']} / {r}"
+            try:
+                snapshot_id = snapshot_for_account(
+                    uri, account, r,
+                    # 데모 계정에만 적용된다. 실계정은 이 값을 보지 않는다.
+                    drift=drift,
+                )
+            except (CollectError, SessionError) as e:
+                # 한 고객사의 역할이 끊겼다고 나머지 고객사를 안 볼 이유는 없다.
+                failed.append((label, str(e).splitlines()[0]))
+                click.echo(f"  [실패] {label} - {str(e).splitlines()[0]}")
+                continue
+            except Exception as e:
+                if type(e).__module__.split(".")[0] == "psycopg":
+                    raise click.ClickException(
+                        f"DB 작업에 실패했습니다.\n  {e}\n"
+                        "  resources 테이블이 없다면 "
+                        "flask --app run init-db 를 실행하세요."
+                    )
+                raise
+            done.append((label, snapshot_id))
+            click.echo(f"  [완료] {label} - 스냅샷 #{snapshot_id}")
+
+        click.echo(f"수집 {len(done)}건 성공, {len(failed)}건 실패 "
+                   f"(대상 {len(pairs)}건)")
         click.echo("차이 보기: http://127.0.0.1:5000/resources/")
+
+        if failed:
+            raise click.ClickException(
+                f"{len(failed)}건을 수집하지 못했습니다: "
+                + ", ".join(label for label, _ in failed)
+            )
+
+        # 운영 상태 화면에 "지난번에 무엇을 했는지" 가 남는다.
+        # 'ok' 만 남기면 대상이 0건이었는지 30건이었는지 알 수 없다.
+        return {
+            "summary": f"{len(done)}건 수집 "
+                       f"(계정 {len({a['account_id'] for a, _ in pairs})}개)",
+            "collected": len(done),
+            "targets": len(pairs),
+        }
 
     @app.cli.command("backfill-account-ids")
     @click.option("--dry-run", is_flag=True, help="바꾸지 않고 몇 건인지만 센다")

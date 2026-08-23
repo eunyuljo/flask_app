@@ -264,3 +264,69 @@ def aws_resources(region, env=None):
         raise CollectError(f"AWS 호출에 실패했습니다: {e}")
 
     return items, account_id
+
+
+# ----------------------------------------------------------------------
+# 고객사 계정 한 곳을 수집한다
+# ----------------------------------------------------------------------
+# 원래 이 함수는 app/views/work.py 안에 _take_snapshot 으로 있었다.
+# 작업 증적만 고객사 계정에 제대로 들어가고, 정기 수집(CLI)은 이 도구
+# 자신의 자격증명으로 한 리전만 훑고 있었다. 컴플라이언스·리소스 목록·
+# 리소스 변경이 전부 그 스냅샷 위에서 도는데, 정작 MSP 의 본질인
+# '여러 고객사' 가 수집 단계에서 빠져 있었던 것이다.
+#
+# 뷰에 있던 것을 여기로 옮겨 CLI 와 화면이 같은 경로를 쓰게 한다.
+
+def snapshot_for_account(uri, account, region, note=None, drift=0.0):
+    """그 고객사 계정에 들어가 리소스를 한 벌 수집하고 스냅샷으로 저장한다.
+
+    account : app/accounts.py 가 돌려준 dict
+    drift   : 데모 계정에서만 쓰는 변화율. 기본 0 이다.
+
+        작업 증적은 작업 전후로 두 번 찍는 게 목적이라, 합성 데이터가
+        저 혼자 바뀌면 '작업 때문에 바뀐 것' 과 구분할 수 없어 증적이
+        통째로 의미를 잃는다. 그래서 여기 기본값은 0 이고, 일부러
+        흔들어보고 싶은 쪽(정기 수집의 --demo)에서만 값을 준다.
+
+    돌려주는 값: snapshot_id
+    """
+    from app.aws_session import get_env, is_demo
+    from app.resources import save_snapshot
+
+    account_id = account["account_id"]
+
+    if is_demo(account):
+        items = demo_resources(uri, account_id, region, drift=drift)
+        source = "demo"
+    else:
+        env = get_env(account, region)
+        items, real_account_id = aws_resources(region, env)
+        # 실제로 들어간 계정이 고른 계정과 다르면 증적이 엉뚱한 계정 것이 된다.
+        if real_account_id != account_id:
+            raise CollectError(
+                f"자격증명이 가리키는 계정이 다릅니다: "
+                f"선택 {account_id}, 실제 {real_account_id}"
+            )
+        source = "aws"
+
+    return save_snapshot(uri, items, account_id=account_id, region=region,
+                         source=source, note=note)
+
+
+def targets(accounts, account_id="", region=""):
+    """수집할 (계정, 리전) 짝을 펼친다.
+
+    계정마다 허용 리전이 다르다. --region 을 줬는데 그 계정에 허용되지
+    않은 리전이면 조용히 건너뛴다 - 여기서 에러를 내면 리전 하나 때문에
+    다른 고객사 수집까지 멈춘다. 대신 아무 짝도 안 나오면 부르는 쪽이
+    그 사실을 알려준다.
+    """
+    pairs = []
+    for account in accounts:
+        if account_id and account["account_id"] != account_id:
+            continue
+        for r in account.get("regions") or []:
+            if region and r != region:
+                continue
+            pairs.append((account, r))
+    return pairs
