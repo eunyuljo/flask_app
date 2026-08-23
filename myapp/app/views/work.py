@@ -7,7 +7,7 @@ from flask import (
     session, flash, current_app, Response
 )
 
-from app import audit, users, work
+from app import audit, handoff, users, work
 from app.accounts import list_accounts, get_account, by_customer, AccountError
 from app.aws_session import SessionError
 from app.collect import snapshot_for_account, CollectError
@@ -77,6 +77,10 @@ def index():
         "work.html",
         items=items,
         waiting=waiting,
+        # 알람 화면에서 넘어왔으면 폼이 채워진 채로 열린다.
+        # 아는 이름만 통과시킨다 - 주소창에 아무 값이나 넣어도 폼에
+        # 들어가면 안 된다.
+        prefill=handoff.take(request.args, handoff.WORK_KEYS),
         grouped=by_customer(accounts),
         labels=STATUS_LABEL,
         error=error,

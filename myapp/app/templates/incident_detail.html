@@ -276,6 +276,12 @@
                   <td class="fname">{{ k.c }}건</td>
                   <td>
                     {{ k.sample }}
+                    {# 사람이 "이 알람 때문에 쓴다" 고 지목한 것과, 확정할 때
+                       시간이 겹쳐서 딸려온 것을 구분한다. 섞어 두면 어느
+                       쪽이 근거 있는 연결인지 알 수 없다. #}
+                    {% if k.fingerprint in origins %}
+                      <span class="badge">이 알람에서 시작</span>
+                    {% endif %}
                     <div class="muted">
                       {{ k.severity }} &middot; {{ k.source }} &middot;
                       {{ k.first_seen.strftime('%H:%M') }} ~ {{ k.last_seen.strftime('%H:%M') }}
@@ -284,6 +290,12 @@
                 </tr>
               {% endfor %}
             </table>
+            {% if origins %}
+              <p class="muted">
+                표시가 없는 것은 그 시간대에 함께 난 알람이라 이어진 것입니다
+                (시간 겹침 추론).
+              </p>
+            {% endif %}
           {% endif %}
         </div>
       </section>

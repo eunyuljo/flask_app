@@ -228,11 +228,65 @@ def link_fingerprints(incident_id):
             ON CONFLICT (incident_id, fingerprint) DO UPDATE
                 SET event_count = EXCLUDED.event_count,
                     sample = EXCLUDED.sample
+                -- origin 은 일부러 건드리지 않는다. 사람이 지목한 사실이
+                -- 배치가 한 번 더 돌았다는 이유로 사라지면 안 된다.
             """,
             [(incident_id, k["fingerprint"], k["c"], (k["sample"] or "")[:200])
              for k in kinds],
         )
     return len(kinds)
+
+
+def link_origin(incident_id, fingerprint, sample=""):
+    """이 보고서가 어느 알람에서 시작됐는지 못박는다.
+
+    link_fingerprints() 와 다르다. 저쪽은 "장애 구간에 이 알람도 났다" 는
+    시간 겹침 추론이고, 여기는 "이 알람 때문에 이 보고서를 썼다" 는
+    사람이 누른 사실이다. 그래서 origin 으로 표시하고, 나중에 배치가
+    같은 지문을 다시 이어도 그 표시는 유지된다.
+
+    event_count 는 0 으로 둔다. 아직 세지 않았다는 뜻이고, 확정할 때
+    link_fingerprints() 가 실제 건수로 채운다.
+    """
+    if not (fingerprint or "").strip():
+        return False
+
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.incident_fingerprints')")
+        if cur.fetchone()[0] is None:
+            raise IncidentError("incident_fingerprints 테이블이 없습니다.")
+        cur.execute(
+            """
+            INSERT INTO incident_fingerprints
+                (incident_id, fingerprint, event_count, sample, origin)
+            VALUES (%s, %s, 0, %s, true)
+            ON CONFLICT (incident_id, fingerprint) DO UPDATE
+                SET origin = true,
+                    sample = COALESCE(NULLIF(EXCLUDED.sample, ''),
+                                      incident_fingerprints.sample)
+            """,
+            (incident_id, fingerprint.strip(), (sample or "")[:200]),
+        )
+    return True
+
+
+def origin_fingerprints(incident_id):
+    """사람이 지목해서 이어진 지문들.
+
+    나머지는 확정할 때 시간 겹침으로 딸려온 것이라, 화면에서 둘을
+    구분해 보여주기 위해 쓴다. 표가 없으면 빈 집합이다 - 이 구분을
+    못 읽는다고 상세 화면이 안 뜨면 곤란하다.
+    """
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.incident_fingerprints')")
+        if cur.fetchone()[0] is None:
+            return set()
+        cur.execute(
+            "SELECT fingerprint FROM incident_fingerprints "
+            " WHERE incident_id = %s AND origin",
+            (incident_id,),
+        )
+        return {r[0] for r in cur.fetchall()}
 
 
 def past_incidents(fingerprint, limit=3, exclude_id=None):

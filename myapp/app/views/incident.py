@@ -13,7 +13,7 @@ from flask import (
     session, flash, Response, current_app
 )
 
-from app import incident
+from app import handoff, incident
 from app.accounts import list_accounts, get_account, by_customer, AccountError
 from app.incident import (
     IncidentError, STATUS_LABEL, FIELD_LABEL, NARRATIVE_FIELDS,
@@ -78,6 +78,8 @@ def index():
         grouped=by_customer(accounts),
         severities=SEVERITIES,
         labels=STATUS_LABEL,
+        # 알람 화면에서 넘어왔으면 폼이 채워진 채로 열린다.
+        prefill=handoff.take(request.args, handoff.INCIDENT_KEYS),
         error=error,
     )
 
@@ -123,6 +125,22 @@ def new():
         flash(str(e), "error")
         return redirect(url_for("incident.index"))
 
+    # 알람 화면에서 넘어왔으면 그 지문을 바로 못박는다.
+    #
+    # 지금까지 장애-알람 연결은 전부 확정 시점의 시간 겹침 추론이었다.
+    # 여기서 들어오는 것은 사람이 "이 알람 때문에 쓴다" 고 누른 것이라
+    # 추론과 섞이면 안 된다(origin 으로 구분해 저장한다).
+    #
+    # 연결에 실패해도 보고서 생성은 되돌리지 않는다. 사람이 방금 입력한
+    # 것을 부수적인 일 때문에 날리는 편이 더 나쁘다.
+    fingerprint = request.form.get("fingerprint", "")
+    if fingerprint:
+        try:
+            incident.link_origin(incident_id, fingerprint,
+                                 request.form.get("title", ""))
+        except IncidentError as e:
+            flash(f"보고서는 만들었지만 알람 연결에 실패했습니다: {e}", "error")
+
     return redirect(url_for("incident.detail", incident_id=incident_id))
 
 
@@ -163,6 +181,13 @@ def detail(incident_id):
                     seen.add(other["id"])
                     related.append(other)
 
+    # 사람이 지목한 지문. 나머지는 시간 겹침으로 딸려온 것이라 화면에서
+    # 구분한다. 못 읽어도 상세 화면은 떠야 한다.
+    try:
+        origins = incident.origin_fingerprints(incident_id)
+    except IncidentError:
+        origins = set()
+
     # 저장 전 초안이 있으면 빈 칸에만 채워서 보여준다.
     # 사람이 이미 쓴 칸은 건드리지 않는다 - 초안 버튼을 잘못 눌렀다고
     # 써둔 문장이 날아가면 안 된다.
@@ -177,7 +202,7 @@ def detail(incident_id):
 
     return render_template(
         "incident_detail.html",
-        item=item, data=data, error=error, related=related,
+        item=item, data=data, error=error, related=related, origins=origins,
         labels=STATUS_LABEL, field_labels=FIELD_LABEL,
         customer_labels=CUSTOMER_STATUS_LABEL,
         customer_field_labels=CUSTOMER_FIELD_LABEL,

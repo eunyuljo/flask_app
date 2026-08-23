@@ -168,6 +168,20 @@
         {% endif %}
       {% endif %}
 
+      {# 여기서 바로 작업/장애로 넘어간다. 예전에는 화면을 떠나 빈 폼을
+         처음부터 채워야 했다 - 새벽에 12자리 계정 번호를 눈으로 찾아
+         고르고 발생 시각을 손으로 옮겨 적는 구조였다.
+         런북을 쓸 때 이미 같은 판단을 했다(지문을 쿼리스트링으로 넘긴다). #}
+      {% set h = handoffs.get(item.record.event_id) %}
+      {% if h and item.record.event_type not in ('diagnose', 'console') %}
+        <div class="muted">
+          이 알람으로:
+          <a href="{{ url_for('work.index', **h.work) }}">작업 만들기</a>
+          &middot;
+          <a href="{{ url_for('incident.index', **h.incident) }}">사후 보고서 만들기</a>
+        </div>
+      {% endif %}
+
       {# 같은 알람이 관련됐던 지난 장애. 확정된 사후 보고서가 쌓일수록 채워진다. #}
       {% set pi = past.get(item.record.fingerprint) %}
       {% if pi and item.record.event_type not in ('diagnose', 'console') %}

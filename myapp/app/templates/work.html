@@ -18,10 +18,21 @@
 
   {% if grouped %}
     <h2>새 작업</h2>
+
+    {# 알람 화면에서 넘어왔으면 그 사실을 먼저 알린다. 폼이 채워져 있는
+       이유를 모르면 남이 쓰다 만 것으로 보인다. #}
+    {% if prefill.event_id %}
+      <div class="flash">
+        알람에서 넘어왔습니다. 아래 칸이 그 알람으로 채워져 있으니
+        확인하고 고쳐서 제출하세요.
+      </div>
+    {% endif %}
+
     <form action="{{ url_for('work.new') }}" method="post" class="wo-form">
       <label>
         작업 제목
-        <input type="text" name="title" placeholder="예) 웹 보안그룹에 사무실 IP 허용 추가" required>
+        <input type="text" name="title" value="{{ prefill.title }}"
+               placeholder="예) 웹 보안그룹에 사무실 IP 허용 추가" required>
       </label>
       <label>
         티켓 번호 <span class="muted">(선택)</span>
@@ -35,7 +46,8 @@
             {% for customer, accounts in grouped.items() %}
               <optgroup label="{{ customer }}">
                 {% for a in accounts %}
-                  <option value="{{ a.account_id }}" data-regions="{{ a.regions|join(',') }}">
+                  <option value="{{ a.account_id }}" data-regions="{{ a.regions|join(',') }}"
+                          {% if a.account_id == prefill.account_id %}selected{% endif %}>
                     {{ a.alias or a.account_id }} ({{ a.account_id }})
                   </option>
                 {% endfor %}
@@ -52,7 +64,7 @@
       <label>
         고객 요청 <span class="muted">(원문 그대로 붙여넣으면 증적에 그대로 들어갑니다)</span>
         <textarea name="request" rows="3"
-                  placeholder="예) 사무실 고정 IP 203.0.113.10 에서 web-sg 의 443 포트 접근을 허용해 주세요."></textarea>
+                  placeholder="예) 사무실 고정 IP 203.0.113.10 에서 web-sg 의 443 포트 접근을 허용해 주세요.">{{ prefill.request }}</textarea>
       </label>
       <label>
         예상한 변경 <span class="muted">(선택 — 나중에 실제 변경과 맞대보는 기준)</span>

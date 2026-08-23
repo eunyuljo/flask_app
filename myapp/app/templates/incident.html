@@ -17,17 +17,31 @@
   {% endif %}
 
   <h2>새 보고서</h2>
+
+  {% if prefill.event_id %}
+    <div class="flash">
+      알람에서 넘어왔습니다. 아래 칸이 그 알람으로 채워져 있습니다.
+      <strong>시작 시각은 알람이 난 때</strong>라, 실제 장애 시작이 그보다
+      앞이면 고쳐 주세요.
+    </div>
+  {% endif %}
+
   <form action="{{ url_for('incident.new') }}" method="post" class="wo-form">
+    {# 이 보고서가 어느 알람에서 시작됐는지. 저장할 때 못박는다 -
+       시간 겹침으로 나중에 추론하는 것과 다르다. #}
+    <input type="hidden" name="fingerprint" value="{{ prefill.fingerprint }}">
+
     <label>
       제목
-      <input type="text" name="title" required
+      <input type="text" name="title" required value="{{ prefill.title }}"
              placeholder="예) 결제 API 응답 지연 (2026-08-21)">
     </label>
 
     <div class="row-2">
       <label>
         시작 <span class="muted">(UTC)</span>
-        <input type="datetime-local" name="started_at" required>
+        <input type="datetime-local" name="started_at" required
+               value="{{ prefill.started_at }}">
       </label>
       <label>
         종료 <span class="muted">(UTC, 진행 중이면 비움)</span>
@@ -40,7 +54,8 @@
         심각도
         <select name="severity">
           {% for s in severities %}
-            <option value="{{ s }}" {% if s == 'error' %}selected{% endif %}>{{ s }}</option>
+            <option value="{{ s }}"
+                    {% if s == (prefill.severity or 'error') %}selected{% endif %}>{{ s }}</option>
           {% endfor %}
         </select>
       </label>
@@ -51,7 +66,8 @@
           {% for customer, accounts in grouped.items() %}
             <optgroup label="{{ customer }}">
               {% for a in accounts %}
-                <option value="{{ a.account_id }}" data-regions="{{ a.regions|join(',') }}">
+                <option value="{{ a.account_id }}" data-regions="{{ a.regions|join(',') }}"
+                        {% if a.account_id == prefill.account_id %}selected{% endif %}>
                   {{ a.alias or a.account_id }} ({{ a.account_id }})
                 </option>
               {% endfor %}
@@ -68,7 +84,8 @@
 
     <label>
       관련 출처 <span class="muted">(쉼표로 구분, 비우면 구간의 모든 알람)</span>
-      <input type="text" name="sources" placeholder="예) pay-api, api-gw">
+      <input type="text" name="sources" value="{{ prefill.sources }}"
+             placeholder="예) pay-api, api-gw">
     </label>
     <p class="muted">
       이벤트에는 계정 정보가 없어서 계정으로 좁힐 수 없습니다.
