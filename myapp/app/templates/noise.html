@@ -50,6 +50,39 @@
   {% endif %}
 
   <hr>
+  {# 순위표는 '얼마나 시끄러운가' 까지만 말한다. 억제할지 정하려면
+     '실제 장애의 신호였던 적이 있는가' 가 필요하다. #}
+  {# 아무것도 걸리지 않아도 이 자리를 비우지 않는다. 판단이 안 보이면
+     '장애로 이어진 알람이 없다' 로 읽히는데, 사실은 사후 보고서를
+     아직 안 썼을 뿐일 수 있다. #}
+  {% if advice %}
+    <hr>
+    <h2>판단</h2>
+    {% if advice.risky %}
+      <div class="flash error">
+        <strong>장애로 이어졌던 알람 {{ advice.risky }}종이 꺼져 있습니다.</strong>
+        다음 장애의 첫 신호를 우리가 껐을 수 있습니다. 아래 목록 맨 위에 있습니다.
+      </div>
+    {% endif %}
+    {% if advice.suppress %}
+      <p class="muted">
+        {{ advice.suppress }}종은 {{ noisy_enough }}회 이상 났지만 장애로 이어진 적이
+        없습니다. 억제 규칙을 검토할 만합니다.
+      </p>
+    {% endif %}
+    {% if not advice.risky and not advice.suppress %}
+      <p class="muted">
+        지금 손댈 것은 없습니다. 꺼둔 알람 중 장애로 이어졌던 것도 없고,
+        억제를 검토할 만큼 시끄러운 알람({{ noisy_enough }}회 이상)도 없습니다.
+      </p>
+    {% endif %}
+    <p class="muted">
+      장애 이력이 확인된 알람 {{ advice.linked }}종.
+      이력이 없다는 것과 아직 사후 보고서를 안 썼다는 것은 다릅니다 —
+      보고서를 확정해야 이 판단에 반영됩니다.
+    </p>
+  {% endif %}
+
   <h2>시끄러운 알람 <span class="muted">({{ items|length }}종)</span></h2>
 
   {% if not items %}
@@ -67,6 +100,34 @@
         &middot; {{ i.first_seen.strftime('%m-%d %H:%M') }} ~ {{ i.last_seen.strftime('%m-%d %H:%M') }}
         &middot; 지문 <code>{{ i.fingerprint }}</code>
       </div>
+
+      {# 이 알람이 실제 장애의 신호였던 적이 있는가. 억제 여부를 정하는
+         근거이고, 순위(건수)만으로는 절대 알 수 없다. #}
+      {% if i.verdict == 'risky' %}
+        <div class="acc-finding acc-danger">
+          <strong>위험 &mdash; {{ i.why }}</strong>
+          {% if i.link.last_title %}
+            <div class="muted">
+              마지막:
+              <a href="{{ url_for('incident.detail', incident_id=i.link.last_id) }}">{{ i.link.last_title }}</a>
+              ({{ i.link.last_at.strftime('%Y-%m-%d') }})
+            </div>
+          {% endif %}
+        </div>
+      {% elif i.verdict == 'keep' %}
+        <div class="acc-finding acc-info">
+          {{ i.why }}
+          {% if i.link.last_title %}
+            <div class="muted">
+              마지막:
+              <a href="{{ url_for('incident.detail', incident_id=i.link.last_id) }}">{{ i.link.last_title }}</a>
+              ({{ i.link.last_at.strftime('%Y-%m-%d') }})
+            </div>
+          {% endif %}
+        </div>
+      {% elif i.verdict == 'suppress' %}
+        <div class="acc-finding acc-warn">{{ i.why }}</div>
+      {% endif %}
 
       {# 관리 상태를 한 줄로. 색이 아니라 글자로 표시한다. #}
       <div class="muted nz-state">

@@ -37,17 +37,30 @@ def _hours():
 def index():
     """시끄러운 알람 순위와 억제 규칙."""
     hours = _hours()
-    items, total, error = [], None, None
+    items, total, error, advice = [], None, None, None
     try:
         items = noise.ranking(hours)
         total = noise.summary(hours)
     except NoiseError as e:
         error = str(e)
 
+    # 순위표는 '얼마나 시끄러운가' 까지만 말한다. 억제할지 정하려면
+    # '실제 장애의 신호였던 적이 있는가' 가 필요하다.
+    #
+    # 장애 이력을 못 읽어도 순위표는 보여준다. 그것만으로도 쓸모가 있다.
+    if items:
+        try:
+            links = noise.incident_links([i["fingerprint"] for i in items])
+        except NoiseError:
+            links = {}
+        items = noise.advise(items, links)
+        advice = noise.advice_summary(items)
+
     return render_template(
         "noise.html",
-        items=items, total=total, error=error,
+        items=items, total=total, error=error, advice=advice,
         hours=hours, choices=HOUR_CHOICES,
+        noisy_enough=noise.NOISY_ENOUGH,
     )
 
 

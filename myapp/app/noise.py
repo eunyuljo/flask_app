@@ -185,3 +185,111 @@ def delete_rule(fingerprint):
         )
         if cur.fetchone() is None:
             raise NoiseError("규칙을 찾지 못했습니다.")
+
+
+# ----------------------------------------------------------------------
+# 이 알람이 실제로 장애로 이어졌는가
+# ----------------------------------------------------------------------
+# 순위표는 '얼마나 시끄러운가' 까지만 말한다. 억제할지 말지를 정하려면
+# 다른 물음이 필요하다 - 이 알람이 실제 장애의 신호였던 적이 있는가.
+#
+# 500번 났어도 한 번도 장애로 이어지지 않았다면 억제를 검토할 만하고,
+# 20번 났는데 그중 한 번이 결제 장애였다면 절대 억제하면 안 된다.
+# 지금은 그 구분이 화면 어디에도 없다.
+
+def incident_links(fingerprints=None):
+    """지문별로 장애와 이어진 횟수. {지문: {...}}
+
+    표가 없으면 빈 dict 다. 이 정보를 못 읽는다고 노이즈 화면이 안 뜨면
+    곤란하다 - 순위표만으로도 쓸모가 있다.
+
+    기간으로 자르지 않는다. 반년 전에 장애를 냈던 알람도 여전히 장애를
+    낼 수 있는 알람이다.
+    """
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.incident_fingerprints')")
+        if cur.fetchone()[0] is None:
+            return {}
+
+        where, params = "", []
+        if fingerprints:
+            where = " WHERE f.fingerprint = ANY(%s)"
+            params.append(list(set(fingerprints)))
+
+        cur.execute(
+            f"""
+            SELECT f.fingerprint,
+                   count(*)                                        AS incidents,
+                   count(*) FILTER (WHERE i.status = 'published')   AS published,
+                   -- 사람이 "이 알람 때문에 쓴다" 고 지목한 것.
+                   -- 시간이 겹쳐서 딸려온 것과 근거의 무게가 다르다.
+                   count(*) FILTER (WHERE f.origin)                 AS origin,
+                   max(i.started_at)                                AS last_at,
+                   (array_agg(i.title ORDER BY i.started_at DESC))[1] AS last_title,
+                   (array_agg(i.id ORDER BY i.started_at DESC))[1]    AS last_id
+              FROM incident_fingerprints f
+              JOIN incidents i ON i.id = f.incident_id
+              {where}
+             GROUP BY f.fingerprint
+            """,
+            params,
+        )
+        return {r["fingerprint"]: r for r in _rows(cur)}
+
+
+# 억제를 검토할 만한 최소 건수. 이보다 적으면 시끄럽다고 하기 어렵다.
+NOISY_ENOUGH = 20
+
+
+def advise(rows, links):
+    """순위표에 판단을 붙인다.
+
+    rows: ranking() 결과, links: incident_links() 결과.
+
+    두 가지를 찾는다.
+      risky   : 장애로 이어진 적이 있는데 억제(muted)되어 있다
+      suppress: 시끄러운데 장애로 이어진 적이 없고 규칙도 없다
+
+    앞의 것이 훨씬 중요하다. 뒤의 것은 '검토해 보라' 지만, 앞의 것은
+    다음 장애의 첫 신호를 우리가 스스로 껐다는 뜻이다.
+    """
+    out = []
+    for row in rows:
+        link = links.get(row["fingerprint"])
+        caused = bool(link and link["incidents"])
+        muted = bool(row.get("muted"))
+        suppressed = row.get("window_minutes") is not None
+
+        verdict, why = None, ""
+        if caused and muted:
+            verdict = "risky"
+            why = (f"장애 {link['incidents']}건과 이어진 알람인데 꺼져 있습니다. "
+                   "다음 장애의 첫 신호를 우리가 껐을 수 있습니다.")
+        elif caused:
+            verdict = "keep"
+            why = (f"장애 {link['incidents']}건과 이어졌습니다"
+                   + (f" (사람이 지목한 것 {link['origin']}건)"
+                      if link["origin"] else "")
+                   + ". 억제 대상이 아닙니다.")
+        elif row["c"] >= NOISY_ENOUGH and not suppressed:
+            verdict = "suppress"
+            why = (f"{row['c']}회 났지만 장애로 이어진 적이 없습니다. "
+                   "억제 규칙을 검토할 만합니다.")
+
+        out.append({**row, "link": link, "verdict": verdict, "why": why})
+
+    # 위험한 억제를 맨 위로. 아래로 스크롤해야 보이면 안 본다.
+    order = {"risky": 0, "suppress": 1, "keep": 2, None: 3}
+    out.sort(key=lambda r: (order[r["verdict"]], -r["c"]))
+    return out
+
+
+def advice_summary(rows):
+    """화면 위쪽 숫자."""
+    counts = {"risky": 0, "suppress": 0, "keep": 0}
+    for row in rows:
+        if row["verdict"] in counts:
+            counts[row["verdict"]] += 1
+    # 장애 이력을 아예 못 읽었는지 구분한다. 0 건과 '모름' 은 다르다.
+    counts["linked"] = len([r for r in rows if r["link"]])
+    return counts
