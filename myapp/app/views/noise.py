@@ -15,6 +15,10 @@ noise_bp = Blueprint("noise", __name__)
 HOUR_CHOICES = (24, 168, 720)
 DEFAULT_HOURS = 168
 
+# 절차를 쓰라고 한 번에 들이미는 개수. 목록이 길면 "나중에" 가 된다.
+# 다섯 개는 한 주에 해볼 만한 양이고, 다 쓰면 다음 다섯 개가 올라온다.
+GAP_LIMIT = 5
+
 
 @noise_bp.before_request
 def require_login():
@@ -48,6 +52,7 @@ def index():
     # '실제 장애의 신호였던 적이 있는가' 가 필요하다.
     #
     # 장애 이력을 못 읽어도 순위표는 보여준다. 그것만으로도 쓸모가 있다.
+    gaps, coverage = [], None
     if items:
         try:
             links = noise.incident_links([i["fingerprint"] for i in items])
@@ -56,11 +61,20 @@ def index():
         items = noise.advise(items, links)
         advice = noise.advice_summary(items)
 
+        # 절차를 다음에 쓸 것. 순위표와 정렬 기준이 달라서 따로 뽑는다 -
+        # 순위표는 시끄러운 순이고, 여기는 급한 순이다(한 번 난 critical 이
+        # 50번 난 info 보다 먼저).
+        gaps = noise.uncovered(items, links, limit=GAP_LIMIT)
+        coverage = noise.coverage_summary(items)
+
     return render_template(
         "noise.html",
         items=items, total=total, error=error, advice=advice,
+        gaps=gaps, coverage=coverage,
         hours=hours, choices=HOUR_CHOICES,
         noisy_enough=noise.NOISY_ENOUGH,
+        worth_a_runbook=noise.WORTH_A_RUNBOOK,
+        not_a_runbook_target=noise.NOT_A_RUNBOOK_TARGET,
     )
 
 

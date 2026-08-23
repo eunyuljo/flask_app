@@ -36,6 +36,18 @@
         <span class="k">상위 5종이 차지</span>
       </div>
       <div class="kpi"><span class="n">{{ total.rules }}</span><span class="k">억제 규칙 (muted {{ total.muted }})</span></div>
+      {# 커버리지를 두 가지로 센다. 종 기준은 '해야 할 일의 양', 건수 기준은
+         '당직자가 실제로 받는 알람 중 절차가 있는 비율'. 시끄러운 알람 한
+         종에 절차를 쓰면 건수 기준만 확 오른다. 두 숫자가 벌어져 있다는
+         사실 자체가 정보라서 한 숫자로 합치지 않는다. #}
+      <div class="kpi">
+        <span class="n">{{ total.covered_kinds_pct }}%</span>
+        <span class="k">절차 있는 알람 종 ({{ total.covered_kinds }}/{{ total.kinds }})</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ total.covered_events_pct }}%</span>
+        <span class="k">절차로 덮인 알람 건수</span>
+      </div>
     </div>
 
     <p class="muted">
@@ -49,7 +61,69 @@
     </p>
   {% endif %}
 
-  <hr>
+  {% if coverage %}
+    <hr>
+    <h2>다음에 쓸 절차</h2>
+    {# 이 화면에서 제일 실행 가능한 자리다. 나머지 판단은 "검토해 보라" 인데
+       여기는 "이거 다섯 개를 쓰면 된다" 이다.
+
+       이 블록이 생기기 전에는 런북이 한 건도 없었다. 절차를 쓰는 화면도
+       AI 초안도 이미 있었는데, 어느 지문부터 써야 하는지 아무 데서도
+       말해주지 않아서 아무도 시작하지 않았다. #}
+    {% if not gaps %}
+      <p class="muted">
+        {% if coverage.gap %}
+          {{ coverage.gap }}종에 절차가 없지만 목록을 만들지 못했습니다.
+        {% else %}
+          이 구간에서 절차가 필요한데 비어 있는 알람은 없습니다.
+          {% if coverage.skipped %}
+            (정규화 못 한 알람 {{ coverage.skipped }}종은 절차가 아니라
+            어댑터로 고칠 일이라 여기서 뺐습니다.)
+          {% endif %}
+        {% endif %}
+      </p>
+    {% else %}
+      <p class="muted">
+        절차가 비어 있는 알람 {{ coverage.gap }}종 중 급한 순으로
+        {{ gaps|length }}개입니다.
+        {% if coverage.proven %}
+          <strong>장애로 이어졌던 것 {{ coverage.proven }}종이 여기 있습니다.</strong>
+        {% endif %}
+        순위표와 순서가 다릅니다 &mdash; 한 번 난 critical 이 50번 난 info 보다 먼저입니다.
+      </p>
+      <table>
+        <thead>
+          <tr><th>왜</th><th>알람</th><th>심각도</th><th>건수</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for g in gaps %}
+            <tr>
+              <td>
+                {% if g.coverage == 'proven' %}<strong>장애 이력</strong>
+                {% elif g.coverage == 'urgent' %}심각도
+                {% else %}반복{% endif %}
+              </td>
+              <td>
+                {{ g.sample }}
+                <div class="muted">{{ g.coverage_why }}</div>
+                <div class="muted">{{ g.source }} &middot; 지문 <code>{{ g.fingerprint }}</code></div>
+              </td>
+              <td>{{ g.severity }}</td>
+              <td>{{ g.c }}</td>
+              <td>
+                {# 초안을 만들 근거를 함께 넘긴다. 빈 폼을 주면 아무도 안 쓴다. #}
+                <a href="{{ url_for('runbook.new', fingerprint=g.fingerprint,
+                                    sample=g.sample[:120],
+                                    severity=g.severity,
+                                    source=g.source) }}">절차 쓰기</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  {% endif %}
+
   {# 순위표는 '얼마나 시끄러운가' 까지만 말한다. 억제할지 정하려면
      '실제 장애의 신호였던 적이 있는가' 가 필요하다. #}
   {# 아무것도 걸리지 않아도 이 자리를 비우지 않는다. 판단이 안 보이면
@@ -57,7 +131,7 @@
      아직 안 썼을 뿐일 수 있다. #}
   {% if advice %}
     <hr>
-    <h2>판단</h2>
+    <h2>억제 판단</h2>
     {% if advice.risky %}
       <div class="flash error">
         <strong>장애로 이어졌던 알람 {{ advice.risky }}종이 꺼져 있습니다.</strong>
@@ -133,10 +207,23 @@
       <div class="muted nz-state">
         {% if i.has_runbook %}
           <span class="nz-ok">절차 있음</span>
+        {% elif i.coverage %}
+          {# 왜 필요한지까지 적는다. "절차 없음" 만으로는 이 줄이
+             급한 것인지 안 써도 되는 것인지 알 수 없었다. #}
+          <span class="nz-gap">절차 없음 &mdash; {{ i.coverage_why }}</span>
+          <a href="{{ url_for('runbook.new', fingerprint=i.fingerprint,
+                              sample=i.sample[:120],
+                              severity=i.severity,
+                              source=i.source) }}">쓰기</a>
+        {% elif i.event_type in not_a_runbook_target %}
+          <span class="muted">절차 대상 아님 ({{ i.event_type }})</span>
         {% else %}
-          <span class="nz-gap">절차 없음</span>
+          <span class="muted">절차 없음 &mdash; 아직 쓸 이유는 없습니다
+            ({{ worth_a_runbook }}회 미만, 심각도 낮음)</span>
           &mdash; <a href="{{ url_for('runbook.new', fingerprint=i.fingerprint,
-                                      sample=i.sample[:120]) }}">쓰기</a>
+                                      sample=i.sample[:120],
+                                      severity=i.severity,
+                                      source=i.source) }}">쓰기</a>
         {% endif %}
         &nbsp;|&nbsp;
         {% if i.muted %}

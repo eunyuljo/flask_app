@@ -63,6 +63,11 @@ def ranking(hours=168, limit=30):
             f"""
             SELECT e.fingerprint,
                    count(*) AS c,
+                   -- event_type 은 지문의 재료라(sha256(event_type|source|key))
+                   -- 한 지문 안에서 항상 같다. min() 으로 뽑아도 정확하다.
+                   -- 절차가 아니라 어댑터로 고쳐야 하는 것(unparsed)을
+                   -- 커버리지 판정에서 가려내는 데 쓴다.
+                   min(e.event_type) AS event_type,
                    (array_agg(e.message  ORDER BY e.occurred_at DESC))[1] AS sample,
                    (array_agg(e.source   ORDER BY e.occurred_at DESC))[1] AS source,
                    (array_agg(e.severity ORDER BY {SEVERITY_RANK.replace('severity', 'e.severity')}))[1]
@@ -99,10 +104,14 @@ def summary(hours=168):
         cur.execute(
             """
             WITH per_kind AS (
-                SELECT fingerprint, count(*) AS c
-                  FROM events
-                 WHERE occurred_at >= now() - make_interval(hours => %s)
-                 GROUP BY fingerprint
+                SELECT e.fingerprint,
+                       count(*) AS c,
+                       (rb.fingerprint IS NOT NULL) AS has_runbook
+                  FROM events e
+                  LEFT JOIN (SELECT DISTINCT fingerprint FROM runbooks) rb
+                         ON rb.fingerprint = e.fingerprint
+                 WHERE e.occurred_at >= now() - make_interval(hours => %s)
+                 GROUP BY e.fingerprint, rb.fingerprint
             )
             SELECT
                 COALESCE(sum(c), 0)                                        AS total,
@@ -111,12 +120,19 @@ def summary(hours=168):
                 -- 노이즈가 크게 줄어든다는 뜻이다.
                 COALESCE((SELECT sum(c) FROM (
                     SELECT c FROM per_kind ORDER BY c DESC LIMIT 5
-                ) t), 0)                                                   AS top5
+                ) t), 0)                                                   AS top5,
+                -- 커버리지를 두 가지로 센다. 종 기준과 건수 기준이 다르다.
+                --   종 기준  : 절차를 몇 종에 썼나 (해야 할 일의 양)
+                --   건수 기준: 당직자가 받는 알람 중 얼마나 절차가 있나 (실제 체감)
+                -- 시끄러운 알람 한 종에 절차를 쓰면 건수 기준만 확 오른다.
+                -- 두 숫자가 벌어져 있으면 그 사실 자체가 정보다.
+                count(*) FILTER (WHERE has_runbook)                        AS covered_kinds,
+                COALESCE(sum(c) FILTER (WHERE has_runbook), 0)             AS covered_events
               FROM per_kind
             """,
             (hours,),
         )
-        total, kinds, top5 = cur.fetchone()
+        total, kinds, top5, covered_kinds, covered_events = cur.fetchone()
 
         cur.execute("SELECT to_regclass('public.alarm_rules')")
         rules = muted = 0
@@ -133,6 +149,10 @@ def summary(hours=168):
         "kinds": kinds,
         "top5": top5,
         "top5_pct": round(top5 * 100 / total) if total else 0,
+        "covered_kinds": covered_kinds,
+        "covered_events": covered_events,
+        "covered_kinds_pct": round(covered_kinds * 100 / kinds) if kinds else 0,
+        "covered_events_pct": round(covered_events * 100 / total) if total else 0,
         "rules": rules,
         "muted": muted,
         "suppressed": suppressed,
@@ -276,12 +296,138 @@ def advise(rows, links):
             why = (f"{row['c']}회 났지만 장애로 이어진 적이 없습니다. "
                    "억제 규칙을 검토할 만합니다.")
 
-        out.append({**row, "link": link, "verdict": verdict, "why": why})
+        # 절차 축 판정을 같은 줄에 붙인다. 정렬에는 쓰지 않는다 -
+        # 이 목록은 '얼마나 시끄러운가' 순이고, 절차를 쓸 순서는
+        # uncovered() 가 따로 낸다.
+        cov, cov_why = coverage(row, link)
+        out.append({**row, "link": link, "verdict": verdict, "why": why,
+                    "coverage": cov, "coverage_why": cov_why})
 
     # 위험한 억제를 맨 위로. 아래로 스크롤해야 보이면 안 본다.
     order = {"risky": 0, "suppress": 1, "keep": 2, None: 3}
     out.sort(key=lambda r: (order[r["verdict"]], -r["c"]))
     return out
+
+
+# ----------------------------------------------------------------------
+# 절차 축 판정 — 이 알람에 절차가 있어야 하는가
+# ----------------------------------------------------------------------
+# 위의 advise() 는 억제 축만 본다. "이 알람을 꺼도 되는가."
+# 여기는 다른 물음이다. "이 알람이 왔을 때 무엇을 해야 하는지 적혀 있는가."
+#
+# 두 축을 한 verdict 에 섞지 않는다. 같은 알람이 '억제해도 된다' 이면서
+# 동시에 '절차가 필요하다' 일 수 있고, 하나로 뭉개면 둘 다 못 읽는다.
+#
+# ── 이 판정을 만든 이유 ─────────────────────────────────────────────
+# ranking() 은 진작부터 has_runbook 을 뽑고 있었다. 화면도 줄마다
+# "절차 없음" 을 적고 있었다. 그런데 30줄을 눈으로 훑어야 보였고,
+# 어느 것부터 써야 하는지는 아무 데서도 말해주지 않았다.
+#
+# 그래서 runbooks 테이블이 0건이다. 절차를 쓰는 화면도, AI 초안도 이미
+# 있는데 아무도 안 썼다. 어디서 시작할지 몰라서다.
+
+# 이만큼 반복되면 절차를 쓸 값어치가 있다.
+# NOISY_ENOUGH(20) 와 다른 값을 쓴다. 억제를 검토하려면 '시끄럽다' 는
+# 증거가 꽤 있어야 하지만, 절차는 세 번만 반복돼도 쓰는 편이 낫다.
+# 문턱을 같이 두면 20회 미만은 영영 절차가 안 생긴다.
+WORTH_A_RUNBOOK = 3
+
+# 한 번만 나도 절차가 있어야 하는 심각도.
+# 새벽에 처음 보는 critical 앞에서 검색을 시작하게 두지 않는다.
+ALWAYS_WORTH = ("critical", "error")
+
+# 절차가 아니라 어댑터로 고쳐야 하는 것. 내용을 못 읽은 페이로드에
+# 대응 절차를 쓰라고 하면 안 된다.
+NOT_A_RUNBOOK_TARGET = ("unparsed", "diagnose", "console")
+
+# 급한 순서. 숫자가 작을수록 먼저 쓴다.
+COVERAGE_ORDER = {"proven": 0, "urgent": 1, "frequent": 2, "covered": 8, None: 9}
+
+# 같은 판정 안에서는 심각도가 건수보다 먼저다.
+# 건수로만 줄을 세우면 3번 난 error 셋이 3번 난 critical 위에 오는데,
+# 절차를 하나만 쓸 시간이 있다면 critical 부터 써야 한다.
+SEVERITY_SORT = {"critical": 0, "error": 1, "warning": 2, "info": 3}
+
+
+def coverage(row, link=None):
+    """이 알람에 절차가 있어야 하는가, 있는가. (판정, 이유)
+
+    부수효과가 없는 순수 함수다. row 는 ranking() 한 줄, link 는
+    incident_links() 의 그 지문 항목(없으면 None).
+
+    판정
+      covered  : 절차가 있다
+      proven   : 장애로 이어졌는데 절차가 없다      <- 제일 급하다
+      urgent   : 심각도가 높은데 절차가 없다
+      frequent : 반복되는데 절차가 없다
+      None     : 드물고 가벼우니 아직 쓸 이유가 없다
+    """
+    if row.get("event_type") in NOT_A_RUNBOOK_TARGET:
+        # 절차의 문제가 아니다. 여기에 '절차 없음' 을 띄우면 진짜 빈
+        # 자리가 이것들에 묻힌다.
+        return None, ""
+
+    if row.get("has_runbook"):
+        return "covered", "절차가 있습니다."
+
+    count = row.get("c") or 0
+    severity = str(row.get("severity") or "").lower()
+    incidents = (link or {}).get("incidents") or 0
+
+    if incidents:
+        return "proven", (
+            f"장애 {incidents}건과 이어진 알람인데 절차가 없습니다. "
+            "무엇을 해야 하는지 이미 한 번 겪었습니다."
+        )
+    if severity in ALWAYS_WORTH:
+        return "urgent", (
+            f"{severity} 인데 절차가 없습니다. "
+            "한 번만 나도 새벽에 찾아 헤매게 됩니다."
+        )
+    if count >= WORTH_A_RUNBOOK:
+        return "frequent", (
+            f"{count}회 반복되는데 절차가 없습니다. "
+            "매번 같은 판단을 처음부터 다시 하고 있습니다."
+        )
+    return None, ""
+
+
+def uncovered(rows, links=None, limit=5):
+    """절차를 다음에 써야 할 알람. 급한 순으로.
+
+    순위표 전체를 다시 정렬하지 않고 따로 뽑는다. 순위표는 '얼마나
+    시끄러운가' 순인데, 절차를 쓸 순서는 그것과 다르다 - 한 번 난
+    critical 이 50번 난 info 보다 먼저다.
+
+    같은 목록을 두 기준으로 정렬할 수는 없으므로 물음마다 목록을 준다.
+    """
+    links = links or {}
+    picked = []
+    for row in rows:
+        verdict, why = coverage(row, links.get(row.get("fingerprint")))
+        if verdict in ("proven", "urgent", "frequent"):
+            picked.append({**row, "coverage": verdict, "coverage_why": why})
+
+    picked.sort(key=lambda r: (
+        COVERAGE_ORDER[r["coverage"]],
+        SEVERITY_SORT.get(str(r.get("severity") or "").lower(), 4),
+        -(r.get("c") or 0),
+    ))
+    return picked[:limit] if limit else picked
+
+
+def coverage_summary(rows):
+    """화면 위쪽 숫자. 절차가 빈 자리가 몇 종인가."""
+    counts = {"covered": 0, "proven": 0, "urgent": 0, "frequent": 0, "skipped": 0}
+    for row in rows:
+        verdict = row.get("coverage")
+        if verdict in counts:
+            counts[verdict] += 1
+        elif row.get("event_type") in NOT_A_RUNBOOK_TARGET:
+            # 절차 대상이 아닌 것을 '아직 쓸 이유 없음' 과 섞지 않는다.
+            counts["skipped"] += 1
+    counts["gap"] = counts["proven"] + counts["urgent"] + counts["frequent"]
+    return counts
 
 
 def advice_summary(rows):
