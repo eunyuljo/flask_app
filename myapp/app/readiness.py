@@ -320,7 +320,7 @@ def _check_work_orders(facts):
 # 화면에 "report.sla" 라고 찍으면 그게 어디인지 아는 사람만 읽을 수 있다.
 ENDPOINT_LABELS = {
     "alarm.index": "이벤트 화면",
-    "report.sla": "리포트 > SLA 목표",
+    "report.sla": "보고 > SLA",
     "runbook.index": "런북 화면",
     "work.index": "작업 기록 화면",
 }

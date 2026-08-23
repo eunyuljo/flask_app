@@ -88,6 +88,16 @@ class TestActive:
         ("alarm.diagnose", "alarm.index"),        # 같은 블루프린트의 다른 화면
         ("work.detail", "work.index"),
         ("compliance.exceptions", "compliance.index"),
+        # SLA 는 리포트 블루프린트 안에 있지만 메뉴가 따로 있다.
+        ("report.sla", "report.sla"),
+        ("report.sla_target", "report.sla"),
+        ("report.download", "report.index"),
+        # 운영 상태도 관리자 블루프린트 안의 별도 메뉴다.
+        ("admin.health_page", "admin.health_page"),
+        ("admin.health_check", "admin.health_page"),
+        # 계정·감사 로그는 승격하지 않았으므로 관리자에 불이 들어와야 한다.
+        ("admin.users_page", "admin.index"),
+        ("admin.audit_log", "admin.index"),
     ])
     def test_sub_pages_light_up_their_parent(self, endpoint, expected):
         assert nav.active_endpoint(endpoint) == expected

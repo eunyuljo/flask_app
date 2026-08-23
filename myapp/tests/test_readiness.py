@@ -211,6 +211,34 @@ class TestChecksTable:
             if c["how"].startswith("endpoint:"):
                 assert c["how"][9:] in R.ENDPOINT_LABELS, c["id"]
 
+    def test_labels_name_a_real_menu_path(self):
+        """라벨이 없는 메뉴 경로를 가리키면 찾다가 포기한다.
+
+        "리포트 > SLA 목표" 라고 적혀 있었는데 리포트 메뉴에는 SLA 가
+        없었다. 카테고리 이름으로 시작하는 라벨은 그 카테고리에 실제로
+        그 메뉴가 있어야 한다.
+        """
+        from app import nav
+
+        by_endpoint = {i["endpoint"]: i for i in nav.ITEMS}
+        labels = {c["label"]: c["id"] for c in nav.CATEGORIES}
+
+        for endpoint, label in R.ENDPOINT_LABELS.items():
+            if ">" not in label:
+                continue
+            head, tail = [p.strip() for p in label.split(">", 1)]
+            assert head in labels, f"{endpoint}: 없는 카테고리 '{head}'"
+            item = by_endpoint.get(endpoint)
+            assert item, f"{endpoint}: 메뉴에 없는데 메뉴 경로처럼 적혀 있습니다"
+            assert item["category"] == labels[head], (
+                f"{endpoint}: 라벨은 '{head}' 인데 실제로는 "
+                f"'{item['category']}' 에 있습니다"
+            )
+            assert item["label"] == tail, (
+                f"{endpoint}: 라벨은 '{tail}' 인데 메뉴 이름은 "
+                f"'{item['label']}' 입니다"
+            )
+
     def test_every_check_returns_a_known_status(self):
         results = R.check(facts())
         for r in results:

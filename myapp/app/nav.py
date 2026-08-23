@@ -20,6 +20,7 @@
 #   고객사 ── 누구의 것인가 (고객사 축 화면)
 #   알람   ── 무슨 일이 일어났나 (들어오는 것)
 #   인프라 ── 지금 어떤 상태인가 (쌓아둔 것)
+#   조사   ── 무엇으로 알아보나 (직접 캐묻는 도구)
 #   대응   ── 지금 무엇을 하나 (사람이 하는 일)
 #   보고   ── 밖으로 무엇을 내보내나 (산출물)
 #   관리   ── 도구 자체
@@ -27,6 +28,13 @@
 # 새 기능이 어디 들어갈지 대개 바로 정해진다.
 #   변경 승인   -> 대응     만료 추적   -> 알람
 #   비용        -> 인프라   용량 예측   -> 알람
+#
+# ── 조사와 대응을 왜 갈랐나 ─────────────────────────────────────────
+# 대응에 여섯 개가 모였을 때 두 종류가 섞여 있었다. 당직 인계·런북·작업
+# 기록은 '사람이 하는 운영 업무' 인데, AI 에이전트와 콘솔은 그게 아니라
+# '무엇으로 알아보나' 다. 알람 밑에 있던 탐색도 같은 성격이었다.
+# 준비된 화면을 보는 것과 직접 묻는 것은 다르고, MSP 업무도 실제로
+# 알람 -> 조사 -> 대응 순으로 흐른다.
 
 from app import users
 
@@ -34,6 +42,7 @@ CATEGORIES = [
     {"id": "customer",  "label": "고객사", "hint": "누구의 것인가"},
     {"id": "alarm",     "label": "알람",   "hint": "무슨 일이 일어났나"},
     {"id": "infra",     "label": "인프라", "hint": "지금 어떤 상태인가"},
+    {"id": "inspect",   "label": "조사",   "hint": "무엇으로 알아보나"},
     {"id": "respond",   "label": "대응",   "hint": "지금 무엇을 하나"},
     {"id": "report",    "label": "보고",   "hint": "밖으로 무엇을 내보내나"},
     {"id": "manage",    "label": "관리",   "hint": "도구 자체"},
@@ -65,8 +74,6 @@ ITEMS = [
      "category": "alarm", "hint": "기간별 추이와 심각도 분포"},
     {"endpoint": "alarm.index", "label": "이벤트", "icon": "◈",
      "category": "alarm", "hint": "들어온 알람 목록과 제출"},
-    {"endpoint": "explore.index", "label": "탐색", "icon": "⌕",
-     "category": "alarm", "hint": "질의어로 이벤트 찾기"},
     {"endpoint": "noise.index", "label": "알람 노이즈", "icon": "≋",
      "category": "alarm", "hint": "시끄러운 알람 순위와 억제 규칙"},
 
@@ -91,10 +98,14 @@ ITEMS = [
      "hint": "그 절차가 실제로 통했는가"},
     {"endpoint": "work.index", "label": "작업 기록", "icon": "✎",
      "category": "respond", "hint": "작업 전/후 증적"},
+
+    # ---- 조사 ----
+    {"endpoint": "explore.index", "label": "탐색", "icon": "⌕",
+     "category": "inspect", "hint": "질의어로 이벤트 찾기"},
     {"endpoint": "agent.index", "label": "AI 에이전트", "icon": "✦",
-     "category": "respond", "hint": "모델에게 물어보기"},
+     "category": "inspect", "hint": "모델에게 물어보기"},
     {"endpoint": "console.index", "label": "콘솔", "icon": "❯",
-     "category": "respond", "role": "admin",
+     "category": "inspect", "role": "admin",
      "hint": "고객사 계정에 읽기 전용 AWS CLI"},
 
     # ---- 보고 ----
@@ -106,11 +117,24 @@ ITEMS = [
     {"endpoint": "report.msr_page", "label": "월간 리뷰", "icon": "▧",
      "category": "report", "match": ("report.msr",),
      "hint": "고객사 하나의 한 달치"},
+    # SLA 는 리포트 블루프린트 안에 있지만 하는 일이 다르다. 다른 화면들이
+    # 지나간 기간을 정리해 내보내는 것이라면, 여기는 목표 자체를 정하는
+    # 곳이다. 메뉴에 없던 동안에는 온보딩 준비도에서 점검이 실패했을 때
+    # 뜨는 링크가 유일한 입구였다 - 그 화면을 안 거친 사람은 존재를 알
+    # 방법이 없었다.
+    {"endpoint": "report.sla", "label": "SLA", "icon": "◔",
+     "category": "report", "match": ("report.sla",),
+     "hint": "고객사별 목표 설정과 달성률"},
 
     # ---- 관리 ----
     {"endpoint": "admin.index", "label": "관리자", "icon": "⚙",
-     "category": "manage", "role": "admin",
+     "category": "manage", "match": ("admin.",), "role": "admin",
      "hint": "설정·계정·감사 로그"},
+    # 배치가 죽었는지 보는 화면이 관리자 뒤에 있으면, 정작 조용히 죽었을
+    # 때 아무도 안 본다. 무서운 건 실패가 아니라 침묵이다.
+    {"endpoint": "admin.health_page", "label": "운영 상태", "icon": "◍",
+     "category": "manage", "match": ("admin.health",), "role": "admin",
+     "hint": "배치 실행과 연동이 살아 있는가"},
 ]
 
 
