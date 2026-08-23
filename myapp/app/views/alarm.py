@@ -22,7 +22,7 @@ from app.accounts import list_accounts, by_customer, get_account, AccountError
 from app.agent_core import diagnose as run_diagnose, AgentNotConfigured
 from app.lambda_client import invoke_normalizer, LambdaInvokeError
 from app.incident import past_for_many, past_incidents, IncidentError
-from app.runbook import find_many, find as find_runbook, RunbookError
+from app.runbook import find_many, find as find_runbook, RunbookError, OUTCOMES
 from app.stats import fingerprint_history, StatsUnavailable
 
 alarm_bp = Blueprint("alarm", __name__)
@@ -99,6 +99,10 @@ def index():
         "alarm.html",
         events=events,
         runbooks=runbooks,
+        outcomes=OUTCOMES,
+        # 런북 실행을 기록할 때 어느 고객사 일이었는지 함께 남기기 위한 표.
+        # 이벤트에는 계정만 있고 고객사가 없다.
+        customer_of={a["account_id"]: a.get("customer", "") for a in accounts},
         past=past,
         mode=current_app.config["LAMBDA_MODE"],
         function_name=current_app.config["LAMBDA_FUNCTION_NAME"],

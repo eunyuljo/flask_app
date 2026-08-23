@@ -1,0 +1,44 @@
+{# templates/_runbook_run.html
+   "이 절차대로 처리함" 폼. 알람 화면과 런북 수정 화면이 같은 것을 쓴다.
+
+   따로 파일로 뺀 이유: 두 화면에 같은 폼을 복사해 두면, 나중에 항목을
+   하나 늘렸을 때 한쪽만 고쳐지고 그 사실을 아무도 모른다. 실제로 저장을
+   막는 규칙(failed/stale 은 메모 필수)은 app/runbook.py 에 있고,
+   여기 required 는 그 규칙을 미리 알려주는 것뿐이다. #}
+
+{% macro run_form(rb, outcomes, event=none, account_id='', customer='') -%}
+  <details class="rb-run">
+    <summary>이 절차대로 처리함</summary>
+    <form action="{{ url_for('runbook.run', runbook_id=rb.id) }}" method="post"
+          class="wo-form">
+      <label>
+        결과
+        <select name="outcome" required>
+          {% for key, label in outcomes.items() %}
+            <option value="{{ key }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>
+        걸린 시간(분) <span class="muted">비워도 됩니다</span>
+        <input type="number" name="minutes" min="0" step="1" placeholder="예) 15">
+      </label>
+
+      <label>
+        메모
+        <textarea name="note" rows="3"
+                  placeholder="해결됐으면 비워도 됩니다. 절차가 안 통했거나 현행과 맞지 않으면 무엇이 달랐는지 적어 주세요 - 그 내용이 절차를 고치는 근거가 됩니다."></textarea>
+      </label>
+
+      {# 어디서 눌렀는지에 따라 채워지는 값들. 런북 화면에서 직접 남기면
+         비어 있고, 그래도 기록 자체는 성립한다. #}
+      <input type="hidden" name="event_id" value="{{ event.event_id if event else '' }}">
+      <input type="hidden" name="account_id" value="{{ account_id }}">
+      <input type="hidden" name="customer" value="{{ customer }}">
+      <input type="hidden" name="back" value="{{ request.full_path }}">
+
+      <button type="submit">기록</button>
+    </form>
+  </details>
+{%- endmacro %}

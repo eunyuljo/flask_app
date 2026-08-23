@@ -788,6 +788,21 @@ pre.err { color: var(--err-fg); }
 .rb-fold > summary { cursor: pointer; font-size: .88rem; }
 .rb-fold .muted { margin-top: 5px; }
 
+/* "이 절차대로 처리함" 폼. 알람 목록 안에 들어가므로 접힌 상태에서
+   한 줄만 차지해야 한다 - 펼치지 않은 알람이 폼 때문에 밀리면
+   목록으로서 못 쓰게 된다. */
+.rb-run { margin-top: 9px; }
+.rb-run > summary {
+  cursor: pointer;
+  font-size: .88rem;
+  color: var(--accent);
+}
+.rb-run .wo-form { margin-top: 8px; }
+/* 알람 카드 안에서는 폼 입력이 카드 폭을 넘지 않아야 한다. */
+.rb-run .wo-form textarea,
+.rb-run .wo-form input,
+.rb-run .wo-form select { max-width: 100%; }
+
 /* 런북 목록의 좌측 띠. 공통과 고객사 전용을 구분한다. */
 .event.rb-common { border-left-color: var(--sev-info); }
 .event.rb-scoped { border-left-color: var(--accent); }

@@ -16,7 +16,11 @@
     <div class="flash error">{{ error }}</div>
   {% endif %}
 
-  <p><a href="{{ url_for('runbook.new') }}">새 런북 작성</a></p>
+  <p>
+    <a href="{{ url_for('runbook.new') }}">새 런북 작성</a>
+    &middot;
+    <a href="{{ url_for('runbook.runs') }}">실행 기록</a>
+  </p>
 
   <hr>
   <h2>등록된 런북 <span class="muted">({{ items|length }}건)</span></h2>
@@ -39,6 +43,23 @@
         {% if r.sample %} &middot; 예) {{ r.sample }}{% endif %}
       </div>
       <div class="muted">{{ r.author }} &middot; {{ r.updated_at }}</div>
+      {# 이 절차가 실제로 쓰이고 있는가. 한 번도 안 쓰인 절차를 '아직 쓰인 적
+         없음' 이라고 분명히 적는다 - 0 을 표시하지 않고 비워두면 절차가
+         멀쩡히 돌아가는 것처럼 보인다. #}
+      {% set u = usage.get(r.id) if usage is not none else none %}
+      {% if usage is none %}
+        <div class="muted">실행 기록을 읽지 못했습니다</div>
+      {% elif u %}
+        <div class="muted">
+          실행 {{ u.total }}회
+          {% if u.trouble %}
+            &middot; <strong>실패·불일치 {{ u.trouble }}회</strong>
+          {% endif %}
+          &middot; 마지막 {{ u.last_at.strftime('%Y-%m-%d') }}
+        </div>
+      {% else %}
+        <div class="muted">아직 쓰인 적 없음</div>
+      {% endif %}
       <details class="meta-fold">
         <summary class="muted">절차 보기</summary>
         <div class="rb-body">{{ r.body }}</div>

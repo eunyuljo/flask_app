@@ -2,6 +2,7 @@
    런북 작성/수정 화면. 새로 쓸 때와 고칠 때 같은 폼을 쓴다. #}
 
 {% extends "base.html" %}
+{% from "_runbook_run.html" import run_form %}
 
 {% block title %}{% if item.id %}런북 수정{% else %}런북 작성{% endif %}{% endblock %}
 {% block page_title %}{% if item.id %}런북 수정{% else %}런북 작성{% endif %}{% endblock %}
@@ -51,8 +52,48 @@
   </form>
 
   {% if item.id %}
+    <hr>
+    <h2>이 절차의 실행 기록
+      <span class="muted">
+        {% if runs is none %}(읽지 못함){% else %}({{ runs|length }}건){% endif %}
+      </span>
+    </h2>
+    <p class="muted">
+      절차를 고치러 왔다면 여기부터 보세요. 지난번에 무엇이 안 맞았는지가
+      고칠 내용입니다.
+    </p>
+
+    {{ run_form(item, outcomes, customer=item.customer) }}
+
+    {% if runs is none %}
+      <p class="muted">
+        실행 기록을 읽지 못했습니다. "따른 적 없음" 과는 다릅니다.
+      </p>
+    {% elif not runs %}
+      <p class="muted">아직 이 절차를 따랐다는 기록이 없습니다.</p>
+    {% endif %}
+
+    {% for r in runs or [] %}
+      <div class="event {% if r.outcome in ('failed', 'stale') %}sev-error{% endif %}">
+        <div class="event-head">
+          <span class="badge">{{ outcomes.get(r.outcome, r.outcome) }}</span>
+          <span class="muted">
+            {{ r.ran_at.strftime('%Y-%m-%d %H:%M') }}
+            &middot; {{ r.ran_by or '(이름 없음)' }}
+            {% if r.minutes %} &middot; {{ r.minutes }}분{% endif %}
+          </span>
+        </div>
+        {% if r.note %}<div class="rb-body">{{ r.note }}</div>{% endif %}
+      </div>
+    {% endfor %}
+
+    <hr>
     <form action="{{ url_for('runbook.delete', runbook_id=item.id) }}" method="post" class="danger">
       <button type="submit">이 런북 지우기</button>
     </form>
+    <p class="muted">
+      지워도 위 실행 기록은 남습니다. "언제 이 절차를 따랐다" 는 사실은
+      절차가 사라졌다고 없던 일이 되지 않습니다.
+    </p>
   {% endif %}
 {% endblock %}

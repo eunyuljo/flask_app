@@ -3,6 +3,7 @@
    제출한 원본이 Lambda 를 거쳐 어떻게 정규화됐는지 나란히 보여준다. #}
 
 {% extends "base.html" %}
+{% from "_runbook_run.html" import run_form %}
 
 {% block title %}이벤트 / 알람{% endblock %}
 {% block page_title %}이벤트 접수{% endblock %}
@@ -145,8 +146,17 @@
               <span class="muted">({% if rb.customer %}{{ rb.customer }} 전용{% else %}공통{% endif %})</span>
             </summary>
             <div class="rb-body">{{ rb.body }}</div>
+            {# 절차를 펼쳐 본 자리에서 바로 결과를 남길 수 있게 한다.
+               별도 화면으로 보내면 알람을 처리하던 흐름이 끊기고,
+               끊기면 아무도 기록하지 않는다. #}
+            {{ run_form(rb, outcomes,
+                        event=item.record,
+                        account_id=item.record.account_id or '',
+                        customer=customer_of.get(item.record.account_id, '')) }}
             <div class="muted">
               <a href="{{ url_for('runbook.edit', runbook_id=rb.id) }}">절차 고치기</a>
+              &middot;
+              <a href="{{ url_for('runbook.runs') }}">실행 기록</a>
             </div>
           </details>
         {% else %}

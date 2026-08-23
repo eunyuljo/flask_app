@@ -1,0 +1,103 @@
+{# templates/runbook_runs.html
+   runbook 블루프린트의 runs() 가 렌더링하는 런북 실행 기록. #}
+
+{% extends "base.html" %}
+
+{% block title %}런북 실행 기록{% endblock %}
+{% block page_title %}런북 실행 기록{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    런북을 <strong>실제로 따른 기록</strong>입니다. 절차 자체는
+    <a href="{{ url_for('runbook.index') }}">런북</a>에 있고, 여기는 그 절차가
+    통했는지를 남깁니다. 조회 기록으로 추론하지 않고, 사람이 알람 화면이나
+    런북 화면에서 눌렀을 때만 한 줄이 생깁니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if stats %}
+    <div class="kpis">
+      <div class="kpi">
+        <span class="n">{{ stats.total }}</span>
+        <span class="k">최근 {{ stats.days }}일 실행</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ stats.resolved }}</span>
+        <span class="k">해결됨</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ stats.trouble }}</span>
+        <span class="k">실패 · 현행 불일치</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ stats.books }}</span>
+        <span class="k">쓰인 런북 수</span>
+      </div>
+    </div>
+  {% endif %}
+
+  {# 손봐야 할 절차를 목록보다 위에 둔다. 실행 기록을 남기는 이유의 절반이
+     이것이고, 아래 목록에 섞여 있으면 아무도 찾아보지 않는다. #}
+  {% if stats and stats.needs_fix %}
+    <hr>
+    <h2>손봐야 할 절차 <span class="muted">({{ stats.needs_fix|length }}건)</span></h2>
+    <p class="muted">
+      따랐는데 해결되지 않았거나, 절차가 지금 환경과 맞지 않는다고 기록된 것들입니다.
+    </p>
+    {% for f in stats.needs_fix %}
+      <div class="event sev-warning">
+        <div class="event-head">
+          <span class="badge">{{ f.trouble }}회</span>
+          <strong>
+            {% if f.runbook_id %}
+              <a href="{{ url_for('runbook.edit', runbook_id=f.runbook_id) }}">{{ f.title }}</a>
+            {% else %}
+              {{ f.title }} <span class="muted">(런북이 지워짐)</span>
+            {% endif %}
+          </strong>
+        </div>
+        <div class="muted">
+          마지막 {{ f.last_at.strftime('%Y-%m-%d %H:%M') }}
+          &middot; 지문 <code>{{ f.fingerprint }}</code>
+        </div>
+        {% if f.last_note %}<div class="rb-body">{{ f.last_note }}</div>{% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+
+  <hr>
+  <h2>전체 기록 <span class="muted">({{ items|length }}건)</span></h2>
+
+  {% if not items %}
+    <p class="muted">
+      아직 없습니다. <a href="{{ url_for('alarm.index') }}">이벤트 화면</a>에서
+      절차가 붙은 알람을 펼치면 "이 절차대로 처리함" 버튼이 있습니다.
+    </p>
+  {% endif %}
+
+  {% for r in items %}
+    <div class="event {% if r.outcome in ('failed', 'stale') %}sev-error{% endif %}">
+      <div class="event-head">
+        <span class="badge">{{ outcomes.get(r.outcome, r.outcome) }}</span>
+        <strong>
+          {% if r.runbook_id %}
+            <a href="{{ url_for('runbook.edit', runbook_id=r.runbook_id) }}">{{ r.title }}</a>
+          {% else %}
+            {{ r.title }} <span class="muted">(런북이 지워짐)</span>
+          {% endif %}
+        </strong>
+      </div>
+      <div class="muted">
+        {{ r.ran_at.strftime('%Y-%m-%d %H:%M') }}
+        &middot; {{ r.ran_by or '(이름 없음)' }}
+        {% if r.customer %} &middot; {{ r.customer }}{% endif %}
+        {% if r.account_id %} &middot; <code>{{ r.account_id }}</code>{% endif %}
+        {% if r.minutes %} &middot; {{ r.minutes }}분{% endif %}
+      </div>
+      {% if r.note %}<div class="rb-body">{{ r.note }}</div>{% endif %}
+    </div>
+  {% endfor %}
+{% endblock %}

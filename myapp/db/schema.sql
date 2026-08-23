@@ -200,6 +200,68 @@ CREATE TABLE IF NOT EXISTS runbooks (
 CREATE INDEX IF NOT EXISTS idx_runbooks_fingerprint ON runbooks (fingerprint);
 
 -- ======================================================================
+-- 런북 실행 기록
+-- ----------------------------------------------------------------------
+-- runbooks 는 "이럴 땐 이렇게 한다" 는 규칙이고, 이 표는 "실제로 그렇게
+-- 했고 결과가 이랬다" 는 실행 상태다. alarm_rules/alarm_state,
+-- sla_targets/sla_notices 와 같은 이유로 나눠 둔다. 절차는 사람이 정하고
+-- 오래 남지만, 실행은 따를 때마다 한 줄씩 쌓인다.
+--
+-- ── 이 표가 없으면 알 수 없는 것 ──────────────────────────────────
+-- 지금은 런북을 몇 개 썼는지만 보인다. 그런데 정작 궁금한 것은
+--   * 한 번도 안 쓰인 절차는 무엇인가 (죽은 문서)
+--   * 따랐는데 반복해서 안 되는 절차는 무엇인가 (틀린 문서)
+-- 이고, 둘 다 "따랐다" 는 기록이 있어야만 나온다.
+--
+-- ── 추론하지 않는다 ──────────────────────────────────────────────
+-- 감사 로그로 "이 사람이 런북을 봤으니 따랐겠지" 를 유추할 수도 있다.
+-- SLA 에서 그렇게 했다가 '계정을 들여다본 것' 과 '알람에 대응한 것' 을
+-- 구분하지 못했다. 여기서는 사람이 눌러야만 남는다. 기록이 적게 쌓이는
+-- 편이, 있지도 않은 이행 증거를 만들어 내는 것보다 낫다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS runbook_runs (
+    id          BIGSERIAL   PRIMARY KEY,
+
+    -- 런북이 지워져도 이 기록은 남아야 한다. 그래서 CASCADE 가 아니라
+    -- SET NULL 이고, 그때 무엇을 따랐는지 알 수 있도록 지문과 제목을
+    -- 실행 시점 그대로 복사해 둔다(런북 제목은 나중에 바뀐다).
+    runbook_id  BIGINT      REFERENCES runbooks (id) ON DELETE SET NULL,
+    fingerprint TEXT        NOT NULL DEFAULT '',
+    title       TEXT        NOT NULL DEFAULT '',
+
+    customer    TEXT        NOT NULL DEFAULT '',
+    account_id  TEXT        NOT NULL DEFAULT '',
+    -- 어떤 알람을 처리하다 따랐는지. 알람 화면에서 누르면 채워지고,
+    -- 런북 화면에서 직접 기록하면 빈 값이다.
+    event_id    TEXT        NOT NULL DEFAULT '',
+
+    --   resolved : 절차대로 했고 해결됐다
+    --   partial  : 절차는 맞는데 이걸로 끝나지 않았다
+    --   failed   : 절차대로 했는데 해결되지 않았다
+    --   stale    : 절차가 지금 환경과 맞지 않는다(명령어/리소스가 다름)
+    -- failed 와 stale 은 런북을 고치라는 신호다. 그래서 이 둘은
+    -- 메모 없이 저장할 수 없다(app/runbook.py 에서 막는다).
+    outcome     TEXT        NOT NULL
+                CHECK (outcome IN ('resolved', 'partial', 'failed', 'stale')),
+
+    note        TEXT        NOT NULL DEFAULT '',
+    -- 걸린 시간(분). 0 이면 안 적은 것이다. 목표가 아니라 참고용이라
+    -- 비워도 저장된다.
+    minutes     INTEGER     NOT NULL DEFAULT 0 CHECK (minutes >= 0),
+
+    ran_by      TEXT        NOT NULL DEFAULT '',
+    ran_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 런북별 집계(몇 번 썼나, 마지막이 언제인가)에 쓴다.
+CREATE INDEX IF NOT EXISTS idx_runbook_runs_book
+    ON runbook_runs (runbook_id, ran_at DESC);
+-- 런북이 지워진 뒤에도 지문으로는 이어서 볼 수 있어야 한다.
+CREATE INDEX IF NOT EXISTS idx_runbook_runs_fingerprint
+    ON runbook_runs (fingerprint, ran_at DESC);
+
+-- ======================================================================
 -- 장애 (사후 보고서 / RCA)
 -- ----------------------------------------------------------------------
 -- 장애 하나에 대해 "언제 무슨 일이 있었나" 를 앱이 모아주고,
