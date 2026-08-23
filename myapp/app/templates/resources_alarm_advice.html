@@ -7,14 +7,35 @@
 {% block page_title %}알람 권고{% endblock %}
 
 {% block content %}
-  {# 이 화면이 무엇이 아닌지를 맨 위에 둔다. '현황표' 로 읽으면
-     이미 걸어둔 알람을 지웠다고 오해할 수 있다. #}
+  {# 이 화면이 무엇을 말하고 무엇을 안 말하는지 맨 위에 둔다.
+     '현황표' 로 읽으면 이미 걸어둔 알람을 지웠다고 오해할 수 있다. #}
   <div class="flash">
     이 표는 <strong>무엇을 걸어야 하는가</strong>입니다.
-    실제로 걸려 있는지는 <strong>확인하지 않았습니다</strong> —
-    실제 알람은 모니터링 서버에 있고, 이 도구는 그 설정을 읽지 않습니다.
-    여기 있는 항목이 이미 걸려 있을 수 있습니다.
+    이제 <strong>실제로 온 알람과 대조</strong>합니다 &mdash; 다만 한쪽 방향뿐입니다.
+    <table class="rows">
+      <tr>
+        <td><strong>확인됨</strong></td>
+        <td>이 지표로 알람이 실제로 왔습니다. <strong>걸려 있습니다.</strong></td>
+      </tr>
+      <tr>
+        <td><strong>모름</strong></td>
+        <td>안 왔습니다. 설정이 없어서일 수도, 임계를 한 번도 안 넘어서일 수도
+            있습니다. <strong>'없음' 이 아닙니다.</strong></td>
+      </tr>
+      <tr>
+        <td><strong>지표 알람 아님</strong></td>
+        <td>CloudTrail 이벤트 기반이라 이 방법으로는 확인할 수 없습니다.</td>
+      </tr>
+    </table>
   </div>
+
+  {% if data and not data.checked %}
+    <div class="flash error">
+      실제 알람과 <strong>대조하지 못했습니다</strong>{% if data.check_error %} ({{ data.check_error }}){% endif %}.
+      아래 항목에는 판정이 붙지 않습니다 &mdash; 전부 '모름' 으로 채우면
+      확인해서 근거가 없는 것과 확인 자체를 못 한 것이 섞입니다.
+    </div>
+  {% endif %}
 
   <p class="muted">
     리소스 스냅샷의 속성으로 가릅니다. 같은 EC2 라도 버스터블인지,
@@ -54,7 +75,26 @@
         <span class="n">{{ data.counts.total }}</span>
         <span class="k">합계</span>
       </div>
+      {% if data.checked %}
+        {# 분모는 '확인할 수 있는 것' 이다. 지표 알람이 아닌 규칙까지
+           넣으면 영원히 100% 가 안 나온다. #}
+        <div class="kpi">
+          <span class="n">{{ data.link_counts.confirmed_pct }}%</span>
+          <span class="k">확인됨 ({{ data.link_counts.confirmed }}/{{ data.link_counts.checkable }})</span>
+        </div>
+        <div class="kpi">
+          <span class="n">{{ data.link_counts.resources_with_alarms }}</span>
+          <span class="k">최근 알람이 온 리소스</span>
+        </div>
+      {% endif %}
     </div>
+
+    {% if data.checked and data.link_counts.confirmed %}
+      <p class="muted">
+        확인됨은 <strong>그 알람이 걸려 있다</strong>는 뜻이지
+        문제가 없다는 뜻이 아닙니다. 알람이 왔다는 것은 울렸다는 것입니다.
+      </p>
+    {% endif %}
 
     <div class="filters">
       <a class="chip"
@@ -81,6 +121,25 @@
         <div class="muted">
           지표 <code>{{ g.metric }}</code> &middot; 제안 임계값 {{ g.hint }}
         </div>
+        {% if data.checked %}
+          {% if not g.metrics %}
+            <div class="muted">지표 알람이 아니라 실제 알람과 대조할 수 없습니다.</div>
+          {% elif g.confirmed == g.targets|length %}
+            <div class="acc-finding acc-info">
+              대상 {{ g.targets|length }}개 모두 이 지표로 알람이 온 적이 있습니다.
+            </div>
+          {% elif g.confirmed %}
+            <div class="acc-finding acc-warn">
+              {{ g.targets|length }}개 중 <strong>{{ g.confirmed }}개만</strong>
+              이 지표로 알람이 온 적이 있습니다. 나머지 {{ g.unsure }}개는 모릅니다.
+            </div>
+          {% else %}
+            <div class="acc-finding acc-warn">
+              대상 {{ g.targets|length }}개 중 <strong>이 지표로 알람이 온 리소스가
+              하나도 없습니다.</strong> 걸려 있는데 한 번도 안 울렸을 수도 있습니다.
+            </div>
+          {% endif %}
+        {% endif %}
         <div class="muted">{{ g.why }}</div>
         {% if g.needs %}
           <div class="acc-finding acc-warn">
@@ -90,7 +149,10 @@
         <details class="meta-fold">
           <summary class="muted">대상 리소스 {{ g.targets|length }}개</summary>
           <table class="rows">
-            <tr><th>리소스</th><th>위치</th></tr>
+            <tr>
+              <th>리소스</th><th>위치</th>
+              {% if data.checked %}<th>실제 알람</th>{% endif %}
+            </tr>
             {% for t in g.targets %}
               <tr>
                 <td>
@@ -98,6 +160,24 @@
                   <div class="muted"><code>{{ t.resource_id }}</code></div>
                 </td>
                 <td class="muted">{{ t.account_id }} / {{ t.region }}</td>
+                {% if data.checked %}
+                  <td>
+                    {% if t.state == 'confirmed' %}
+                      <span class="nz-ok">확인됨</span>
+                      <div class="muted">{{ t.state_metrics|join(', ') }}</div>
+                    {% elif t.state == 'unsure' %}
+                      <span class="nz-gap">모름</span>
+                    {% else %}
+                      <span class="muted">지표 알람 아님</span>
+                    {% endif %}
+                    {% if t.alarms %}
+                      <div class="muted">
+                        최근 알람 {{ t.alarms.count }}건
+                        {% if t.alarms.worst %}({{ t.alarms.worst }}){% endif %}
+                      </div>
+                    {% endif %}
+                  </td>
+                {% endif %}
               </tr>
             {% endfor %}
           </table>

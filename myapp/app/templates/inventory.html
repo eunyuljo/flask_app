@@ -106,13 +106,38 @@
     {% if result['items'] %}
       <table class="rows">
         <tr>
-          <th>계정 / 리전</th><th>종류</th><th>리소스</th><th>태그</th><th>속성</th>
+          <th>계정 / 리전</th><th>종류</th><th>리소스</th>
+          {% if alarms_checked %}<th>최근 알람</th>{% endif %}
+          <th>태그</th><th>속성</th>
         </tr>
         {% for r in result['items'] %}
           <tr>
             <td class="muted">{{ r.account_id }}<br>{{ r.region }}</td>
             <td>{{ r.resource_type }}</td>
             <td><code>{{ r.resource_id }}</code></td>
+            {# 이 리소스에 실제로 온 알람. 비어 있다고 '알람이 없다' 가
+               아니다 - 임계를 안 넘었을 수도, 알람 이름에 이 리소스가
+               차원으로 안 붙었을 수도 있다. 그래서 0을 찍지 않고 비운다. #}
+            {% if alarms_checked %}
+              {% set a = alarms.get(r.resource_id) %}
+              <td>
+                {% if a %}
+                  <span class="badge">{{ a.worst }}</span> {{ a.count }}건
+                  <div class="muted">{{ a.last_at.strftime('%m-%d %H:%M') }}</div>
+                  {% if a.alarms %}
+                    {# 이름을 전부 늘어놓으면 한 줄이 표를 밀어낸다.
+                       세 개까지만 보이고 나머지는 수만 알린다. #}
+                    {% set names = a.alarms.keys()|list %}
+                    <div class="muted">
+                      {{ names[:3]|join(', ') }}
+                      {%- if names|length > 3 %} 외 {{ names|length - 3 }}개{% endif %}
+                    </div>
+                  {% endif %}
+                {% else %}
+                  <span class="muted">&mdash;</span>
+                {% endif %}
+              </td>
+            {% endif %}
             <td>
               {% for k, v in (r.attributes.get('tags') or {}).items() %}
                 <div class="muted">{{ k }}={{ v }}</div>

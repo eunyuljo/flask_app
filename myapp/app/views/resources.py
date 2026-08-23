@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 from flask import Response
 
-from app import alarm_advice, compliance, graph, inventory
+from app import alarm_advice, alarm_link, compliance, graph, inventory
 from app.alarm_advice import AdviceError
 from app.compliance import ComplianceError
 from app.customer import names as customer_names, CustomerError
@@ -101,9 +101,24 @@ def inventory_page():
     except InventoryError as e:
         error = str(e)
 
+    # 이 리소스에 최근 어떤 알람이 왔나. 어댑터가 CloudWatch 차원을 읽기
+    # 전에는 물을 수 없던 질문이다.
+    #
+    # 못 읽어도 목록은 떠야 한다. 다만 '알람 0건' 으로 보이면 안 되므로
+    # 못 읽었다는 사실을 화면에 넘긴다.
+    alarms, alarms_checked = {}, False
+    if result:
+        try:
+            alarms = alarm_link.seen(
+                account_ids=[args["account_id"]] if args["account_id"] else None)
+            alarms_checked = True
+        except alarm_link.LinkError:
+            pass
+
     return render_template(
         "inventory.html",
-        error=error, result=result, facets=facets, scopes=scopes, **args,
+        error=error, result=result, facets=facets, scopes=scopes,
+        alarms=alarms, alarms_checked=alarms_checked, **args,
     )
 
 

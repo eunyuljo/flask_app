@@ -203,8 +203,24 @@ class TestRoutes:
         assert db_client.get("/resources/alarm-advice").status_code == 200
 
     def test_page_states_what_it_is_not(self, db_client):
+        """이 화면은 자기 한계를 화면에 적어야 한다.
+
+        예전에는 "실제로 걸려 있는지는 확인하지 않았습니다" 였다. 어댑터가
+        CloudWatch 차원을 읽으면서 한쪽 방향은 확인할 수 있게 됐다 -
+        알람이 왔으면 걸려 있는 것이다.
+
+        반대 방향은 여전히 못 한다. 알람이 안 왔다고 설정이 없는 것은
+        아니다(임계를 한 번도 안 넘었을 수 있다). 그 구분이 화면에 있어야 한다.
+        """
         body = db_client.get("/resources/alarm-advice").get_data(as_text=True)
-        assert "확인하지 않았습니다" in body
+        assert "모름" in body
+        assert "'없음' 이 아닙니다" in body
+
+    def test_page_never_claims_an_alarm_is_missing(self, db_client):
+        """'알람 없음' 이라고 단정하면 이 표가 거짓말을 하게 된다."""
+        body = db_client.get("/resources/alarm-advice").get_data(as_text=True)
+        assert "알람 없음" not in body
+        assert "걸려 있지 않습니다" not in body
 
     def test_excel(self, db_client, db_app):
         from app.customer import names

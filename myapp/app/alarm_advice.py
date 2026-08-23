@@ -1,18 +1,27 @@
 # app/alarm_advice.py
 # 이 리소스에는 어떤 알람을 걸어야 하는가.
 #
-# ── 무엇을 하지 않는가 ─────────────────────────────────────────────
-# 실제로 알람이 걸려 있는지는 보지 않는다. 볼 수가 없다.
+# ── 무엇을 하고 무엇을 안 하는가 ───────────────────────────────────
+# 이 표가 하는 말은 "이런 알람을 걸어야 합니다" 다.
+#
+# 오랫동안 걸려 있는지는 아예 볼 수 없었다. 머리말에 이렇게 적혀 있었다.
 #   * CloudWatch 알람 설정을 수집하지 않는다(수집기는 리소스만 훑는다)
 #   * 들어온 이벤트에 리소스 id 가 없다(정규화기가 dimension 을 안 읽는다)
 #   * 무엇보다 실제 알람은 모니터링 서버 쪽에 있다
 #
-# 그래서 "이 인스턴스에 CPU 알람이 없다" 는 말을 하지 않는다. 최근에
-# 알람이 안 왔다는 것으로 유추할 수도 있지만, 그건 SLA 에서 '계정을
-# 들여다본 것' 과 '알람에 대응한 것' 을 구분하지 못했던 실수와 같다.
+# 두 번째가 사라졌다. 어댑터가 CloudWatch 차원을 읽으면서 이벤트에
+# 리소스 id 가 생겼다. 그래서 이제 한쪽 방향은 말할 수 있다.
 #
-# 이 표가 하는 말은 하나다. "이런 알람을 걸어야 합니다."
-# 걸려 있는지는 모니터링 담당이 이 표를 들고 확인할 일이다.
+#   이 지표로 알람이 실제로 왔다  ->  그 알람은 걸려 있다.  (사실)
+#   이 지표로 알람이 안 왔다      ->  아무 말도 못 한다.
+#                                     설정이 없어서일 수도, 임계를 한 번도
+#                                     안 넘어서일 수도 있다.
+#
+# 그래서 여전히 "이 인스턴스에 CPU 알람이 없다" 는 말은 하지 않는다.
+# 판정은 app/alarm_link.py 에 있고 '없음' 대신 '모름' 을 쓴다.
+#
+# 아래 각 규칙의 metrics 가 그 연결 고리다. 비어 있으면 지표 알람이
+# 아니라서 이 방법으로는 확인할 수 없다는 뜻이다.
 #
 # ── 일반론이 아니라 이 리소스에 대한 것 ────────────────────────────
 # "EC2 에는 CPU 알람을 거세요" 는 검색하면 나온다. 여기가 값어치가
@@ -51,6 +60,11 @@ def _running(item):
 RULES = [
     {
         "id": "ec2-status-check",
+        # 이 규칙이 걸려 있으면 들어올 지표 이름. 실제로 온 알람과
+        # 맞춰 보는 데 쓴다(app/alarm_link.py). 비어 있으면 지표
+        # 알람이 아니라서 이 방법으로는 확인할 수 없다.
+        "metrics": ("StatusCheckFailed", "StatusCheckFailed_Instance",
+                    "StatusCheckFailed_System"),
         "type": "ec2:instance",
         "level": "essential",
         "label": "인스턴스 상태 확인 실패",
@@ -63,6 +77,10 @@ RULES = [
     },
     {
         "id": "ec2-cpu-credit",
+        # 이 규칙이 걸려 있으면 들어올 지표 이름. 실제로 온 알람과
+        # 맞춰 보는 데 쓴다(app/alarm_link.py). 비어 있으면 지표
+        # 알람이 아니라서 이 방법으로는 확인할 수 없다.
+        "metrics": ("CPUCreditBalance",),
         "type": "ec2:instance",
         "level": "essential",
         "label": "CPU 크레딧 소진",
@@ -77,6 +95,10 @@ RULES = [
     },
     {
         "id": "ec2-cpu",
+        # 이 규칙이 걸려 있으면 들어올 지표 이름. 실제로 온 알람과
+        # 맞춰 보는 데 쓴다(app/alarm_link.py). 비어 있으면 지표
+        # 알람이 아니라서 이 방법으로는 확인할 수 없다.
+        "metrics": ("CPUUtilization",),
         "type": "ec2:instance",
         "level": "recommended",
         "label": "CPU 사용률 과다",
@@ -89,6 +111,10 @@ RULES = [
     },
     {
         "id": "ec2-disk-memory",
+        # 이 규칙이 걸려 있으면 들어올 지표 이름. 실제로 온 알람과
+        # 맞춰 보는 데 쓴다(app/alarm_link.py). 비어 있으면 지표
+        # 알람이 아니라서 이 방법으로는 확인할 수 없다.
+        "metrics": ("disk_used_percent", "mem_used_percent"),
         "type": "ec2:instance",
         "level": "recommended",
         "label": "디스크·메모리 사용률",
@@ -101,6 +127,10 @@ RULES = [
     },
     {
         "id": "ec2-network-spike",
+        # 이 규칙이 걸려 있으면 들어올 지표 이름. 실제로 온 알람과
+        # 맞춰 보는 데 쓴다(app/alarm_link.py). 비어 있으면 지표
+        # 알람이 아니라서 이 방법으로는 확인할 수 없다.
+        "metrics": ("NetworkIn",),
         "type": "ec2:instance",
         "level": "recommended",
         "label": "인바운드 트래픽 급증",
@@ -113,6 +143,10 @@ RULES = [
     },
     {
         "id": "ec2-role-misuse",
+        # 이 규칙이 걸려 있으면 들어올 지표 이름. 실제로 온 알람과
+        # 맞춰 보는 데 쓴다(app/alarm_link.py). 비어 있으면 지표
+        # 알람이 아니라서 이 방법으로는 확인할 수 없다.
+        "metrics": (),
         "type": "ec2:instance",
         "level": "recommended",
         "label": "인스턴스 역할 자격증명 외부 사용",
@@ -125,6 +159,10 @@ RULES = [
     },
     {
         "id": "s3-delete-burst",
+        # 이 규칙이 걸려 있으면 들어올 지표 이름. 실제로 온 알람과
+        # 맞춰 보는 데 쓴다(app/alarm_link.py). 비어 있으면 지표
+        # 알람이 아니라서 이 방법으로는 확인할 수 없다.
+        "metrics": (),
         "type": "s3:bucket",
         "level": "recommended",
         "label": "객체 대량 삭제",
@@ -137,6 +175,10 @@ RULES = [
     },
     {
         "id": "s3-errors",
+        # 이 규칙이 걸려 있으면 들어올 지표 이름. 실제로 온 알람과
+        # 맞춰 보는 데 쓴다(app/alarm_link.py). 비어 있으면 지표
+        # 알람이 아니라서 이 방법으로는 확인할 수 없다.
+        "metrics": ("4xxErrors", "5xxErrors"),
         "type": "s3:bucket",
         "level": "optional",
         "label": "요청 오류율",
@@ -203,12 +245,26 @@ def advise(snap):
 
 def by_rule(rows):
     """규칙별로 묶는다. 모니터링 담당에게는 이쪽이 일하기 편하다 -
-    '크레딧 알람 걸 인스턴스 12대' 로 한 번에 처리한다."""
+    '크레딧 알람 걸 인스턴스 12대' 로 한 번에 처리한다.
+
+    대조를 마친 목록(alarm_link.confirm)을 넣으면 대상마다 판정이 함께
+    실린다. 대조 전 목록을 넣어도 그대로 동작한다 - state 가 없을 뿐이다.
+    """
     groups = []
     for rule in RULES:
-        targets = [r for r in rows if any(x["id"] == rule["id"] for x in r["rules"])]
+        targets = []
+        for row in rows:
+            hit = next((x for x in row["rules"] if x["id"] == rule["id"]), None)
+            if hit is None:
+                continue
+            targets.append({**row, "state": hit.get("state"),
+                            "state_metrics": hit.get("state_metrics") or []})
         if targets:
-            groups.append({**rule, "targets": targets})
+            confirmed = len([t for t in targets if t["state"] == "confirmed"])
+            groups.append({**rule, "targets": targets,
+                           "confirmed": confirmed,
+                           "unsure": len([t for t in targets
+                                          if t["state"] == "unsure"])})
     groups.sort(key=lambda g: (LEVEL_ORDER.index(g["level"]), -len(g["targets"])))
     return groups
 
@@ -285,12 +341,33 @@ def for_customer(customer):
 
     rows.sort(key=lambda r: (r["type"], r["account_id"], r["region"],
                              r["name"], r["resource_id"]))
+
+    # 실제로 온 알람과 대조한다. 여기가 이 표를 '권고' 에서 '점검' 으로
+    # 옮기는 자리다 - 다만 한쪽 방향만이다(alarm_link 머리말 참고).
+    #
+    # 대조에 실패하면 판정을 아예 붙이지 않는다. 전부 '모름' 으로 채우면
+    # "확인했는데 근거가 없다" 와 "확인 자체를 못 했다" 가 섞인다.
+    from app import alarm_link
+
+    checked, check_error, link_counts = False, "", None
+    try:
+        evidence = alarm_link.seen(account_ids=accounts)
+        rows = alarm_link.confirm(rows, evidence)
+        link_counts = alarm_link.summarize(rows)
+        checked = True
+    except alarm_link.LinkError as e:
+        check_error = str(e)
+
     return {
         "customer": customer,
         "rows": rows,
         "groups": by_rule(rows),
         "counts": summarize(rows),
         "snapshots": snapshots,
+        # 실제 알람과 대조했는가. 안 했으면 화면이 그 사실을 말해야 한다.
+        "checked": checked,
+        "check_error": check_error,
+        "link_counts": link_counts,
         # 수집기가 훑기로 한 것 중 이번에 안 담긴 종류.
         "missing_types": sorted(set(COLLECTED_TYPES) - collected),
     }
