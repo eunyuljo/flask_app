@@ -921,6 +921,19 @@ table.sla-table td { padding: 8px 12px 8px 0; white-space: nowrap; }
 /* 상태를 색으로만 구분하지 않는다. 배지에 글자가 함께 있어서
    색을 구분하지 못해도 읽을 수 있다. */
 .event.rd-ok      { border-left-color: var(--sev-info); }
+/* 계정 접속 화면의 지적 사항. 카드 안에 여러 건이 쌓일 수 있어서
+   왼쪽 띠로만 등급을 구분한다 - 배경까지 칠하면 카드가 벽이 된다. */
+.acc-finding {
+  margin-top: 8px;
+  padding: 7px 11px;
+  border-left: 3px solid var(--border);
+  background: var(--surface);
+  border-radius: 0 4px 4px 0;
+}
+.acc-danger { border-left-color: var(--sev-critical); }
+.acc-warn   { border-left-color: var(--sev-warning); }
+.acc-info   { border-left-color: var(--sev-info); }
+
 .event.rd-warn    { border-left-color: var(--sev-warning); }
 .event.rd-missing { border-left-color: var(--sev-critical); }
 .event.rd-unknown { border-left-color: var(--border); }

@@ -1,0 +1,120 @@
+{# templates/customer_access.html
+   customer 블루프린트의 access_page() 가 렌더링하는 계정 접속 위생. #}
+
+{% extends "base.html" %}
+
+{% block title %}계정 접속{% endblock %}
+{% block page_title %}계정 접속{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    고객사 계정에 <strong>우리가 들어갈 수 있는가</strong>, 그리고
+    <strong>들어가는 방식이 안전한가</strong>를 봅니다.
+    설정 점검은 이 화면을 열 때마다 다시 계산하고, 실제 확인은
+    누를 때만 합니다 — AssumeRole 은 고객사 CloudTrail 에 남는 행위입니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% set trouble = rows | selectattr('worst', 'equalto', 'danger') | list %}
+  {% if rows %}
+    <div class="kpis">
+      <div class="kpi">
+        <span class="n">{{ rows|length }}</span>
+        <span class="k">등록된 계정</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ trouble|length }}</span>
+        <span class="k">위험</span>
+      </div>
+      <div class="kpi">
+        <span class="n">{{ rows | rejectattr('worst') | list | length }}</span>
+        <span class="k">문제 없음</span>
+      </div>
+    </div>
+  {% else %}
+    <p class="muted">
+      등록된 계정이 없습니다.
+      <code>flask --app run add-account ...</code> 로 먼저 등록하세요.
+    </p>
+  {% endif %}
+
+  {% for row in rows %}
+    <div class="event {% if row.worst == 'danger' %}sev-error
+                      {% elif row.worst == 'warn' %}sev-warning{% endif %}">
+      <div class="event-head">
+        <span class="badge">
+          {% if row.worst %}{{ level_label.get(row.worst, row.worst) }}
+          {% else %}정상{% endif %}
+        </span>
+        <strong>{{ row.account.customer }}</strong>
+        <span class="muted">
+          <code>{{ row.account.account_id }}</code>
+          {% if row.account.alias %} &middot; {{ row.account.alias }}{% endif %}
+          {% if not row.account.enabled %} &middot; 비활성{% endif %}
+        </span>
+      </div>
+
+      {# 접속 방식. 값 자체는 절대 찍지 않는다 - ExternalId 는 비밀이다.
+         있는지 없는지만 말한다. #}
+      <div class="muted">
+        역할 {% if row.account.role_arn %}<code>{{ row.account.role_arn }}</code>
+             {% else %}없음(데모){% endif %}
+        &middot; ExternalId {% if row.account.external_id %}설정됨{% else %}없음{% endif %}
+      </div>
+
+      {% for f in row.findings %}
+        <div class="acc-finding acc-{{ f.level }}">
+          <strong>{{ level_label.get(f.level, f.level) }} — {{ f.title }}</strong>
+          <div class="muted">{{ f.detail }}</div>
+        </div>
+      {% endfor %}
+
+      {% if not row.regions %}
+        <div class="muted">허용 리전이 없어 확인할 대상이 없습니다.</div>
+      {% else %}
+        <table class="rows">
+          <tr><th>리전</th><th>마지막 확인</th><th></th></tr>
+          {% for r in row.regions %}
+            <tr>
+              <td><code>{{ r.region }}</code></td>
+              <td>
+                {% if not r.probe %}
+                  <span class="muted">확인한 적 없음</span>
+                {% elif r.probe.ok %}
+                  성공 &middot; {{ r.probe.at.strftime('%Y-%m-%d %H:%M') }}
+                  <span class="muted">({{ r.probe.probed_by or '누군가' }})</span>
+                {% else %}
+                  <strong>실패</strong> &middot; {{ r.probe.at.strftime('%Y-%m-%d %H:%M') }}
+                  <div class="muted">{{ r.probe.detail }}</div>
+                {% endif %}
+              </td>
+              <td>
+                {% if session.get('role') == 'admin' %}
+                  <form action="{{ url_for('customer.access_probe') }}"
+                        method="post" class="form inline">
+                    <input type="hidden" name="account_id"
+                           value="{{ row.account.account_id }}">
+                    <input type="hidden" name="region" value="{{ r.region }}">
+                    <button type="submit">지금 확인</button>
+                  </form>
+                {% else %}
+                  <span class="muted">관리자만</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </table>
+      {% endif %}
+    </div>
+  {% endfor %}
+
+  {% if rows %}
+    <p class="muted">
+      마지막 확인이 {{ stale_days }}일보다 오래되면 '오래됨' 으로 봅니다.
+      자격증명이 아니라 고객사 쪽 신뢰 정책이 바뀌는 주기를 생각한 값입니다.
+    </p>
+  {% endif %}
+{% endblock %}

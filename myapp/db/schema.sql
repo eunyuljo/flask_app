@@ -115,6 +115,38 @@ CREATE TABLE IF NOT EXISTS aws_accounts (
 
 CREATE INDEX IF NOT EXISTS idx_accounts_customer ON aws_accounts (customer, account_id);
 
+-- ======================================================================
+-- 계정 접속 확인 기록
+-- ----------------------------------------------------------------------
+-- MSP 는 고객사 계정에 AssumeRole 로 들어간다. 그 접점이 살아 있는지를
+-- 아무도 안 보고 있었다. 계약이 끝난 계정에 우리 역할이 남아 있으면
+-- 그건 사고고, 반대로 죽어 있으면 장애 때 못 들어간다. 둘 다 평소에는
+-- 아무 증상이 없다가 가장 나쁜 때 드러난다.
+--
+-- ── 추론하지 않는다 ──────────────────────────────────────────────
+-- audit_log 의 마지막 기록으로 "최근에 들어갔다" 를 유추할 수도 있다.
+-- 하지만 거기에는 역할을 안 쓰는 행동(보고서 확정 등)도 섞여 있어서,
+-- 그걸 접속 가능 증거로 쓰면 SLA 에서 '계정을 들여다본 것' 과
+-- '알람에 대응한 것' 을 구분 못 했던 것과 같은 실수가 된다.
+-- 실제로 AssumeRole 을 시도한 결과만 여기 남는다.
+--
+-- ── 최신 한 줄만 남긴다 ──────────────────────────────────────────
+-- 알고 싶은 것은 "지금 들어갈 수 있나" 하나다. alarm_state, sla_notices
+-- 와 같은 판단이다. 이력이 필요해지면 그때 쌓는 표를 따로 만든다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS account_probes (
+    account_id  TEXT        NOT NULL,
+    region      TEXT        NOT NULL,
+
+    at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ok          BOOLEAN     NOT NULL,
+    detail      TEXT        NOT NULL DEFAULT '',
+    probed_by   TEXT        NOT NULL DEFAULT '',
+
+    PRIMARY KEY (account_id, region)
+);
+
 -- 스냅샷을 계정/리전으로 찾을 일이 많아진다.
 CREATE INDEX IF NOT EXISTS idx_snapshots_scope
     ON resource_snapshots (account_id, region, snapshot_id DESC);

@@ -68,6 +68,9 @@ ITEMS = [
     {"endpoint": "customer.readiness_page", "label": "온보딩 준비도", "icon": "◎",
      "category": "customer", "match": ("customer.readiness",),
      "hint": "이 고객사를 받을 준비가 됐는가"},
+    {"endpoint": "customer.access_page", "label": "계정 접속", "icon": "⚿",
+     "category": "customer", "match": ("customer.access",),
+     "hint": "고객사 계정에 들어갈 수 있는가"},
 
     # ---- 알람 ----
     {"endpoint": "dashboard.index", "label": "대시보드", "icon": "▤",

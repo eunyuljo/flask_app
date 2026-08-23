@@ -6,7 +6,9 @@ from flask import (
     Blueprint, render_template, request, redirect, url_for, session, flash
 )
 
-from app import customer, readiness
+from app import access, audit, customer, readiness
+from app.access import AccessError
+from app.accounts import list_accounts, get_account, AccountError
 from app.customer import CustomerError
 from app.readiness import ReadinessError
 
@@ -81,3 +83,67 @@ def readiness_page():
         levels=readiness.LEVELS, labels=readiness.STATUS_LABEL,
         endpoint_labels=readiness.ENDPOINT_LABELS,
     )
+
+
+# 최종 URL: /customer/access
+@customer_bp.route("/access")
+def access_page():
+    """고객사 계정에 우리가 들어갈 수 있는가, 들어가는 방식이 안전한가."""
+    error, rows = None, []
+    try:
+        # 비활성 계정도 본다. 계약이 끝나 꺼둔 계정에 우리 역할이 아직
+        # 살아 있는지가 여기서 봐야 할 것 중 하나다.
+        rows = access.overview(list_accounts(enabled_only=False))
+    except AccountError as e:
+        error = str(e)
+
+    return render_template(
+        "customer_access.html",
+        rows=rows, error=error,
+        level_label=access.LEVEL_LABEL,
+        stale_days=access.STALE_DAYS,
+    )
+
+
+# 최종 URL: /customer/access/probe
+@customer_bp.route("/access/probe", methods=["POST"])
+def access_probe():
+    """이 계정에 실제로 들어가 본다.
+
+    관리자만 누를 수 있다. AssumeRole 은 고객사 CloudTrail 에 남는 행위라,
+    누가 언제 했는지 우리 쪽에도 남아야 한다.
+    """
+    from app import users
+
+    if not users.can(session.get("role"), "admin"):
+        flash("계정 접속 확인은 관리자만 할 수 있습니다.", "error")
+        return redirect(url_for("customer.access_page"))
+
+    account_id = request.form.get("account_id", "")
+    region = request.form.get("region", "")
+
+    try:
+        account = get_account(account_id)
+    except AccountError as e:
+        flash(str(e), "error")
+        return redirect(url_for("customer.access_page"))
+
+    if account is None:
+        flash(f"등록되지 않은 계정입니다: {account_id}", "error")
+        return redirect(url_for("customer.access_page"))
+
+    try:
+        ok, detail = access.probe(account, region, session.get("username", ""))
+    except AccessError as e:
+        flash(str(e), "error")
+        return redirect(url_for("customer.access_page"))
+
+    # 고객사 계정을 건드린 기록. 콘솔·진단과 같은 자리에 남긴다.
+    audit.record(
+        action="account_probe", outcome="ok" if ok else "failed",
+        account=account, region=region,
+        summary=f"계정 접속 확인: {account_id} / {region}", detail=detail,
+    )
+
+    flash(f"{account_id} / {region}: {detail}", "success" if ok else "error")
+    return redirect(url_for("customer.access_page"))
