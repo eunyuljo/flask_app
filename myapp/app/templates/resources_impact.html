@@ -1,0 +1,133 @@
+{# templates/resources_impact.html
+   resources 블루프린트의 impact_page() 가 렌더링하는 영향 범위. #}
+
+{% extends "base.html" %}
+
+{% block title %}영향 범위{% endblock %}
+{% block page_title %}영향 범위{% endblock %}
+
+{% block content %}
+  <p class="muted">
+    <strong>이 리소스를 건드리면 무엇이 딸려 오나</strong>를 봅니다.
+    작업 승인 직전에 실제로 하는 질문입니다.
+    '의존 관계도'라고 부르지 않는 이유는 아래에 적었습니다.
+  </p>
+
+  {% if error %}
+    <div class="flash error">{{ error }}</div>
+  {% endif %}
+
+  {% if snapshots %}
+    <form method="get" class="wo-form">
+      <div class="row-2">
+        <label>
+          스냅샷
+          <select name="snapshot_id" onchange="this.form.submit()">
+            {% for s in snapshots %}
+              <option value="{{ s.snapshot_id }}"
+                      {% if s.snapshot_id == selected_snapshot %}selected{% endif %}>
+                {{ s.account_id }} / {{ s.region }} —
+                {{ s.collected_at.strftime('%Y-%m-%d %H:%M') }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          리소스
+          <select name="resource_id" onchange="this.form.submit()">
+            <option value="">고르세요</option>
+            {% for n in choices %}
+              <option value="{{ n.resource_id }}"
+                      {% if n.resource_id == target %}selected{% endif %}>
+                {{ n.name }} ({{ n.resource_id }}) — {{ n.type }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+    </form>
+  {% endif %}
+
+  {% if snapshots and not choices %}
+    <p class="muted">
+      이 스냅샷에는 이어진 리소스가 없습니다. 관계가 없어서가 아니라
+      수집 시점에 관계 정보를 담지 않았기 때문일 수 있습니다.
+    </p>
+  {% endif %}
+
+  {% if result and not result.found %}
+    <p class="muted">이 스냅샷에 없는 리소스입니다.</p>
+  {% endif %}
+
+  {% if result and result.found %}
+    <h2>
+      <code>{{ result.target }}</code>
+      {% if result.target_name != result.target %}({{ result.target_name }}){% endif %}
+      를 고치면
+    </h2>
+
+    {% if not result.levels %}
+      <p class="muted">
+        이 스냅샷에서 이 리소스에 기대는 것을 찾지 못했습니다.
+        <strong>영향이 없다는 뜻은 아닙니다</strong> — 아래 '볼 수 없는 것'을
+        함께 보세요.
+      </p>
+    {% else %}
+      <p class="muted">모두 {{ result.total }}건이 영향을 받습니다.</p>
+      {% for level in result.levels %}
+        <div class="event {% if loop.first %}sev-error{% else %}sev-warning{% endif %}">
+          <div class="event-head">
+            <span class="badge">{{ loop.index }}단계</span>
+            <strong>{{ level|length }}건</strong>
+            <span class="muted">
+              {% if loop.first %}직접 기대고 있는 것
+              {% else %}그것에 다시 기대고 있는 것{% endif %}
+            </span>
+          </div>
+          <table class="rows">
+            <tr><th>리소스</th><th>어떻게 이어지나</th></tr>
+            {% for item in level %}
+              <tr>
+                <td>
+                  <strong>{{ item.name }}</strong>
+                  <div class="muted"><code>{{ item.resource_id }}</code> · {{ item.type }}</div>
+                </td>
+                <td>
+                  {{ item.via_name }} 를(을) {{ item.label }}
+                  <div class="muted"><code>{{ item.via }}</code></div>
+                </td>
+              </tr>
+            {% endfor %}
+          </table>
+        </div>
+      {% endfor %}
+    {% endif %}
+  {% endif %}
+
+  {% if islands %}
+    <hr>
+    <h2>관계를 못 본 리소스 <span class="muted">({{ islands|length }}건)</span></h2>
+    <p class="muted">
+      간선이 하나도 붙지 않은 것들입니다.
+      <strong>연결이 없는 것이 아니라 우리가 그 관계를 수집하지 않은 것</strong>입니다.
+      예를 들어 S3 버킷은 누가 읽고 쓰는지를 수집하지 않아서 언제나 여기 있습니다.
+    </p>
+    <table class="rows">
+      <tr><th>리소스</th><th>종류</th></tr>
+      {% for i in islands %}
+        <tr><td>{{ i.name }} <code>{{ i.resource_id }}</code></td><td>{{ i.type }}</td></tr>
+      {% endfor %}
+    </table>
+  {% endif %}
+
+  <hr>
+  <h2>볼 수 없는 것</h2>
+  <p class="muted">
+    목록이 짧은 것을 '의존이 없다'로 읽으면 안 됩니다.
+    지금 수집기는 EC2 인스턴스·보안그룹·S3 버킷 셋만 훑습니다.
+    아래는 <strong>이 화면이 원리적으로 답할 수 없는</strong> 관계입니다.
+  </p>
+  <ul>
+    {% for b in blind %}<li>{{ b }}</li>{% endfor %}
+  </ul>
+{% endblock %}

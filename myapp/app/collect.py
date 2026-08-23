@@ -44,10 +44,14 @@ def _baseline(account_id):
                         "imds_endpoint": "enabled", "iam_profile": "web-role"}},
         {"resource_id": "sg-web", "resource_type": "ec2:security_group",
          "attributes": {"name": "web-sg", "vpc": "vpc-0aaa",
-                        "ingress": ["443/tcp:0.0.0.0/0", "22/tcp:10.0.0.0/8"]}},
+                        "ingress": ["443/tcp:0.0.0.0/0", "22/tcp:10.0.0.0/8"],
+                        "ingress_groups": []}},
         {"resource_id": "sg-db", "resource_type": "ec2:security_group",
+         # db-sg 는 web-sg 에서 오는 것만 받는다. 실제 구성에서 가장 흔한
+         # 모양이고, 영향 범위 화면이 보여줘야 하는 것이 바로 이 관계다.
          "attributes": {"name": "db-sg", "vpc": "vpc-0aaa",
-                        "ingress": ["5432/tcp:10.0.1.0/24"]}},
+                        "ingress": ["5432/tcp:10.0.1.0/24"],
+                        "ingress_groups": ["sg-web"]}},
         {"resource_id": f"{account_id}-assets", "resource_type": "s3:bucket",
          "attributes": {"public_access_blocked": True, "versioning": "Enabled",
                         "encryption": "AES256"}},
@@ -229,6 +233,20 @@ def aws_resources(region, env=None):
                             for p in sg.get("IpPermissions", [])
                             for r in p.get("IpRanges", [])
                         ],
+                        # 다른 보안그룹을 출처로 지정한 규칙. 응답에 이미
+                        # 들어 있어서 API 를 한 번도 더 부르지 않는다
+                        # (IMDSv2 때와 같은 자리다).
+                        #
+                        # 이 값을 버리고 있었다. EC2 네트워크에서 가장
+                        # 흔한 의존 관계가 'web-sg 에서 오는 것만 허용'
+                        # 인데, 그게 CidrIp 가 아니라 UserIdGroupPairs 에
+                        # 들어 있어서 통째로 사라졌다.
+                        "ingress_groups": sorted({
+                            g.get("GroupId")
+                            for p in sg.get("IpPermissions", [])
+                            for g in p.get("UserIdGroupPairs", [])
+                            if g.get("GroupId")
+                        }),
                     },
                 })
 

@@ -10,7 +10,8 @@ from urllib.parse import quote
 
 from flask import Response
 
-from app import inventory
+from app import compliance, graph, inventory
+from app.compliance import ComplianceError
 from app.inventory import InventoryError
 from app.resources import diff, list_snapshots, psycopg_uri, ResourceError
 
@@ -131,4 +132,47 @@ def inventory_download():
         buf.getvalue(),
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": disposition},
+    )
+
+
+# 최종 URL: /resources/impact
+@resources_bp.route("/impact")
+def impact_page():
+    """이 리소스를 건드리면 무엇이 딸려 오나.
+
+    '의존 관계도' 라고 부르지 않는다. 지금 수집기가 훑는 것은 세 종류뿐이고,
+    그걸로 전체 관계도를 그렸다고 하면 화면에 안 보이는 것을 없는 것으로
+    읽게 된다. 물음을 좁히는 대신 그 물음에는 정확히 답한다.
+    """
+    error, snap, snapshots = None, None, []
+    selected_snapshot = request.args.get("snapshot_id", type=int)
+    target = request.args.get("resource_id", "")
+
+    try:
+        snapshots = compliance.latest_snapshots(limit=50)
+    except ComplianceError as e:
+        error = str(e)
+
+    if snapshots and not selected_snapshot:
+        selected_snapshot = snapshots[0]["snapshot_id"]
+
+    if selected_snapshot and not error:
+        try:
+            with compliance._connect() as conn, conn.cursor() as cur:
+                snap = compliance.load_snapshot(cur, selected_snapshot)
+        except Exception as e:                   # noqa: BLE001
+            error = f"스냅샷을 읽지 못했습니다: {e}"
+
+    result, choices, islands = None, [], []
+    if snap is not None:
+        choices = graph.nodes(snap)
+        islands = graph.islands(snap)
+        if target:
+            result = graph.impact(snap, target)
+
+    return render_template(
+        "resources_impact.html",
+        snapshots=snapshots, selected_snapshot=selected_snapshot,
+        choices=choices, islands=islands, target=target,
+        result=result, blind=graph.BLIND, error=error,
     )

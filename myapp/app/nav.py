@@ -96,6 +96,9 @@ ITEMS = [
     {"endpoint": "resources.index", "label": "리소스 변경", "icon": "▩",
      "category": "infra", "match": ("resources.",),
      "hint": "두 시점의 인프라 차이"},
+    {"endpoint": "resources.impact_page", "label": "영향 범위", "icon": "⇄",
+     "category": "infra", "match": ("resources.impact",),
+     "hint": "이걸 건드리면 무엇이 딸려 오나"},
     {"endpoint": "compliance.index", "label": "컴플라이언스", "icon": "✓",
      "category": "infra", "hint": "스냅샷 기준 모범사례 점검"},
 
