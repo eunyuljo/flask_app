@@ -6,8 +6,9 @@ from flask import (
     Blueprint, render_template, request, redirect, url_for, session, flash
 )
 
-from app import access, audit, customer, readiness, routines
+from app import access, audit, contacts, customer, readiness, routines
 from app.access import AccessError
+from app.contacts import ContactError
 from app.accounts import list_accounts, get_account, AccountError
 from app.customer import CustomerError
 from app.readiness import ReadinessError
@@ -47,9 +48,20 @@ def index():
         except CustomerError as e:
             error = str(e)
 
+    # 연락처는 이 화면에 붙인다. 새 메뉴를 만들지 않은 이유는 축이
+    # 같아서다 - 여기가 이미 "고객사 하나를 놓고 보는" 자리다.
+    # 못 읽어도 나머지 현황은 보여야 한다.
+    people = []
+    if selected:
+        try:
+            people = contacts.listing(selected)
+        except ContactError:
+            people = []
+
     return render_template(
         "customer.html",
         names=all_names, selected=selected, data=data, error=error,
+        contacts=people, contact_kinds=contacts.KINDS,
     )
 
 
@@ -242,3 +254,35 @@ def settings_page():
         level_label=readiness.LEVELS,
         endpoint_labels=readiness.ENDPOINT_LABELS,
     )
+
+
+# 최종 URL: /customer/contacts/add
+@customer_bp.route("/contacts/add", methods=["POST"])
+def contacts_add():
+    """고객사 연락처를 등록한다."""
+    name = request.form.get("customer", "")
+    try:
+        contacts.add(
+            customer=name,
+            name=request.form.get("name", ""),
+            kind=request.form.get("kind", ""),
+            email=request.form.get("email", ""),
+            phone=request.form.get("phone", ""),
+            note=request.form.get("note", ""),
+        )
+        flash("연락처를 등록했습니다.", "success")
+    except ContactError as e:
+        flash(str(e), "error")
+    return redirect(url_for("customer.index", name=name))
+
+
+# 최종 URL: /customer/contacts/<번호>/active
+@customer_bp.route("/contacts/<int:contact_id>/active", methods=["POST"])
+def contacts_active(contact_id):
+    """연락처를 내리거나 되살린다. 지우지는 않는다."""
+    try:
+        contacts.set_active(contact_id, request.form.get("active") == "1")
+        flash("연락처를 갱신했습니다.", "success")
+    except ContactError as e:
+        flash(str(e), "error")
+    return redirect(request.referrer or url_for("customer.index"))

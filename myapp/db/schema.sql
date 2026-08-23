@@ -345,6 +345,55 @@ CREATE INDEX IF NOT EXISTS idx_routine_runs_routine
     ON routine_runs (routine_id, done_at DESC);
 
 -- ======================================================================
+-- 고객사 연락처
+-- ----------------------------------------------------------------------
+-- 이 도구는 고객사에 대해 계정과 알람은 알지만, 정작 "누구에게 말하나" 는
+-- 몰랐다. 새벽에 장애가 나면 사람이 사내 위키나 카톡방을 뒤진다.
+--
+-- oncall_members 와 다르다. 저쪽은 우리 쪽 당직자(호출받는 사람)이고
+-- 여기는 고객사 쪽 사람(우리가 연락하는 사람)이다. 방향이 반대다.
+--
+-- ── 개인정보다 ──────────────────────────────────────────────────
+-- 이름·이메일·전화번호가 들어간다. 그래서 리포트(엑셀/PPT)에 절대
+-- 싣지 않는다. 고객사에 나가는 산출물에 그 고객사 담당자 연락처를
+-- 넣을 이유가 없고, 우리 쪽 자료에 섞이면 통제 범위를 벗어난다.
+-- 학습용이라 평문으로 두지만, 실제 서비스라면 접근 권한을 따로 나눠야
+-- 한다(지금은 로그인한 사람이면 모두 본다).
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS customer_contacts (
+    id         BIGSERIAL   PRIMARY KEY,
+
+    customer   TEXT        NOT NULL,
+    name       TEXT        NOT NULL,
+
+    --   primary   : 평소 소통하는 기술 담당
+    --   report    : 정기 보고를 받는 사람
+    --   emergency : 야간·휴일에 깨워도 되는 사람
+    --   approver  : 작업 승인 권한이 있는 사람
+    -- 한 사람이 여러 역할이면 줄을 여러 개 만든다. 역할로 찾는 일이
+    -- 대부분이라(보고 받을 사람이 누구지?) 그쪽을 편하게 둔다.
+    kind       TEXT        NOT NULL
+               CHECK (kind IN ('primary', 'report', 'emergency', 'approver')),
+
+    email      TEXT        NOT NULL DEFAULT '',
+    phone      TEXT        NOT NULL DEFAULT '',
+
+    -- '평일만' 처럼 사람이 알아야 할 것. 규칙이 아니라 메모다.
+    note       TEXT        NOT NULL DEFAULT '',
+
+    -- 퇴사·인사이동. 지우지 않는 이유는 지난 발송 기록에 남은 이름이
+    -- 누구였는지 확인할 수 있어야 하기 때문이다(users 와 같은 판단).
+    active     BOOLEAN     NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    UNIQUE (customer, name, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_contacts_customer
+    ON customer_contacts (customer, kind);
+
+-- ======================================================================
 -- 장애 (사후 보고서 / RCA)
 -- ----------------------------------------------------------------------
 -- 장애 하나에 대해 "언제 무슨 일이 있었나" 를 앱이 모아주고,

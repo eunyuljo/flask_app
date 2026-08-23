@@ -31,6 +31,8 @@ def facts(**over):
         "work_orders": 3,
         "routines": [{"name": "월간 점검", "interval_days": 30, "active": True,
                       "last_done_at": datetime.now(timezone.utc)}],
+        "contacts": [{"kind": "emergency", "name": "김운영"},
+                     {"kind": "report", "name": "박보고"}],
         "missing_tables": [],
     }
     base.update(over)

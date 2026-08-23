@@ -89,6 +89,91 @@
       </div>
     </section>
 
+    {# 연락처. 새 메뉴를 만들지 않고 여기 붙인 이유는 축이 같아서다.
+       우리 쪽 당직자(oncall_members)와는 방향이 반대인, 고객사 쪽 사람이다. #}
+    <section class="panel">
+      <div class="panel-head">
+        <h2>연락처</h2><span class="hint">고객사 쪽 담당자</span>
+      </div>
+      <div class="panel-body">
+        {% if not contacts %}
+          <p class="muted">
+            등록된 연락처가 없습니다. 새벽에 장애가 나면 누구에게 말할지
+            사람이 위키를 뒤지게 됩니다.
+          </p>
+        {% else %}
+          <table class="mini2">
+            {% for c in contacts %}
+              <tr>
+                <td class="fname">{{ contact_kinds.get(c.kind, c.kind) }}</td>
+                <td>
+                  <strong>{{ c.name }}</strong>
+                  <div class="muted">
+                    {% if c.email %}{{ c.email }}{% endif %}
+                    {% if c.email and c.phone %} &middot; {% endif %}
+                    {% if c.phone %}{{ c.phone }}{% endif %}
+                  </div>
+                  {% if c.note %}<div class="muted">{{ c.note }}</div>{% endif %}
+                </td>
+                <td>
+                  <form action="{{ url_for('customer.contacts_active', contact_id=c.id) }}"
+                        method="post" class="form inline">
+                    <input type="hidden" name="active" value="0">
+                    <button type="submit" class="linkish">내리기</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </table>
+        {% endif %}
+
+        <details class="rb-fold">
+          <summary>연락처 추가</summary>
+          <form action="{{ url_for('customer.contacts_add') }}" method="post"
+                class="wo-form">
+            <input type="hidden" name="customer" value="{{ selected }}">
+            <div class="row-2">
+              <label>
+                이름
+                <input type="text" name="name" required placeholder="예) 김운영">
+              </label>
+              <label>
+                역할
+                <select name="kind">
+                  {% for key, label in contact_kinds.items() %}
+                    <option value="{{ key }}">{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+            </div>
+            <div class="row-2">
+              <label>
+                이메일
+                <input type="email" name="email" placeholder="ops@example.com">
+              </label>
+              <label>
+                전화
+                <input type="text" name="phone" placeholder="010-0000-0000">
+              </label>
+            </div>
+            <label>
+              메모 <span class="muted">'평일만' 처럼 사람이 알아야 할 것</span>
+              <input type="text" name="note">
+            </label>
+            <p class="muted">
+              이메일과 전화 중 하나는 있어야 합니다. 연락 수단이 없는 연락처는
+              연락처가 아닙니다.
+            </p>
+            <button type="submit">추가</button>
+          </form>
+        </details>
+
+        <p class="muted">
+          개인정보라 리포트(엑셀·PPT)에는 싣지 않습니다.
+        </p>
+      </div>
+    </section>
+
     <div class="grid two">
       <section class="panel">
         <div class="panel-head">

@@ -90,6 +90,7 @@ def gather(customer):
         "runbook_gaps": [],
         "work_orders": 0,
         "routines": [],
+        "contacts": [],
         "missing_tables": [],
     }
 
@@ -100,7 +101,7 @@ def gather(customer):
             name: _has(cur, name)
             for name in ("aws_accounts", "events", "sla_targets", "oncall_members",
                          "resource_snapshots", "runbooks", "work_orders",
-                         "customer_routines")
+                         "customer_routines", "customer_contacts")
         }
         facts["missing_tables"] = sorted(n for n, ok in present.items() if not ok)
 
@@ -116,6 +117,14 @@ def gather(customer):
         )
         facts["accounts"] = _rows(cur)
         account_ids = [a["account_id"] for a in facts["accounts"]]
+
+        if present["customer_contacts"]:
+            cur.execute(
+                "SELECT kind, name FROM customer_contacts "
+                " WHERE customer = %s AND active",
+                (customer,),
+            )
+            facts["contacts"] = _rows(cur)
 
         if present["customer_routines"]:
             # 마지막 수행을 함께 붙인다. 판정(app/routines.judge)은 순수
@@ -260,6 +269,24 @@ def _check_external_id(facts):
     return "ok", f"실계정 {len(real)}개 모두 ExternalId 가 설정되어 있습니다."
 
 
+def _check_contacts(facts):
+    """이 고객사에 연락할 사람을 아는가.
+
+    긴급 연락처가 핵심이다. 나머지는 없어도 낮에 물어보면 되지만,
+    새벽 3시에는 물어볼 곳이 없다.
+    """
+    if "customer_contacts" in facts["missing_tables"]:
+        return "unknown", "customer_contacts 테이블이 없습니다."
+    if not facts["contacts"]:
+        return "missing", "등록된 연락처가 없습니다."
+
+    kinds = {c["kind"] for c in facts["contacts"]}
+    if "emergency" not in kinds:
+        return "warn", (f"연락처 {len(facts['contacts'])}건이 있지만 "
+                        "긴급 연락처가 없습니다.")
+    return "ok", f"연락처 {len(facts['contacts'])}건 (긴급 포함)."
+
+
 def _check_routines(facts):
     """약속한 주기 업무가 등록되어 있고 밀리지 않았는가."""
     from app.routines import judge
@@ -383,6 +410,7 @@ ENDPOINT_LABELS = {
     "alarm.index": "이벤트 화면",
     "report.sla": "보고 > SLA",
     "customer.access_page": "고객사 > 계정 접속",
+    "customer.index": "고객사 > 고객사 현황",
     "customer.routines_page": "고객사 > 정기 점검",
     "runbook.index": "런북 화면",
     "work.index": "작업 기록 화면",
@@ -481,6 +509,15 @@ CHECKS = [
                "'그때 무엇을 바꿨나' 에 답할 수 없습니다.",
         "how": "endpoint:work.index",
         "fn": _check_work_orders,
+    },
+    {
+        "id": "contacts",
+        "title": "고객사 연락처를 안다",
+        "level": "required",
+        "why": "장애가 났을 때 누구에게 말할지 모르면, 복구보다 연락처 "
+               "찾기에 시간이 더 걸립니다. 특히 야간에는 물어볼 곳이 없습니다.",
+        "how": "endpoint:customer.index",
+        "fn": _check_contacts,
     },
     {
         "id": "routines",
