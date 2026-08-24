@@ -75,8 +75,23 @@ body {
   background: var(--bg);
 }
 
+/* 본문 링크.
+   지금까지 a 규칙이 하나도 없어서 브라우저 기본 파랑(#0000EE)과 방문한
+   링크 보라(#551A8B)가 그대로 쓰였다. 라이트 모드에서는 그럭저럭 보였지만
+   다크 모드에서는 배경(#16181c)과 거의 구분되지 않았다.
+   --accent 는 라이트(#2563eb)/다크(#6ea8fe) 양쪽에 값이 있다.
+   사이드바 링크는 아래에서 자기 색을 따로 정하므로 영향받지 않는다. */
+a, a:visited { color: var(--accent); }
+
 /* 사이드바 + 본문 2단. 사이드바 폭은 고정, 본문이 남는 폭을 전부 가져간다. */
-.shell { display: grid; grid-template-columns: 216px 1fr; min-height: 100vh; }
+.shell {
+  display: grid; grid-template-columns: 216px 1fr; min-height: 100vh;
+  /* 사이드바는 sticky 라 요소 자체가 딱 한 화면 높이다(height: 100vh).
+     페이지가 그보다 길면 그 아래 왼쪽 칸이 비고, body 배경이 그대로
+     드러난다 - 라이트 모드에서 아래쪽만 하얗게 보이던 것이 이것이다.
+     왼쪽 띠를 여기서 칠하고, 오른쪽은 .main 이 덮는다. */
+  background: var(--sidebar);
+}
 
 /* ---------- 사이드바 ---------- */
 .sidebar {
@@ -105,7 +120,15 @@ body {
   font-size: .68rem; text-transform: uppercase; letter-spacing: .08em;
   color: #5f6a7a; padding: 14px 9px 5px;
 }
-.side-nav { display: flex; flex-direction: column; gap: 1px; flex: 1; }
+.side-nav {
+  display: flex; flex-direction: column; gap: 1px; flex: 1;
+  /* 메뉴 26개 + 분류 7줄이면 1200px 가까이 된다. 창이 그보다 낮으면
+     아래쪽 항목(관리자·운영 상태)에 닿을 수가 없었다 - 사이드바가
+     height: 100vh 인데 넘치는 내용이 그냥 밖으로 흘렀다.
+     min-height: 0 이 있어야 flex 항목이 내용보다 작아질 수 있고,
+     그래야 여기서 스크롤이 걸린다(아래 좁은 화면의 min-width: 0 과 같은 이유). */
+  min-height: 0; overflow-y: auto;
+}
 .side-nav a {
   display: flex; align-items: center; gap: 9px;
   padding: 7px 9px; border-radius: 6px;
@@ -132,7 +155,12 @@ body {
 .side-quiet:hover { background: #1e2430; color: #fff; }
 
 /* ---------- 본문 ---------- */
-.main { min-width: 0; display: flex; flex-direction: column; }
+.main {
+  min-width: 0; display: flex; flex-direction: column;
+  /* .shell 이 사이드바 색으로 깔려 있으므로 본문이 자기 배경을 덮어야 한다.
+     그리드 항목이라 기본 align-self: stretch 로 아래까지 늘어난다. */
+  background: var(--bg);
+}
 
 /* 제목줄. 스크롤해도 지금 어느 화면인지 보이도록 붙여둔다. */
 .topbar {
@@ -445,7 +473,9 @@ svg.chart g:hover .bar { filter: brightness(1.15); }
 
 @media (max-width: 860px) {
   /* 좁은 화면에서는 사이드바를 위쪽 가로줄로 접는다. */
-  .shell { grid-template-columns: 1fr; }
+  /* 사이드바가 static 이라 세로로 빌 칸이 없다. 왼쪽 띠를 칠할 이유가
+     사라지므로 되돌린다 - 안 되돌리면 본문이 짧을 때 아래가 어둡게 뜬다. */
+  .shell { grid-template-columns: 1fr; background: var(--bg); }
   /* min-width: 0 이 없으면 overflow 가 걸려도 소용이 없다.
      그리드 항목의 기본값은 min-width: auto 라서 '내용보다 작아지지 않는다'.
      그래서 사이드바가 줄어드는 대신 그리드 칸 자체가 넓어지고,
