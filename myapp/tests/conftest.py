@@ -84,3 +84,62 @@ def db_client(db_app, db_uri):
         s["username"] = "테스트관리자"
         s["role"] = "admin"
     return c
+
+# ----------------------------------------------------------------------
+# 시험용 고객사
+# ----------------------------------------------------------------------
+# customers 테이블이 생기고 12개 표에 외래키가 걸리면서, 테스트가 지어낸
+# 고객사 이름으로 자료를 넣던 것이 전부 거부되기 시작했다. 그게 이 변경의
+# 요점이라 테스트를 되돌리는 대신 이름을 실재하게 만든다.
+#
+# 새 테스트가 새 이름을 쓰면 여기에 한 줄 더한다. 목록에 없으면 FK 가
+# 거부하면서 어느 이름인지 DETAIL 로 알려주므로 찾기 쉽다.
+TEST_CUSTOMERS = (
+    "test-sla", "test-고객사", "시험가", "시험나", "시험고객", "시험대체", "시험멈춤",
+    "시험발송", "시험비밀", "시험수신", "시험연락", "시험자동", "시험창없음",
+    "시험표준",
+)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _test_customers():
+    """시험용 고객사를 등록해 두고 끝나면 지운다.
+
+    DB 가 없으면 아무것도 하지 않는다 - DB 없이 도는 테스트가 이것 때문에
+    실패하면 안 된다.
+    """
+    psycopg = pytest.importorskip("psycopg", reason="psycopg 없음")
+
+    from app import create_app
+
+    uri = create_app("development").config["SQLALCHEMY_DATABASE_URI"].replace(
+        "postgresql+psycopg://", "postgresql://"
+    )
+    try:
+        with psycopg.connect(uri, connect_timeout=3) as conn, conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.customers')")
+            if cur.fetchone()[0] is None:
+                yield
+                return
+            for name in TEST_CUSTOMERS:
+                cur.execute(
+                    "INSERT INTO customers (name, status, note) "
+                    " VALUES (%s, 'active', %s) ON CONFLICT (name) DO NOTHING",
+                    (name, "(테스트용) tests/conftest.py 가 만듭니다."),
+                )
+    except Exception:                                    # noqa: BLE001
+        yield
+        return
+
+    yield
+
+    # 자료를 남긴 테스트가 있으면 외래키가 거부한다. 그건 그 테스트가
+    # 치우지 않은 것이므로 여기서 억지로 지우지 않는다.
+    with psycopg.connect(uri) as conn:
+        for name in TEST_CUSTOMERS:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM customers WHERE name = %s", (name,))
+                conn.commit()
+            except psycopg.errors.ForeignKeyViolation:
+                conn.rollback()

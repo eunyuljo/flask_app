@@ -1174,6 +1174,52 @@ def register_cli(app):
             click.echo(f"  #{item['id']} {item['title'][:40]} -> 지문 {n}종")
         click.echo(f"\n보고서 {len(items)}건, 지문 연결 {total}개")
 
+    @app.cli.command("add-customer")
+    @click.argument("name")
+    @click.option("--status", default="onboarding",
+                  type=click.Choice(["onboarding", "active", "suspended", "ended"]),
+                  help="기본 onboarding")
+    @click.option("--started", default=None, help="운영 시작일 (YYYY-MM-DD)")
+    @click.option("--report-days", default=0, type=int,
+                  help="보고 주기(일). 30 이면 월간")
+    @click.option("--note", default="", help="메모")
+    def add_customer(name, status, started, report_days, note):
+        """고객사를 만든다. AWS 계정이 없어도 만들 수 있다.
+
+        예전에는 고객사가 aws_accounts 에서 파생돼서, 계정을 받기 전에는
+        고객사를 넣을 방법이 없었다. 온보딩에서 먼저 하는 일(연락처 받기,
+        보고 주기 정하기)이 전부 계정보다 앞인데도 그랬다.
+        """
+        from app import customer as customer_mod
+
+        try:
+            customer_mod.create(name, status=status, started_at=started,
+                                report_interval_days=report_days, note=note)
+        except customer_mod.CustomerError as e:
+            raise click.ClickException(str(e))
+        click.echo(f"등록: {name} ({customer_mod.STATUSES[status]})")
+        click.echo("  계정은 따로 붙입니다: "
+                   f"flask --app run add-account --customer {name} --account-id <12자리>")
+
+    @app.cli.command("list-customers")
+    @click.option("--all", "show_all", is_flag=True, help="종료된 고객사까지")
+    def list_customers(show_all):
+        """고객사 목록. 계정 수와 상태를 함께 본다."""
+        from app import customer as customer_mod
+
+        try:
+            rows = customer_mod.listing(include_ended=show_all)
+        except customer_mod.CustomerError as e:
+            raise click.ClickException(str(e))
+        if not rows:
+            click.echo("등록된 고객사가 없습니다.")
+            return
+        click.echo(f"{'고객사':<14}{'상태':<10}{'계정':>4}{'보고주기':>8}  메모")
+        for r in rows:
+            cycle = f"{r['report_interval_days']}일" if r["report_interval_days"] else "-"
+            click.echo(f"{r['name']:<14}{customer_mod.STATUSES[r['status']]:<10}"
+                       f"{r['accounts']:>4}{cycle:>8}  {r['note'][:40]}")
+
     @app.cli.command("add-account")
     @click.option("--customer", required=True, help="고객사 이름")
     @click.option("--account-id", required=True, help="12자리 AWS 계정 번호")
@@ -1199,6 +1245,16 @@ def register_cli(app):
                 regions=region_list, enabled=not disabled,
             )
         except Exception as e:
+            # 이제 aws_accounts.customer 에 외래키가 걸려 있다. 없는 고객사면
+            # 여기서 걸리는데, 원본 메시지는 제약 이름만 알려줘서 무엇을
+            # 해야 하는지 알 수 없다.
+            if type(e).__name__ == "ForeignKeyViolation":
+                raise click.ClickException(
+                    f"등록되지 않은 고객사입니다: {customer}\n"
+                    f"  먼저 만드세요: flask --app run add-customer {customer}\n"
+                    "  (오타를 막으려고 일부러 거부합니다 - 예전에는 오타가 "
+                    "새 고객사를 조용히 만들었습니다.)"
+                )
             if type(e).__module__.split(".")[0] == "psycopg":
                 raise click.ClickException(
                     f"DB 작업에 실패했습니다.\n  {e}\n"

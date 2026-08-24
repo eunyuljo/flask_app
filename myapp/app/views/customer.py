@@ -30,6 +30,52 @@ def require_login():
         return redirect(url_for("auth.login"))
 
 
+# 최종 URL: /customer/new
+@customer_bp.route("/new", methods=["POST"])
+def customer_new():
+    """고객사를 만든다. AWS 계정이 없어도 만들 수 있다.
+
+    이 폼이 온보딩의 시작점이다. 예전에는 고객사가 aws_accounts 에서
+    파생돼서, 계정 ARN 을 받기 전에는 시스템에 넣을 방법이 없었다.
+    """
+    try:
+        name = customer.create(
+            request.form.get("name", ""),
+            status=request.form.get("status", "onboarding"),
+            started_at=request.form.get("started_at") or None,
+            report_interval_days=request.form.get("report_interval_days") or 0,
+            note=request.form.get("note", ""),
+        )
+        flash(f"고객사를 만들었습니다: {name}", "success")
+        return redirect(url_for("customer.index", name=name))
+    except CustomerError as e:
+        flash(str(e), "error")
+    except ValueError:
+        flash("보고 주기는 숫자로 입력하세요.", "error")
+    return redirect(url_for("customer.index"))
+
+
+# 최종 URL: /customer/save
+@customer_bp.route("/save", methods=["POST"])
+def customer_save():
+    """고객사 속성을 고친다."""
+    name = request.form.get("name", "")
+    try:
+        customer.update(name, {
+            "status": request.form.get("status", "onboarding"),
+            "started_at": request.form.get("started_at") or None,
+            "ended_at": request.form.get("ended_at") or None,
+            "report_interval_days": int(request.form.get("report_interval_days") or 0),
+            "note": request.form.get("note", ""),
+        })
+        flash("저장했습니다.", "success")
+    except CustomerError as e:
+        flash(str(e), "error")
+    except ValueError:
+        flash("보고 주기는 숫자로 입력하세요.", "error")
+    return redirect(url_for("customer.index", name=name))
+
+
 # 최종 URL: /customer/
 @customer_bp.route("/")
 def index():
@@ -63,8 +109,18 @@ def index():
         except ContactError:
             people = []
 
+    # 고객사 자체의 속성(상태·시작일·보고 주기). 이제 고객사가 실체라서
+    # 여기에 붙일 자리가 생겼다.
+    profile = None
+    if selected:
+        try:
+            profile = customer.get(selected)
+        except CustomerError:
+            pass
+
     return render_template(
         "customer.html",
+        profile=profile, statuses=customer.STATUSES,
         names=all_names, selected=selected, data=data, error=error,
         contacts=people, contact_kinds=contacts.KINDS,
     )

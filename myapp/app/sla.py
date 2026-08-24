@@ -153,9 +153,33 @@ def measure(customer, days=30, start=None, end=None):
         )
         account_ids = [r[0] for r in cur.fetchall()]
         if not account_ids:
+            # 계정이 없는 고객사는 이제 정상이다. customers 테이블이 생기기
+            # 전에는 고객사 목록이 aws_accounts 에서 파생돼서 이 상태가
+            # 있을 수 없었지만, 지금은 온보딩 중인 고객사가 여기 해당한다.
+            #
+            # by_severity 를 빈 목록으로 돌려주면 화면이 표를 통째로 그리지
+            # 못해서 "SLA 가 없는 고객사" 처럼 보인다. 등급 네 줄은 그대로
+            # 두고 값만 0 으로 채운다 - 0건과 '못 봤음' 은 다르고, 여기는
+            # 0건 쪽이다.
+            goals = targets(customer)
+            rows = []
+            for severity in SEVERITIES:
+                goal = goals.get(severity)
+                minutes = goal["first_response_minutes"] if goal else 0
+                rows.append({
+                    "severity": severity,
+                    "target_minutes": minutes,
+                    "target_scope": (goal["customer"] or "기본값") if goal else None,
+                    "total": 0, "answered": 0, "unanswered": 0,
+                    "median_minutes": 0, "worst_minutes": 0,
+                    "acked": 0, "inferred": 0,
+                    "tracked": bool(minutes),
+                    # 대상이 0건이면 달성도 미달도 아니다.
+                    "met": False,
+                })
             return {
                 "customer": customer, "days": days, "start": start, "end": end,
-                "accounts": [], "by_severity": [], "total": 0,
+                "accounts": [], "by_severity": rows, "total": 0,
                 "measured": 0, "unattributed": 0,
             }
 

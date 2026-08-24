@@ -96,7 +96,7 @@ class TestSlaUsesAck:
         from app.customer import names
 
         with db_app.app_context():
-            customers = names()
+            customers = names(with_accounts=True)
             if not customers:
                 pytest.skip("고객사가 없습니다")
             m = sla.measure(customers[0], days=365)
@@ -110,7 +110,7 @@ class TestSlaUsesAck:
         from app.customer import names
 
         with db_app.app_context():
-            customers = names()
+            customers = names(with_accounts=True)
             if not customers:
                 pytest.skip("고객사가 없습니다")
             customer = customers[0]

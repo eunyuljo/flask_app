@@ -1005,3 +1005,117 @@ CREATE INDEX IF NOT EXISTS idx_work_orders_pending
 
 ALTER TABLE incident_fingerprints
     ADD COLUMN IF NOT EXISTS origin BOOLEAN NOT NULL DEFAULT false;
+
+
+-- ======================================================================
+-- 고객사 (customers)
+-- ----------------------------------------------------------------------
+-- 지금까지 고객사는 실체가 없었다. 고객사 목록은
+--   SELECT DISTINCT customer FROM aws_accounts
+-- 였고, 13개 표가 고객사 이름을 문자열로 들고 있는데 외래키는 하나도
+-- 없었다. 그래서 세 가지가 조용히 깨졌다.
+--
+--   1) 고객사가 AWS 계정보다 먼저 존재할 수 없었다. 계약은 했는데 아직
+--      계정을 못 받은 곳은 넣을 방법이 없다. 그런데 온보딩에서 먼저 하는
+--      일이 연락처 받고 보고 주기 정하는 것이다.
+--   2) 오타가 새 고객사를 만들었다. '가고객' 과 '가고객 ' 이 둘 다 저장되고
+--      아무도 안 막는다. 연락처는 뒤쪽에 붙고 화면은 앞쪽을 보여준다.
+--   3) 마지막 계정을 지우면 고객사가 사라졌다. 행은 남지만 목록에 안 나와서
+--      화면에서 닿을 수 없다. 실제로 audit_log 에 '다고객' 이 그렇게 남아
+--      있었다 - 계정이 없어서 어느 화면에서도 안 보인다.
+--
+-- ── 왜 이름을 기본키로 쓰나 ──────────────────────────────────────────
+-- 12개 표가 이미 고객사 이름을 문자열로 들고 있다. 숫자 id 를 새로 만들면
+-- 그 표들에 컬럼을 추가하고 데이터를 옮기고 질의를 전부 고쳐야 한다.
+-- 이름을 기본키로 두면 지금 있는 컬럼에 외래키만 걸면 된다.
+-- 이름이 바뀌는 경우는 ON UPDATE CASCADE 가 처리한다.
+--
+-- ── '' 는 예약된 이름이다 ────────────────────────────────────────────
+-- runbooks, sla_targets, oncall_members 는 customer = '' 를 '공통/기본값'
+-- 으로 쓴다("고객사 전용이 기본값을 이긴다" - customer IN (%s, '') 패턴).
+-- 외래키를 걸려면 그 값도 실재해야 하므로 예약 행을 하나 넣는다.
+-- 고객사 목록(customer.names)은 이 행을 빼고 보여준다.
+--
+-- ── audit_log 에는 외래키를 걸지 않는다 ──────────────────────────────
+-- 감사 기록은 '무슨 일이 있었나' 를 남기는 곳이다. 외래키를 걸면 고객사가
+-- 없다는 이유로 감사 기록 쓰기가 실패할 수 있는데, 그건 참조가 끊긴 것보다
+-- 훨씬 나쁘다. 기록은 어떤 경우에도 남아야 한다.
+-- ======================================================================
+
+CREATE TABLE IF NOT EXISTS customers (
+    name        TEXT        PRIMARY KEY,
+
+    -- 온보딩이 상태로 존재한다. 이게 있어야 '준비 상태' 화면이 관찰이
+    -- 아니라 관문이 된다 - "이 항목이 채워져야 active".
+    status      TEXT        NOT NULL DEFAULT 'onboarding'
+                CHECK (status IN ('onboarding', 'active', 'suspended', 'ended')),
+
+    started_at  DATE,                          -- 운영 시작일
+    ended_at    DATE,                          -- 종료일
+
+    -- 보고 주기(일). 0 이면 아직 정하지 않음.
+    -- customer_routines.interval_days 와 같은 단위로 둔다 - 주기를 세는
+    -- 방식이 표마다 다르면 나중에 한곳에서 못 본다.
+    report_interval_days INTEGER NOT NULL DEFAULT 0
+                CHECK (report_interval_days >= 0),
+
+    note        TEXT        NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 공통/기본값을 가리키는 예약 행. 화면에는 안 나온다.
+INSERT INTO customers (name, status, note)
+VALUES ('', 'active', '예약된 이름. 공통 런북·기본 SLA 목표·전체 당직자가 씁니다.')
+ON CONFLICT (name) DO NOTHING;
+
+-- 지금 데이터에서 고객사를 만들어 넣는다. 한 표만 보면 안 된다 -
+-- 다른 표에만 남아 있는 이름이 있으면 아래 외래키 추가가 실패한다.
+INSERT INTO customers (name, status, note)
+SELECT found.customer,
+       CASE WHEN found.customer IN (SELECT customer FROM aws_accounts)
+            THEN 'active' ELSE 'ended' END,
+       CASE WHEN found.customer IN (SELECT customer FROM aws_accounts)
+            THEN ''
+            -- 추론한 값이라는 것을 적어 둔다. 사람이 보고 고칠 수 있어야 한다.
+            ELSE '(자동) 계정 없이 과거 기록에서만 발견되어 종료로 넣었습니다. 확인이 필요합니다.'
+       END
+  FROM (
+        SELECT customer FROM aws_accounts
+        UNION SELECT customer FROM customer_contacts
+        UNION SELECT customer FROM customer_routines
+        UNION SELECT customer FROM customer_standards
+        UNION SELECT customer FROM deliveries
+        UNION SELECT customer FROM incidents
+        UNION SELECT customer FROM oncall_members
+        UNION SELECT customer FROM routine_runs
+        UNION SELECT customer FROM runbook_runs
+        UNION SELECT customer FROM runbooks
+        UNION SELECT customer FROM sla_targets
+        UNION SELECT customer FROM work_orders
+        UNION SELECT customer FROM audit_log
+       ) AS found
+ WHERE found.customer IS NOT NULL AND found.customer <> ''
+ON CONFLICT (name) DO NOTHING;
+
+-- 외래키. ON UPDATE CASCADE 로 이름 변경이 따라가고,
+-- ON DELETE RESTRICT 로 자료가 남은 고객사는 지워지지 않는다
+-- (조용히 고아가 되느니 지우지 못하는 편이 낫다).
+DO $$
+DECLARE t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+      'aws_accounts', 'customer_contacts', 'customer_routines',
+      'customer_standards', 'deliveries', 'incidents', 'oncall_members',
+      'routine_runs', 'runbook_runs', 'runbooks', 'sla_targets', 'work_orders'
+  ] LOOP
+    EXECUTE format('ALTER TABLE %I DROP CONSTRAINT IF EXISTS %I',
+                   t, t || '_customer_fkey');
+    EXECUTE format(
+      'ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (customer) '
+      'REFERENCES customers(name) ON UPDATE CASCADE ON DELETE RESTRICT',
+      t, t || '_customer_fkey');
+  END LOOP;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_customers_status ON customers (status, name);

@@ -30,8 +30,8 @@
     </p>
   {% else %}
     <p class="muted">
-      등록된 고객사가 없습니다.
-      <code>flask --app run add-account</code> 로 계정을 먼저 등록하세요.
+      등록된 고객사가 없습니다. 아래에서 만드세요 &mdash;
+      <strong>AWS 계정이 없어도 만들 수 있습니다.</strong>
     </p>
   {% endif %}
 
@@ -268,4 +268,91 @@
     </section>
 
   {% endif %}
+
+  <hr>
+  {# 고객사 자체를 여기서 만들고 고친다. 새 메뉴를 만들지 않은 이유는
+     축이 같아서다 - 여기가 이미 "고객사 하나를 놓고 보는" 자리다.
+
+     계정 없이 만들 수 있다는 것이 요점이다. 예전에는 고객사 목록이
+     aws_accounts 에서 파생돼서, 계정 ARN 을 받기 전에는 시스템에 넣을
+     방법이 없었다. 온보딩에서 먼저 하는 일(연락처, 보고 주기)이 전부
+     계정보다 앞인데도 그랬다. #}
+  <h2>고객사 관리</h2>
+
+  {% if profile %}
+    <details class="rb-fold" open>
+      <summary>{{ selected }} 고치기</summary>
+      <form action="{{ url_for('customer.customer_save') }}" method="post" class="nz-form">
+        <input type="hidden" name="name" value="{{ selected }}">
+        <label>
+          상태
+          <select name="status">
+            {% for key, label in statuses.items() %}
+              <option value="{{ key }}" {% if profile.status == key %}selected{% endif %}>
+                {{ label }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          운영 시작일
+          <input type="date" name="started_at"
+                 value="{{ profile.started_at.isoformat() if profile.started_at else '' }}">
+        </label>
+        <label>
+          종료일 <span class="muted">(종료 상태일 때만 뜻이 있습니다)</span>
+          <input type="date" name="ended_at"
+                 value="{{ profile.ended_at.isoformat() if profile.ended_at else '' }}">
+        </label>
+        <label>
+          보고 주기(일) <span class="muted">(30 이면 월간, 0 이면 아직 안 정함)</span>
+          <input type="text" name="report_interval_days"
+                 value="{{ profile.report_interval_days }}">
+        </label>
+        <label>
+          메모
+          <input type="text" name="note" value="{{ profile.note }}">
+        </label>
+        <button type="submit">저장</button>
+      </form>
+    </details>
+  {% endif %}
+
+  <details class="rb-fold" {% if not names %}open{% endif %}>
+    <summary>새 고객사 만들기</summary>
+    <p class="muted">
+      계약은 했는데 아직 AWS 계정을 못 받은 상태를 그대로 넣을 수 있습니다.
+      계정은 나중에 <code>add-account</code> 로 붙입니다.
+    </p>
+    <form action="{{ url_for('customer.customer_new') }}" method="post" class="nz-form">
+      <label>
+        고객사 이름
+        <input type="text" name="name" required placeholder="예) A커머스">
+      </label>
+      <label>
+        상태
+        <select name="status">
+          {% for key, label in statuses.items() %}
+            <option value="{{ key }}" {% if key == 'onboarding' %}selected{% endif %}>
+              {{ label }}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        운영 시작일
+        <input type="date" name="started_at">
+      </label>
+      <label>
+        보고 주기(일) <span class="muted">(30 이면 월간)</span>
+        <input type="text" name="report_interval_days" value="0">
+      </label>
+      <label>
+        메모
+        <input type="text" name="note" placeholder="예) 계약 완료, 계정 대기 중">
+      </label>
+      <button type="submit">만들기</button>
+    </form>
+  </details>
+
 {% endblock %}

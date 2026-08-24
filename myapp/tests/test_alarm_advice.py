@@ -186,7 +186,7 @@ class TestForCustomer:
         from app.customer import names
 
         with db_app.app_context():
-            who = names()
+            who = names(with_accounts=True)
             if not who:
                 pytest.skip("등록된 고객사가 없습니다")
             data = alarm_advice.for_customer(who[0])
@@ -226,7 +226,7 @@ class TestRoutes:
         from app.customer import names
 
         with db_app.app_context():
-            who = names()
+            who = names(with_accounts=True)
         if not who:
             pytest.skip("등록된 고객사가 없습니다")
 

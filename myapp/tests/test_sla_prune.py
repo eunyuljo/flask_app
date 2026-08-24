@@ -99,7 +99,7 @@ class TestMeasure:
         from app.sla import measure
 
         with db_app.app_context():
-            all_names = names()
+            all_names = names(with_accounts=True)
             if not all_names:
                 pytest.skip("등록된 고객사가 없습니다")
             d = measure(all_names[0], 30)
@@ -115,7 +115,7 @@ class TestMeasure:
         from app.sla import measure
 
         with db_app.app_context():
-            all_names = names()
+            all_names = names(with_accounts=True)
             if not all_names:
                 pytest.skip("등록된 고객사가 없습니다")
             d = measure(all_names[0], 30)
