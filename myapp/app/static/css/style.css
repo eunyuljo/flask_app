@@ -120,15 +120,58 @@ a, a:visited { color: var(--accent); }
   font-size: .68rem; text-transform: uppercase; letter-spacing: .08em;
   color: #5f6a7a; padding: 14px 9px 5px;
 }
+/* 메뉴 목록. 26개 + 분류 7줄이면 1200px 가까이 되는데 사이드바는 창
+   높이(height: 100vh)뿐이라 거의 항상 넘친다. 그래서 세 가지가 필요하다.
+
+   ① 스크롤이 걸리게: min-height: 0 이 있어야 flex 항목이 내용보다 작아질
+      수 있고, 그래야 overflow-y 가 일한다. 없으면 넘치는 항목이 사이드바
+      밖으로 그냥 흘러서 닿을 수가 없다(좁은 화면의 min-width: 0 과 같은 이유).
+
+   ② 스크롤바가 얌전하게: OS 기본 스크롤바는 216px 어두운 패널 안에서
+      너무 두껍고 밝다. 가늘고 어둡게 두되 완전히 숨기지는 않는다 -
+      숨기면 스크롤이 된다는 것을 알 방법이 없다. 커서를 올리면 또렷해진다.
+      투명이어도 자리는 늘 차지한다(scrollbar-width: thin). 나타날 때
+      글자가 밀리면 그게 더 거슬린다.
+      scrollbar-width/color 가 표준이고 ::-webkit-* 는 아직 그걸 모르는
+      사파리·구형 크롬용이다. 둘 다 둔다.
+
+   ③ 잘린 자리를 부드럽게: 스크롤바만으로는 부족했다. 요즘 브라우저는
+      스크롤바를 평소에 감추고, 그러면 반쯤 잘린 메뉴 항목이 고장난 것처럼
+      보인다.
+
+      background 로는 안 된다. 배경은 자식(메뉴 링크) 뒤에 깔려서 글자를
+      가리지 못한다 - 실제로 해보고 알았다. mask 는 자식까지 함께 걸린다.
+
+      아래쪽 padding 을 페이드 높이만큼 준다. 그래야 맨 아래까지 스크롤했을 때
+      마지막 항목이 페이드 구간 위에 서고, 페이드는 빈 자리만 덮는다.
+      padding 이 없으면 다 내려간 상태에서도 '운영 상태' 가 흐릿하게 남는다. */
 .side-nav {
   display: flex; flex-direction: column; gap: 1px; flex: 1;
-  /* 메뉴 26개 + 분류 7줄이면 1200px 가까이 된다. 창이 그보다 낮으면
-     아래쪽 항목(관리자·운영 상태)에 닿을 수가 없었다 - 사이드바가
-     height: 100vh 인데 넘치는 내용이 그냥 밖으로 흘렀다.
-     min-height: 0 이 있어야 flex 항목이 내용보다 작아질 수 있고,
-     그래야 여기서 스크롤이 걸린다(아래 좁은 화면의 min-width: 0 과 같은 이유). */
   min-height: 0; overflow-y: auto;
+
+  scrollbar-width: thin;
+  scrollbar-color: #2a313c transparent;
+
+  padding-bottom: 26px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
 }
+.sidebar:hover .side-nav { scrollbar-color: #4b5563 transparent; }
+
+.side-nav::-webkit-scrollbar { width: 8px; }
+.side-nav::-webkit-scrollbar-track { background: transparent; }
+.side-nav::-webkit-scrollbar-thumb {
+  /* 배경까지 칠하지 않고 안쪽으로 물러나게 해서 더 가늘어 보이게 한다. */
+  background: #2a313c; border-radius: 99px;
+  border: 2px solid transparent; background-clip: content-box;
+}
+.sidebar:hover .side-nav::-webkit-scrollbar-thumb {
+  background: #4b5563; background-clip: content-box;
+}
+.side-nav::-webkit-scrollbar-thumb:hover {
+  background: #525c6b; background-clip: content-box;
+}
+
 .side-nav a {
   display: flex; align-items: center; gap: 9px;
   padding: 7px 9px; border-radius: 6px;
@@ -489,7 +532,10 @@ svg.chart g:hover .bar { filter: brightness(1.15); }
      min-width: 0 이 있어야 flex 항목이 내용보다 작아질 수 있고,
      그래야 여기서 스크롤이 걸린다. */
   .side-nav { flex-direction: row; flex: 1 1 0; gap: 2px;
-              min-width: 0; overflow-x: auto; }
+              min-width: 0; overflow-x: auto;
+              /* 세로 페이드는 가로줄에서 위아래를 깎는다. 되돌린다. */
+              padding-bottom: 0;
+              -webkit-mask-image: none; mask-image: none; }
   .side-nav a { white-space: nowrap; }
   /* 항목이 눌려서 찌그러지지 않게 한다. 넘치면 사이드바가 가로로 스크롤된다. */
   .side-nav a, .brand, .side-foot { flex: none; }
