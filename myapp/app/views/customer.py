@@ -9,11 +9,10 @@ from flask import (
 
 from datetime import datetime, timezone
 
-from app import (access, audit, contacts, customer, customer_brief,
+from app import (access, audit, contacts, customer,
                  readiness, routines, standards)
 from app.access import AccessError
 from app.contacts import ContactError
-from app.customer_brief import BriefError
 from app.accounts import list_accounts, get_account, AccountError
 from app.customer import CustomerError
 from app.readiness import ReadinessError
@@ -361,60 +360,3 @@ def standards_delete(standard_id):
     return redirect(request.referrer or url_for("customer.standards_page"))
 
 
-# 최종 URL: /customer/brief
-@customer_bp.route("/brief")
-def brief_page():
-    """이 고객사에 대해 아는 것을 한 장으로.
-
-    담당자가 바뀔 때 넘겨야 할 것이 화면 여섯 개에 흩어져 있어서, 실제
-    인수인계 때는 사람이 화면을 돌며 다시 정리한다. 자료는 이미 다 있다.
-    """
-    error, text, all_names = None, "", []
-    try:
-        all_names = customer.names()
-    except CustomerError as e:
-        error = str(e)
-
-    selected = request.args.get("customer") or (all_names[0] if all_names else "")
-
-    if selected and not error:
-        try:
-            text = customer_brief.to_markdown(customer_brief.collect(selected))
-        except BriefError as e:
-            error = str(e)
-
-    return render_template(
-        "customer_brief.html",
-        customers=all_names, selected=selected, text=text, error=error,
-    )
-
-
-# 최종 URL: /customer/brief.md
-@customer_bp.route("/brief.md")
-def brief_download():
-    """인수인계 문서를 Markdown 으로 내려받는다.
-
-    받는 사람이 이 앱을 쓰지 않을 수도 있고, 위키나 티켓에 그대로
-    붙일 수 있어야 한다.
-    """
-    from urllib.parse import quote
-
-    name = request.args.get("customer", "")
-    try:
-        text = customer_brief.to_markdown(customer_brief.collect(name))
-    except BriefError as e:
-        flash(str(e), "error")
-        return redirect(url_for("customer.brief_page", customer=name))
-
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
-    filename = f"인수인계_{name}_{stamp}.md"
-    return Response(
-        text,
-        mimetype="text/markdown; charset=utf-8",
-        headers={
-            # 한글 파일명은 latin-1 헤더에 그대로 못 들어간다. RFC 5987 로 낸다.
-            "Content-Disposition":
-                "attachment; filename=handover.md; "
-                f"filename*=UTF-8''{quote(filename)}",
-        },
-    )
