@@ -83,6 +83,7 @@
       {% if item.active %}
         <form action="{{ url_for('customer.routines_done', routine_id=item.id) }}"
               method="post" class="wo-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <label>
             수행 메모 <span class="muted">비워도 됩니다</span>
             <input type="text" name="note" placeholder="예) 스냅샷 확인, 용량 여유 40%">
@@ -91,12 +92,14 @@
         </form>
         <form action="{{ url_for('customer.routines_active', routine_id=item.id) }}"
               method="post" class="form inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="active" value="0">
           <button type="submit" class="linkish">멈추기</button>
         </form>
       {% else %}
         <form action="{{ url_for('customer.routines_active', routine_id=item.id) }}"
               method="post" class="form inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="active" value="1">
           <button type="submit">다시 시작</button>
         </form>
@@ -113,6 +116,7 @@
   </p>
 
   <form action="{{ url_for('customer.routines_add') }}" method="post" class="wo-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>
       고객사
       <select name="customer" required>

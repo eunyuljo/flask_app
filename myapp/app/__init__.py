@@ -8,6 +8,7 @@
 import os
 
 from flask import Flask
+from flask_wtf.csrf import CSRFProtect
 
 # 환경별 설정 클래스들이 담긴 딕셔너리. config["development"] 처럼 이름으로 꺼내 쓴다.
 from app.cli import register_cli
@@ -19,6 +20,7 @@ from app.views.main import main_bp
 from app.views.auth import auth_bp
 from app.views.agent import agent_bp
 from app.views.alarm import alarm_bp
+from app.views import alarm as alarm_views
 from app.views.admin import admin_bp
 from app.views.dashboard import dashboard_bp
 from app.views.explore import explore_bp
@@ -69,6 +71,26 @@ def create_app(config_name=None):
 
     # 설정 클래스가 앱에 대해 추가로 할 일(운영 환경 필수값 검사 등)을 수행한다.
     config[config_name].init_app(app)
+
+    # ------------------------------------------------------------------
+    # CSRF 방어
+    # ------------------------------------------------------------------
+    # 이게 없으면 로그인한 사용자가 남의 페이지를 열기만 해도 우리 쪽 쓰기가
+    # 실행된다. 그 페이지가 우리 주소로 폼을 제출하면 브라우저가 세션 쿠키를
+    # 같이 보내기 때문이다. 이 앱에는 알람 확인·런북 저장·작업 승인·사용자
+    # 생성처럼 되돌리기 어려운 POST 가 50개 있다.
+    #
+    # 토큰은 base.html 이 아니라 폼마다 넣는다. 서버가 폼 데이터에서 찾기
+    # 때문에 <form> 안에 있어야 한다.
+    csrf = CSRFProtect(app)
+
+    # 알람 수집 API 는 뺀다. 브라우저 세션이 아니라 다른 서버(SNS, Lambda,
+    # 모니터링 서버)가 부르는 곳이라 토큰을 받을 방법이 없고, 대신 API 키로
+    # 막는다(_ingest_allowed). CSRF 는 '브라우저가 쿠키를 자동으로 붙인다' 는
+    # 성질을 노리는 공격인데, 여기는 쿠키를 쓰지 않으므로 해당이 없다.
+    #
+    # 블루프린트 통째로 빼지 않는다 - alarm 블루프린트에는 화면 폼도 있다.
+    csrf.exempt(alarm_views.ingest)
 
     # session 과 flash 는 둘 다 '서명된 쿠키'를 사용하기 때문에 secret_key 가 반드시 필요하다.
     # 이제 그 값은 위의 from_object() 를 통해 config.py 에서 들어온다.

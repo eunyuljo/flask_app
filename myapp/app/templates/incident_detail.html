@@ -42,6 +42,7 @@
        고객사 보고서로 나가면 안 된다. #}
     {% if data and not draft %}
       <form action="{{ url_for('incident.rca_draft', incident_id=item.id) }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <p class="muted">
           아래 타임라인을 근거로 <strong>원인 분석 초안</strong>을 만들 수 있습니다.
           빈 칸에만 채워 넣으며, <strong>저장을 눌러야 남습니다.</strong>
@@ -72,6 +73,7 @@
     {% endif %}
 
     <form action="{{ url_for('incident.save', incident_id=item.id) }}" method="post" class="wo-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       {% for field in ['impact', 'cause', 'action', 'prevention'] %}
         <label>
           {{ field_labels[field] }}
@@ -84,11 +86,13 @@
 
     {% if draft %}
       <form action="{{ url_for('incident.rca_discard', incident_id=item.id) }}" method="post" class="danger">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit">초안 버리기</button>
       </form>
     {% endif %}
 
     <form action="{{ url_for('incident.publish', incident_id=item.id) }}" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <p class="muted">
         제출하면 더 이상 고칠 수 없습니다. 원인과 조치가 비어 있으면 제출되지 않습니다.
       </p>
@@ -106,6 +110,7 @@
       </p>
     {% else %}
       <form action="{{ url_for('incident.to_jira_issue', incident_id=item.id) }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <p class="muted">
           이 보고서를 Jira 이슈로 넘깁니다. 한 번만 만들어집니다.
         </p>
@@ -148,6 +153,7 @@
 
   {% if item.customer_status != 'sent' %}
     <form action="{{ url_for('incident.customer_draft', incident_id=item.id) }}" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit">초안 채우기</button>
       <span class="muted">
         기록에서 시각을 뽑아 경과 초안을 만들고, 내부 RCA 내용을 복사해 넣습니다.
@@ -156,6 +162,7 @@
     </form>
 
     <form action="{{ url_for('incident.customer_save', incident_id=item.id) }}" method="post" class="wo-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>
         {{ customer_field_labels['customer_impact'] }}
         <textarea name="customer_impact" rows="3">{{ item.customer_impact }}</textarea>
@@ -176,6 +183,7 @@
     {% if item.customer_status != 'none' %}
       <form action="{{ url_for('incident.customer_send', incident_id=item.id) }}"
             method="post" class="wo-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <p class="muted">
           제출하면 더 이상 고칠 수 없습니다. 경과와 원인이 비어 있으면 제출되지 않습니다.
         </p>

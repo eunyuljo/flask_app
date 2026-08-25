@@ -46,7 +46,13 @@ def db_app():
     """
     from app import create_app
 
-    return create_app("development")
+    application = create_app("development")
+    # CSRF 는 끈다. 테스트마다 폼을 GET 해서 토큰을 뽑아 오게 하면 정작
+    # 확인하려던 내용이 안 보인다. CSRF 자체가 도는지는 tests/test_csrf.py
+    # 가 앱을 따로 만들어 확인한다 - 그래야 여기서 꺼둔 것이 그쪽 검증까지
+    # 꺼버리지 않는다.
+    application.config["WTF_CSRF_ENABLED"] = False
+    return application
 
 
 @pytest.fixture

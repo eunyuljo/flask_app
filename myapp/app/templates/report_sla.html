@@ -135,6 +135,7 @@
         </p>
         {% for sev in severities %}
           <form action="{{ url_for('report.sla_target') }}" method="post" class="sla-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="customer" value="{{ selected }}">
             <input type="hidden" name="severity" value="{{ sev }}">
             <span class="badge sev-badge-{{ sev }}">{{ sev }}</span>

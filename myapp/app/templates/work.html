@@ -29,6 +29,7 @@
     {% endif %}
 
     <form action="{{ url_for('work.new') }}" method="post" class="wo-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>
         작업 제목
         <input type="text" name="title" value="{{ prefill.title }}"

@@ -82,6 +82,7 @@
     {# 되돌릴 수 없는 동작이라 주요 버튼(파란색)이 아니라 보조 스타일을 준다.
        실수로 누르는 것을 줄이려는 의도다. #}
     <form action="{{ url_for('admin.clear_events') }}" method="post" class="danger">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit">목록 비우기</button>
     </form>
   {% endif %}

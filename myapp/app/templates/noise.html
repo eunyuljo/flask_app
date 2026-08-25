@@ -247,6 +247,7 @@
       <details class="rb-fold">
         <summary>억제 규칙 {% if i.window_minutes or i.muted %}고치기{% else %}걸기{% endif %}</summary>
         <form action="{{ url_for('noise.rule') }}" method="post" class="nz-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="fingerprint" value="{{ i.fingerprint }}">
           <input type="hidden" name="sample" value="{{ i.sample[:120] }}">
           <label>
@@ -266,6 +267,7 @@
         </form>
         {% if i.window_minutes or i.muted %}
           <form action="{{ url_for('noise.delete_rule') }}" method="post" class="danger">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="fingerprint" value="{{ i.fingerprint }}">
             <button type="submit">규칙 지우기</button>
           </form>

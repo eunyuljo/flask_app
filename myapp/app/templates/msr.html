@@ -72,6 +72,7 @@
         <summary>이 달치를 보냈다고 기록하기</summary>
         <form action="{{ url_for('report.deliveries_record') }}" method="post"
               class="wo-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="customer" value="{{ customer }}">
           <input type="hidden" name="kind" value="msr">
           <input type="hidden" name="ref" value="{{ msr_ref }}">

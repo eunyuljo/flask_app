@@ -109,6 +109,7 @@
 
         <form action="{{ url_for('customer.standards_delete', standard_id=r.id) }}"
               method="post" class="form inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit" class="linkish">이 규칙 지우기</button>
         </form>
       </div>
@@ -135,6 +136,7 @@
 
   <form action="{{ url_for('customer.standards_save') }}" method="post"
         class="wo-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="customer" value="{{ selected }}">
     <label>
       규칙

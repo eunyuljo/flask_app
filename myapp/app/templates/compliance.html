@@ -130,6 +130,7 @@
               <details>
                 <summary class="muted">예외 등록</summary>
                 <form method="post" action="{{ url_for('compliance.add_exception') }}" class="form">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                   <input type="hidden" name="account_id" value="{{ chosen.account_id }}">
                   <input type="hidden" name="check_id" value="{{ h.check_id }}">
                   <input type="hidden" name="resource_id" value="{{ h.resource_id }}">

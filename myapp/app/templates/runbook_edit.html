@@ -18,6 +18,7 @@
      비어 있는다. 대신 저장은 사람이 한다. #}
   {% if not item.id and item.fingerprint and agent_ready and not draft %}
     <form action="{{ url_for('runbook.draft') }}" method="post" class="form inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="fingerprint" value="{{ item.fingerprint }}">
       <input type="hidden" name="sample" value="{{ item.sample }}">
       <input type="hidden" name="severity" value="{{ request.args.get('severity', '') }}">
@@ -48,6 +49,7 @@
   {% endif %}
 
   <form action="{{ url_for('runbook.save') }}" method="post" class="wo-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>
       지문 (fingerprint)
       {# 지문은 알람에서 넘어온 값을 그대로 쓴다. 손으로 고칠 일이 아니다. #}
@@ -122,6 +124,7 @@
 
     <hr>
     <form action="{{ url_for('runbook.delete', runbook_id=item.id) }}" method="post" class="danger">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit">이 런북 지우기</button>
     </form>
     <p class="muted">

@@ -11,6 +11,7 @@
     <summary>이 절차대로 처리함</summary>
     <form action="{{ url_for('runbook.run', runbook_id=rb.id) }}" method="post"
           class="wo-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>
         결과
         <select name="outcome" required>

@@ -51,6 +51,7 @@
 
   {# 질문 폼: /agent/ask 로 POST. url_for 로 주소를 만드는 규칙은 다른 페이지와 동일하다. #}
   <form action="{{ url_for('agent.ask') }}" method="post" class="ask">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="text" name="message" placeholder="예) 이 앱에 어떤 페이지가 있어?"
            autocomplete="off" required autofocus>
     <button type="submit">보내기</button>
@@ -59,6 +60,7 @@
   {# 대화 초기화도 상태를 바꾸는 동작이므로 링크(GET)가 아니라 폼(POST)으로 만든다. #}
   {% if history %}
     <form action="{{ url_for('agent.reset') }}" method="post" class="reset">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button type="submit">대화 초기화</button>
     </form>
   {% endif %}

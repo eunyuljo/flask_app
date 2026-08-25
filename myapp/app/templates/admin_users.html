@@ -23,6 +23,7 @@
   <hr>
   <h2>새 계정</h2>
   <form method="post" action="{{ url_for('admin.user_create') }}" class="form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>아이디
       <input type="text" name="username" required autocomplete="off">
     </label>
@@ -70,6 +71,7 @@
       <details class="meta-fold">
         <summary class="muted">비밀번호 바꾸기</summary>
         <form method="post" action="{{ url_for('admin.user_password') }}" class="form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="username" value="{{ u.username }}">
           <label>새 비밀번호 <span class="muted">(8자 이상)</span>
             <input type="password" name="password" required autocomplete="new-password">
@@ -82,6 +84,7 @@
          나중에도 확인할 수 있어야 하기 때문이다. #}
       <form method="post" action="{{ url_for('admin.user_enabled') }}"
             class="form {% if u.enabled %}danger{% endif %}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="username" value="{{ u.username }}">
         <input type="hidden" name="enabled" value="{{ '0' if u.enabled else '1' }}">
         <button type="submit">{{ '계정 끄기' if u.enabled else '계정 켜기' }}</button>

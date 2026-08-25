@@ -86,6 +86,7 @@
 
   <form action="{{ url_for('report.deliveries_record') }}" method="post"
         class="wo-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row-2">
       <label>
         고객사

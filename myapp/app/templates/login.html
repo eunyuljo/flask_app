@@ -12,6 +12,7 @@
      같은 URL 이지만 method 가 POST 이므로 views/auth.py 의 login() 안에서
      `if request.method == "POST":` 분기를 타게 된다. #}
   <form action="{{ url_for('auth.login') }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>
       아이디
       {# input 의 name 값("username")이 곧 request.form.get("username") 의 키가 된다. #}

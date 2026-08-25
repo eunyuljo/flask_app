@@ -95,6 +95,7 @@
                 {% if session.get('role') == 'admin' %}
                   <form action="{{ url_for('customer.access_probe') }}"
                         method="post" class="form inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="account_id"
                            value="{{ row.account.account_id }}">
                     <input type="hidden" name="region" value="{{ r.region }}">

@@ -23,6 +23,7 @@
   </p>
 
   <form action="{{ url_for('alarm.send') }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>
       메시지
       <input type="text" name="message" placeholder="예) 디스크 사용률 95% 초과" required>
@@ -158,12 +159,14 @@
           &middot; {{ item.record.acknowledged_by or '누군가' }}
           <form action="{{ url_for('alarm.unack', event_id=item.record.event_id) }}"
                 method="post" class="form inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="linkish">되돌리기</button>
           </form>
         </div>
       {% else %}
         <form action="{{ url_for('alarm.ack', event_id=item.record.event_id) }}"
               method="post" class="form inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button type="submit">확인</button>
         </form>
       {% endif %}
@@ -250,6 +253,7 @@
       {# 진단은 실제 알람에만 붙인다. 진단 기록 자체를 또 진단할 이유는 없다. #}
       {% if grouped and item.record.event_type not in NOT_ACTIONABLE %}
         <form action="{{ url_for('alarm.diagnose') }}" method="post" class="diag-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="event_id" value="{{ item.record.event_id }}">
           <select name="account_id" required>
             {% for customer, accounts in grouped.items() %}

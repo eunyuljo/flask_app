@@ -27,6 +27,7 @@
   {% endif %}
 
   <form action="{{ url_for('incident.new') }}" method="post" class="wo-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {# 이 보고서가 어느 알람에서 시작됐는지. 저장할 때 못박는다 -
        시간 겹침으로 나중에 추론하는 것과 다르다. #}
     <input type="hidden" name="fingerprint" value="{{ prefill.fingerprint }}">

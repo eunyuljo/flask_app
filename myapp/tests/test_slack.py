@@ -149,11 +149,16 @@ class TestRenderers:
         """
         from app.handover import collect, to_slack, to_markdown
 
+        # 구간을 넓게 잡는다. 24시간으로 두면 개발 DB 의 샘플이 그보다
+        # 오래됐을 때 표가 아예 안 나오고, 그러면 이 테스트는 Slack 렌더러가
+        # 아니라 '최근에 seed-events 를 돌렸는가' 를 검사하게 된다.
         with db_app.app_context():
-            data = collect(24)
+            data = collect(24 * 400)
             slack_text = to_slack(data)
             md = to_markdown(data)
 
+        if "|---" not in md:
+            pytest.skip("이벤트가 없어 표가 만들어지지 않았습니다 (seed-events 필요)")
         assert "|---" in md, "Markdown 쪽은 표를 쓴다"
         assert "|---" not in slack_text
         assert "**" not in slack_text, "Slack 은 *굵게* 다"

@@ -118,6 +118,7 @@
                 <td>
                   <form action="{{ url_for('customer.contacts_active', contact_id=c.id) }}"
                         method="post" class="form inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="active" value="0">
                     <button type="submit" class="linkish">내리기</button>
                   </form>
@@ -131,6 +132,7 @@
           <summary>연락처 추가</summary>
           <form action="{{ url_for('customer.contacts_add') }}" method="post"
                 class="wo-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="customer" value="{{ selected }}">
             <div class="row-2">
               <label>
@@ -283,6 +285,7 @@
     <details class="rb-fold" open>
       <summary>{{ selected }} 고치기</summary>
       <form action="{{ url_for('customer.customer_save') }}" method="post" class="nz-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="name" value="{{ selected }}">
         <label>
           상태
@@ -325,6 +328,7 @@
       계정은 나중에 <code>add-account</code> 로 붙입니다.
     </p>
     <form action="{{ url_for('customer.customer_new') }}" method="post" class="nz-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>
         고객사 이름
         <input type="text" name="name" required placeholder="예) A커머스">

@@ -31,6 +31,7 @@
     {# 대상 선택 + 명령 입력. 고객사를 바꾸면 계정 목록이 따라 바뀌어야 하므로
        선택만 바꿨을 때도 폼을 다시 제출한다(자바스크립트 없이 처리). #}
     <form method="post" action="{{ url_for('console.index') }}" class="panel target-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="panel-body">
         <div class="targets">
           <label>고객사
