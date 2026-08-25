@@ -10,7 +10,14 @@
 # 못 하면 아무것도 못 해보기 때문이다. 대신 그 상태를 화면에 크게 알린다.
 # 사용자를 하나라도 만들면 자동으로 그쪽만 쓴다.
 
+from typing import Any, Optional, TYPE_CHECKING
+
 from flask import current_app
+
+if TYPE_CHECKING:
+    import psycopg
+
+User = dict[str, Any]
 
 from app import db
 
@@ -40,16 +47,16 @@ psycopg_uri = db.uri
 _rows = db.rows
 
 
-def _connect():
+def _connect() -> "psycopg.Connection":
     return db.connect(UserError)
 
 
-def _table_ready(cur):
+def _table_ready(cur: "psycopg.Cursor") -> bool:
     cur.execute("SELECT to_regclass('public.users')")
     return cur.fetchone()[0] is not None
 
 
-def bootstrap_mode():
+def bootstrap_mode() -> bool:
     """지금 하드코딩 계정으로 도는 중인가.
 
     화면에 경고를 띄우기 위해 쓴다. DB 가 아예 없어도 True 다 -
@@ -65,7 +72,7 @@ def bootstrap_mode():
         return True
 
 
-def authenticate(username, password):
+def authenticate(username: str, password: str) -> Optional[User]:
     """로그인. 성공하면 사용자 dict, 실패하면 None."""
     from werkzeug.security import check_password_hash
 
@@ -104,7 +111,7 @@ def authenticate(username, password):
     return user
 
 
-def _bootstrap_login(username, password):
+def _bootstrap_login(username: str, password: str) -> Optional[User]:
     """하드코딩 계정. 사용자가 하나도 없을 때만 통한다."""
     import hmac
 
@@ -119,7 +126,7 @@ def _bootstrap_login(username, password):
             "enabled": True, "bootstrap": True}
 
 
-def can(role, required):
+def can(role: Optional[str], required: str) -> bool:
     """이 역할이 required 이상인가."""
     return ROLE_RANK.get(role or "", 0) >= ROLE_RANK.get(required, 99)
 
@@ -128,7 +135,7 @@ def can(role, required):
 # 관리
 # ----------------------------------------------------------------------
 
-def create(username, password, role="operator"):
+def create(username: str, password: str, role: str = "operator") -> int:
     """사용자를 만든다."""
     from werkzeug.security import generate_password_hash
 
@@ -156,7 +163,7 @@ def create(username, password, role="operator"):
         return cur.fetchone()[0]
 
 
-def set_password(username, password):
+def set_password(username: str, password: str) -> None:
     """비밀번호를 바꾼다."""
     from werkzeug.security import generate_password_hash
 
@@ -174,7 +181,7 @@ def set_password(username, password):
             raise UserError(f"사용자를 찾지 못했습니다: {username}")
 
 
-def set_enabled(username, enabled):
+def set_enabled(username: str, enabled: bool) -> None:
     """계정을 켜거나 끈다. 지우지 않는 이유: 감사 로그에 남은 이름이
     누구였는지 나중에 확인할 수 있어야 한다."""
     with _connect() as conn, conn.cursor() as cur:
@@ -201,7 +208,7 @@ def set_enabled(username, enabled):
             raise UserError(f"사용자를 찾지 못했습니다: {username}")
 
 
-def listing():
+def listing() -> list[User]:
     """사용자 목록. 해시는 돌려주지 않는다."""
     with _connect() as conn, conn.cursor() as cur:
         if not _table_ready(cur):

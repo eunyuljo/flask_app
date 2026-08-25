@@ -13,9 +13,20 @@
 # 모듈 이름과 함수 이름은 그대로 둔다. 부르는 쪽이 바뀔 이유가 없다 -
 # '이벤트를 읽는 곳' 이라는 역할은 그대로이고 구현만 바뀌었다.
 
+from datetime import datetime
+from typing import Any, Optional, TYPE_CHECKING
+
 from flask import current_app
 
 from app import db
+
+if TYPE_CHECKING:
+    import psycopg
+
+# DB 에서 읽은 이벤트 한 건.
+Record = dict[str, Any]
+# 화면이 기대하는 모양: {"record": {...}, "delivery": {...}}
+Item = dict[str, Any]
 
 from api.normalize_handler import UNPARSED_TYPE
 
@@ -32,11 +43,11 @@ psycopg_uri = db.uri
 _rows = db.rows
 
 
-def _connect():
+def _connect() -> "psycopg.Connection":
     return db.connect(EventStoreError)
 
 
-def _ensure(cur):
+def _ensure(cur: "psycopg.Cursor") -> None:
     cur.execute("SELECT to_regclass('public.events')")
     if cur.fetchone()[0] is None:
         raise EventStoreError(
@@ -49,7 +60,7 @@ def _ensure(cur):
 # delivery(적재/알람 결과)는 Lambda 응답에만 있고 DB 에는 없다. 목록에서는
 # 그걸 보여주지 않는다 - 목록에 있다는 것 자체가 '적재됐다' 는 뜻이고,
 # 알람 발송 여부는 알람 노이즈 화면(alarm_state)에서 본다.
-def _wrap(row):
+def _wrap(row: Record) -> Item:
     return {"record": row, "delivery": {}}
 
 
@@ -58,7 +69,9 @@ FIELDS = """event_id, event_type, source, severity, message,
             acknowledged_at, acknowledged_by"""
 
 
-def recent(limit=20, account_id=None, unacked_only=False, severity=None):
+def recent(limit: int = 20, account_id: Optional[str] = None,
+           unacked_only: bool = False,
+           severity: Optional[str] = None) -> list[Item]:
     """최근 이벤트를 새 것부터.
 
     account_id  : 그 계정 것만
@@ -93,7 +106,7 @@ def recent(limit=20, account_id=None, unacked_only=False, severity=None):
         return [_wrap(r) for r in _rows(cur)]
 
 
-def acknowledge(event_id, username):
+def acknowledge(event_id: str, username: str) -> datetime:
     """이 알람을 확인했다고 표시한다.
 
     이미 확인된 것은 덮어쓰지 않는다. 최초 대응 시각이 바뀌면 SLA 지표가
@@ -120,7 +133,7 @@ def acknowledge(event_id, username):
         return row[0]
 
 
-def unacknowledge(event_id):
+def unacknowledge(event_id: str) -> None:
     """확인을 되돌린다. 잘못 눌렀을 때를 위한 것이다."""
     with _connect() as conn, conn.cursor() as cur:
         _ensure(cur)
@@ -133,7 +146,7 @@ def unacknowledge(event_id):
             raise EventStoreError("그런 이벤트가 없습니다.")
 
 
-def unacked_count(hours=24):
+def unacked_count(hours: int = 24) -> dict[str, Any]:
     """최근 N시간 안에 아직 아무도 확인하지 않은 알람 수.
 
     심각도별로 나눈다. info 100건보다 critical 1건이 급하다.
@@ -151,7 +164,7 @@ def unacked_count(hours=24):
     return {"by_severity": counts, "total": sum(counts.values()), "hours": hours}
 
 
-def unparsed_summary(hours=168):
+def unparsed_summary(hours: int = 168) -> dict[str, Any]:
     """어댑터가 알아보지 못해 "정규화 못 함" 으로 들어온 것들.
 
     모양(meta->>'shape')별로 묶어서 돌려준다. 하나의 모양은 하나의 발신자이고,
@@ -185,7 +198,7 @@ def unparsed_summary(hours=168):
     }
 
 
-def get(event_id):
+def get(event_id: str) -> Optional[Item]:
     """event_id 로 이벤트 하나를 찾는다. 없으면 None.
 
     이제 목록에서 밀려나도 찾을 수 있다. 예전에는 100건을 넘기면
@@ -201,7 +214,7 @@ def get(event_id):
     return _wrap(rows[0]) if rows else None
 
 
-def stats():
+def stats() -> dict[str, Any]:
     """관리자 화면에 쓸 간단한 집계."""
     counts = {"critical": 0, "error": 0, "warning": 0, "info": 0}
     with _connect() as conn, conn.cursor() as cur:
@@ -228,7 +241,7 @@ def stats():
     }
 
 
-def clear():
+def clear() -> int:
     """이벤트를 전부 지운다. 관리자 화면에서만 부른다.
 
     감사 로그(audit_log)는 건드리지 않는다. 이벤트 정리와 수명이 다르다.

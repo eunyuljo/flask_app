@@ -3,9 +3,18 @@
 # 작업 전/후로 스냅샷을 한 벌씩 찍어두고, 그 차이를 증적으로 남기기 위한 도메인이다.
 # SQL 은 전부 여기에만 있고, 뷰는 여기서 나온 dict 만 받는다.
 
+from datetime import datetime
+from typing import Any, Optional, TYPE_CHECKING
+
 from flask import current_app
 
 from app import db
+
+if TYPE_CHECKING:
+    import psycopg
+
+# 작업 지시 한 건. FLOW 의 상태를 status 로 들고 다닌다.
+Order = dict[str, Any]
 
 # 상태 전이. 이 순서를 벗어나는 요청은 거부한다.
 #
@@ -41,11 +50,11 @@ psycopg_uri = db.uri
 _rows = db.rows
 
 
-def _connect():
+def _connect() -> "psycopg.Connection":
     return db.connect(WorkError)
 
 
-def _ensure_table(cur):
+def _ensure_table(cur: "psycopg.Cursor") -> None:
     cur.execute("SELECT to_regclass('public.work_orders')")
     if cur.fetchone()[0] is None:
         raise WorkError(
@@ -53,9 +62,12 @@ def _ensure_table(cur):
         )
 
 
-def create(title, customer, account_id, region, operator,
-           ticket="", request="", expected="", requested_by="",
-           rollback="", window_start=None, window_end=None):
+def create(title: str, customer: str, account_id: str, region: str,
+           operator: str,
+           ticket: str = "", request: str = "", expected: str = "",
+           requested_by: str = "", rollback: str = "",
+           window_start: Optional[datetime] = None,
+           window_end: Optional[datetime] = None) -> int:
     """작업을 요청한다. 승인 전에는 스냅샷도 못 찍는다(status=requested).
 
     requested_by 를 따로 받는 이유: operator 는 '작업할 사람' 이고
@@ -84,7 +96,7 @@ def create(title, customer, account_id, region, operator,
         return cur.fetchone()[0]
 
 
-def approve(work_id, approver, note=""):
+def approve(work_id: int, approver: str, note: str = "") -> None:
     """작업을 승인한다.
 
     자기가 낸 요청은 자기가 승인할 수 없다. 승인이 형식만 남으면 없는 것과
@@ -114,7 +126,7 @@ def approve(work_id, approver, note=""):
             _explain_decision_failure(cur, work_id, approver, "승인")
 
 
-def reject(work_id, approver, note=""):
+def reject(work_id: int, approver: str, note: str = "") -> None:
     """작업을 반려한다. 사유가 없으면 요청자가 무엇을 고쳐야 할지 모른다."""
     approver = (approver or "").strip()
     if not note.strip():
@@ -136,7 +148,8 @@ def reject(work_id, approver, note=""):
             _explain_decision_failure(cur, work_id, approver, "반려")
 
 
-def _explain_decision_failure(cur, work_id, approver, action):
+def _explain_decision_failure(cur: "psycopg.Cursor", work_id: int,
+                              approver: str, action: str) -> None:
     """왜 승인/반려가 안 됐는지 알려준다.
 
     "안 됩니다" 만 하면 요청자도 승인자도 무엇을 해야 할지 모른다.
@@ -158,7 +171,7 @@ def _explain_decision_failure(cur, work_id, approver, action):
     )
 
 
-def pending(limit=50):
+def pending(limit: int = 50) -> list[Order]:
     """승인 대기 중인 작업. 승인자가 가장 먼저 보는 목록이다."""
     with _connect() as conn, conn.cursor() as cur:
         _ensure_table(cur)
@@ -170,7 +183,8 @@ def pending(limit=50):
         return _rows(cur)
 
 
-def window_state(item, now=None):
+def window_state(item: Order,
+                 now: Optional[datetime] = None) -> dict[str, Any]:
     """지금이 작업창 안인가.
 
     벗어나도 막지 않는다. 막으면 급할 때 이 도구를 통째로 우회하고,
@@ -193,7 +207,7 @@ def window_state(item, now=None):
             "note": f"작업창 안입니다({start:%m-%d %H:%M} ~ {end:%m-%d %H:%M})."}
 
 
-def mark_out_of_window(work_id):
+def mark_out_of_window(work_id: int) -> None:
     """작업창을 벗어나서 시작했다고 표시한다. 되돌리지 않는다."""
     with _connect() as conn, conn.cursor() as cur:
         _ensure_table(cur)
@@ -202,7 +216,7 @@ def mark_out_of_window(work_id):
         )
 
 
-def get(work_id):
+def get(work_id: int) -> Optional[Order]:
     """작업 기록 하나. 없으면 None."""
     with _connect() as conn, conn.cursor() as cur:
         _ensure_table(cur)
@@ -211,7 +225,8 @@ def get(work_id):
     return rows[0] if rows else None
 
 
-def recent(limit=30, customer=None, account_id=None):
+def recent(limit: int = 30, customer: Optional[str] = None,
+           account_id: Optional[str] = None) -> list[Order]:
     """최근 작업 기록 목록."""
     where, params = [], []
     if customer:
@@ -239,7 +254,7 @@ PHASES = {
 }
 
 
-def check_transition(item, phase):
+def check_transition(item: Order, phase: str) -> None:
     """이 단계로 넘어갈 수 있는 상태인지 미리 본다.
 
     실제 판정은 attach_snapshot 의 UPDATE ... WHERE 가 다시 하지만,
@@ -258,7 +273,7 @@ def check_transition(item, phase):
         )
 
 
-def attach_snapshot(work_id, phase, snapshot_id):
+def attach_snapshot(work_id: int, phase: str, snapshot_id: int) -> None:
     """작업 전/후 스냅샷을 붙이고 상태를 넘긴다.
 
     phase: "before" 또는 "after"
@@ -292,7 +307,7 @@ def attach_snapshot(work_id, phase, snapshot_id):
             )
 
 
-def close(work_id, note=""):
+def close(work_id: int, note: str = "") -> None:
     """증적을 확정한다. 확정 후에는 스냅샷을 바꾸지 않는다."""
     with _connect() as conn, conn.cursor() as cur:
         _ensure_table(cur)
@@ -350,7 +365,7 @@ STALE_WHY = {
 STALE_ORDER = ("before_taken", "after_taken", "open", "requested")
 
 
-def stalled(now=None):
+def stalled(now: Optional[datetime] = None) -> list[Order]:
     """흐름이 멈춘 작업. 상태마다 다른 기준으로 본다.
 
     돌려주는 것: [{...작업, "stale_hours": 경과, "why": 설명}, ...]
@@ -400,7 +415,7 @@ def stalled(now=None):
     return out
 
 
-def stalled_summary(rows):
+def stalled_summary(rows: list[Order]) -> dict[str, Any]:
     """화면과 알림 위쪽 숫자."""
     counts = {state: 0 for state in STALE_HOURS}
     for row in rows:
@@ -413,7 +428,7 @@ def stalled_summary(rows):
     }
 
 
-def to_slack_stalled(rows, base_url=""):
+def to_slack_stalled(rows: list[Order], base_url: str = "") -> str:
     """멈춘 작업을 Slack mrkdwn 으로."""
     from app.slack import escape
 
@@ -440,7 +455,8 @@ def to_slack_stalled(rows, base_url=""):
     return "\n".join(L)
 
 
-def due_for_auto_snapshot(now=None, grace_minutes=30):
+def due_for_auto_snapshot(now: Optional[datetime] = None,
+                          grace_minutes: int = 30) -> list[Order]:
     """작업창이 시작됐는데 작업 전 스냅샷이 아직 없는 작업.
 
     작업창을 새벽 2시로 잡아놓고 그 시각에 사람이 로그인해서 버튼을

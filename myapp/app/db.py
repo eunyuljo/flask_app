@@ -25,10 +25,20 @@
 # 21개 모듈이 이 파일을 부르므로, 이 파일이 그 중 하나라도 부르면
 # 순환 import 가 된다. flask 와 표준 라이브러리만 쓴다.
 
+from typing import Any, TYPE_CHECKING
+
 from flask import current_app
 
+if TYPE_CHECKING:
+    # psycopg 는 없어도 앱이 뜬다(설치 안 됐을 때 안내를 띄우고 막는다).
+    # 그래서 실행 시점에는 import 하지 않고 타입 검사에만 쓴다.
+    import psycopg
 
-def uri():
+# 커서에서 읽은 한 줄. 열 이름 -> 값.
+Row = dict[str, Any]
+
+
+def uri() -> str:
     """접속 문자열.
 
     .replace 는 남겨 둔다. 설정 기본값에서는 이제 +psycopg 가 붙지 않지만,
@@ -40,7 +50,7 @@ def uri():
     )
 
 
-def rows(cur):
+def rows(cur: "psycopg.Cursor") -> list[Row]:
     """커서에 남은 결과를 dict 목록으로.
 
     psycopg 는 기본이 튜플이라 r[3] 같은 코드가 된다. 열 순서를 바꾸는
@@ -50,7 +60,7 @@ def rows(cur):
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def connect(error):
+def connect(error: type[Exception]) -> "psycopg.Connection":
     """psycopg 커넥션을 연다. 실패는 도메인 예외로 바꾼다.
 
     error: 이 모듈이 쓰는 예외 클래스(NoiseError, WorkError ...).
@@ -71,7 +81,7 @@ def connect(error):
         raise
 
 
-def table_exists(cur, name):
+def table_exists(cur: "psycopg.Cursor", name: str) -> bool:
     """이 표가 있는가.
 
     "없는 표" 와 "빈 표" 는 다르다. 앞은 init-db 를 안 돌린 것이고 뒤는

@@ -8,9 +8,19 @@
 # 알람은 Lambda 가 보내므로 판정도 거기서 일어나야 한다.
 # 이 모듈은 사람이 보고 규칙을 정하는 쪽만 맡는다.
 
+from typing import Any, Optional, TYPE_CHECKING
+
 from flask import current_app
 
 from app import db
+
+if TYPE_CHECKING:
+    import psycopg
+
+# ranking() 한 줄. 지문 하나에 대한 집계 + 관리 상태(런북·규칙).
+Kind = dict[str, Any]
+# incident_links() 의 값. 이 지문이 장애와 이어진 횟수.
+Link = dict[str, Any]
 
 
 class NoiseError(Exception):
@@ -25,7 +35,7 @@ psycopg_uri = db.uri
 _rows = db.rows
 
 
-def _connect():
+def _connect() -> "psycopg.Connection":
     return db.connect(NoiseError)
 
 
@@ -37,7 +47,8 @@ SEVERITY_RANK = ("CASE severity WHEN 'critical' THEN 1 WHEN 'error' THEN 2 "
                  "WHEN 'warning' THEN 3 ELSE 4 END")
 
 
-def _customer_filter(cur, customer):
+def _customer_filter(cur: "psycopg.Cursor",
+                     customer: str) -> Optional[list[str]]:
     """이 고객사의 계정 번호들. 고객사를 안 고르면 None(= 전체).
 
     이벤트는 고객사를 직접 들고 있지 않다. account_id 만 있고, 그게 어느
@@ -54,7 +65,8 @@ def _customer_filter(cur, customer):
     return [r[0] for r in cur.fetchall()]
 
 
-def ranking(hours=168, limit=30, customer=""):
+def ranking(hours: int = 168, limit: int = 30,
+            customer: str = "") -> list[Kind]:
     """시끄러운 알람 순위.
 
     '건수' 만으로는 부족하다. 500번 났어도 절차가 있고 억제 규칙이 걸려
@@ -119,7 +131,7 @@ def ranking(hours=168, limit=30, customer=""):
         return _rows(cur)
 
 
-def summary(hours=168, customer=""):
+def summary(hours: int = 168, customer: str = "") -> dict[str, Any]:
     """전체 그림. 상위 몇 종이 전체의 몇 %를 차지하는지.
 
     customer 를 주면 그 고객사 계정에서 온 알람만 센다. 순위표와 같은
@@ -189,7 +201,8 @@ def summary(hours=168, customer=""):
     }
 
 
-def save_rule(fingerprint, window_minutes, muted, note, author, sample=""):
+def save_rule(fingerprint: str, window_minutes: Any, muted: bool, note: str,
+              author: str, sample: str = "") -> None:
     """억제 규칙을 만들거나 갱신한다."""
     if not fingerprint.strip():
         raise NoiseError("지문이 없습니다.")
@@ -226,7 +239,7 @@ def save_rule(fingerprint, window_minutes, muted, note, author, sample=""):
         )
 
 
-def delete_rule(fingerprint):
+def delete_rule(fingerprint: str) -> None:
     """억제 규칙을 지운다. 발송 이력(alarm_state)은 남긴다."""
     with _connect() as conn, conn.cursor() as cur:
         cur.execute(
@@ -247,7 +260,9 @@ def delete_rule(fingerprint):
 # 20번 났는데 그중 한 번이 결제 장애였다면 절대 억제하면 안 된다.
 # 지금은 그 구분이 화면 어디에도 없다.
 
-def incident_links(fingerprints=None):
+def incident_links(
+    fingerprints: Optional[list[str]] = None,
+) -> dict[str, Link]:
     """지문별로 장애와 이어진 횟수. {지문: {...}}
 
     표가 없으면 빈 dict 다. 이 정보를 못 읽는다고 노이즈 화면이 안 뜨면
@@ -291,7 +306,7 @@ def incident_links(fingerprints=None):
 NOISY_ENOUGH = 20
 
 
-def advise(rows, links):
+def advise(rows: list[Kind], links: dict[str, Link]) -> list[Kind]:
     """순위표에 판단을 붙인다.
 
     rows: ranking() 결과, links: incident_links() 결과.
@@ -379,7 +394,8 @@ COVERAGE_ORDER = {"proven": 0, "urgent": 1, "frequent": 2, "covered": 8, None: 9
 SEVERITY_SORT = {"critical": 0, "error": 1, "warning": 2, "info": 3}
 
 
-def coverage(row, link=None):
+def coverage(row: Kind,
+             link: Optional[Link] = None) -> tuple[Optional[str], str]:
     """이 알람에 절차가 있어야 하는가, 있는가. (판정, 이유)
 
     부수효과가 없는 순수 함수다. row 는 ranking() 한 줄, link 는
@@ -422,7 +438,8 @@ def coverage(row, link=None):
     return None, ""
 
 
-def uncovered(rows, links=None, limit=5):
+def uncovered(rows: list[Kind], links: Optional[dict[str, Link]] = None,
+              limit: int = 5) -> list[Kind]:
     """절차를 다음에 써야 할 알람. 급한 순으로.
 
     순위표 전체를 다시 정렬하지 않고 따로 뽑는다. 순위표는 '얼마나
@@ -446,7 +463,7 @@ def uncovered(rows, links=None, limit=5):
     return picked[:limit] if limit else picked
 
 
-def coverage_summary(rows):
+def coverage_summary(rows: list[Kind]) -> dict[str, int]:
     """화면 위쪽 숫자. 절차가 빈 자리가 몇 종인가."""
     counts = {"covered": 0, "proven": 0, "urgent": 0, "frequent": 0, "skipped": 0}
     for row in rows:
@@ -460,7 +477,7 @@ def coverage_summary(rows):
     return counts
 
 
-def advice_summary(rows):
+def advice_summary(rows: list[Kind]) -> dict[str, int]:
     """화면 위쪽 숫자."""
     counts = {"risky": 0, "suppress": 0, "keep": 0}
     for row in rows:
