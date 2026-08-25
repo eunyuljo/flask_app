@@ -49,7 +49,7 @@ def check_db():
     """DB 에 붙고 스키마가 있는가."""
     import psycopg
 
-    uri = current_app.config["SQLALCHEMY_DATABASE_URI"].replace(
+    uri = current_app.config["DATABASE_URI"].replace(
         "postgresql+psycopg://", "postgresql://"
     )
     with psycopg.connect(uri, connect_timeout=5) as conn, conn.cursor() as cur:

@@ -424,7 +424,7 @@ CHECKS_BY_ID = {c["id"]: c for c in CHECKS}
 # ----------------------------------------------------------------------
 
 def psycopg_uri():
-    return current_app.config["SQLALCHEMY_DATABASE_URI"].replace(
+    return current_app.config["DATABASE_URI"].replace(
         "postgresql+psycopg://", "postgresql://"
     )
 

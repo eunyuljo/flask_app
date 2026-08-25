@@ -18,7 +18,7 @@ class StatsUnavailable(Exception):
 
 def _psycopg_uri():
     """설정의 SQLAlchemy 형식 URI 를 psycopg 가 이해하는 형식으로 바꾼다."""
-    return current_app.config["SQLALCHEMY_DATABASE_URI"].replace(
+    return current_app.config["DATABASE_URI"].replace(
         "postgresql+psycopg://", "postgresql://"
     )
 

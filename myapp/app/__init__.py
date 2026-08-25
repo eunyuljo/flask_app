@@ -61,7 +61,7 @@ def create_app(config_name=None):
         config_name = os.environ.get("FLASK_CONFIG", "default")
 
     # from_object() 는 클래스에 정의된 '대문자 속성'만 골라서 app.config 에 복사한다.
-    # 즉 SECRET_KEY, SQLALCHEMY_DATABASE_URI 는 들어가고, init_app 같은 메서드는 무시된다.
+    # 즉 SECRET_KEY, DATABASE_URI 는 들어가고, init_app 같은 메서드는 무시된다.
     # 이후 app.config["SECRET_KEY"] 처럼 딕셔너리로 꺼내 쓸 수 있다.
     app.config.from_object(config[config_name])
 

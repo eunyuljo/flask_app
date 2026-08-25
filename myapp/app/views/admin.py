@@ -62,7 +62,7 @@ def index():
         ("Lambda 호출 방식", cfg["LAMBDA_INVOCATION_TYPE"], None),
         ("AWS 리전", cfg["AWS_REGION"], None),
         ("AWS 액세스 키", "설정됨" if cfg["AWS_ACCESS_KEY_ID"] else "미설정(IAM 역할 사용)", None),
-        ("DB 접속", cfg["SQLALCHEMY_DATABASE_URI"].split("@")[-1], None),
+        ("DB 접속", cfg["DATABASE_URI"].split("@")[-1], None),
     ]
 
     # 이벤트는 DB 에서 읽는다. DB 가 없어도 나머지(설정, 라우트)는 보여야 한다.

@@ -42,7 +42,7 @@ SEVERITY_RANK = ("critical", "error", "warning", "info")
 
 
 def psycopg_uri():
-    return current_app.config["SQLALCHEMY_DATABASE_URI"].replace(
+    return current_app.config["DATABASE_URI"].replace(
         "postgresql+psycopg://", "postgresql://"
     )
 

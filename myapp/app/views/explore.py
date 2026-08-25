@@ -47,7 +47,7 @@ def index():
     result = None
     error = None
     try:
-        uri = current_app.config["SQLALCHEMY_DATABASE_URI"].replace(
+        uri = current_app.config["DATABASE_URI"].replace(
             "postgresql+psycopg://", "postgresql://"
         )
         result = run(uri, text, hours)

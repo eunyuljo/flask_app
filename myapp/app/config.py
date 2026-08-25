@@ -22,9 +22,14 @@ except ImportError:
 
 
 def build_db_uri(driver, user, password, host, port, name):
-    """개별 접속 정보를 SQLAlchemy 형식의 DB URI 한 줄로 조립한다.
+    """개별 접속 정보를 DB URI 한 줄로 조립한다.
 
-    최종 형태:  postgresql+psycopg://아이디:비밀번호@호스트:포트/DB이름
+    최종 형태:  postgresql://아이디:비밀번호@호스트:포트/DB이름
+
+    예전에는 postgresql+psycopg:// 였다. 그건 SQLAlchemy 가 드라이버를
+    고르는 표기인데 이 앱은 psycopg 를 직접 쓴다. 그래서 모듈마다
+    .replace("postgresql+psycopg://", "postgresql://") 를 하고 있었다.
+    읽는 사람이 ORM 을 쓰는 줄 알게 되는 표기를 남길 이유가 없다.
 
     quote_plus() 로 감싸는 이유:
     비밀번호에 @ / : # 같은 문자가 들어 있으면 URI 구분자와 헷갈려서 접속이 깨진다.
@@ -71,7 +76,7 @@ class Config:
     # ------------------------------------------------------------------
     # 접속에 필요한 값들을 항목별로 나눠서 읽는다.
     # 이렇게 쪼개두면 "호스트만 바꾸기" 같은 게 쉽고, 로그에 비밀번호를 빼고 찍기도 편하다.
-    DB_DRIVER = os.environ.get("DB_DRIVER", "postgresql+psycopg")
+    DB_DRIVER = os.environ.get("DB_DRIVER", "postgresql")
     DB_USER = os.environ.get("DB_USER", "flask_user")
     DB_PASSWORD = os.environ.get("DB_PASSWORD", "flask_password")
     DB_HOST = os.environ.get("DB_HOST", "localhost")
@@ -81,12 +86,13 @@ class Config:
     # 최종 접속 문자열.
     # DATABASE_URL 환경변수가 통째로 주어지면 그걸 그대로 쓰고(운영 환경에서 흔한 방식),
     # 없으면 위의 항목들을 조합해서 만든다.
-    SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL") or build_db_uri(
+    #
+    # 이름이 DATABASE_URI 였는데 이 앱에는 SQLAlchemy 가 없다.
+    # psycopg 를 직접 쓴다. 설정 이름이 거짓말을 하면 읽는 사람이 ORM 을
+    # 찾다가 없어서 헤맨다.
+    DATABASE_URI = os.environ.get("DATABASE_URL") or build_db_uri(
         DB_DRIVER, DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME
     )
-
-    # SQLAlchemy 가 객체 변경을 추적하는 기능. 메모리만 더 먹고 쓸 일이 거의 없어서 끈다.
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # ------------------------------------------------------------------
     # AI 에이전트 (Anthropic Claude)
@@ -187,12 +193,13 @@ class Config:
         if x.strip()
     ]
 
-    # 커넥션 풀 옵션. 오래 놀고 있던 커넥션을 DB 가 먼저 끊어버려서 나는
-    # "server closed the connection unexpectedly" 에러를 막는 설정이다.
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_pre_ping": True,  # 쿼리 보내기 전에 커넥션이 살아있는지 확인
-        "pool_recycle": 280,    # 280초마다 커넥션을 새로 맺음
-    }
+    # 커넥션 풀 옵션(SQLALCHEMY_ENGINE_OPTIONS)이 여기 있었다. 지웠다 -
+    # 읽는 쪽이 없었다. 이 앱은 요청마다 psycopg.connect() 로 새 커넥션을
+    # 맺고 with 블록에서 닫는다. 풀이 없으므로 pool_pre_ping 도 없다.
+    #
+    # 풀이 필요해지면 그때 진짜로 도는 것을 넣는다. 설정만 있고 아무도 안
+    # 읽는 값은 "이미 처리되어 있다" 는 착각만 만든다 - CSRF 가 정확히
+    # 그랬다(WTF_CSRF_ENABLED 는 있는데 Flask-WTF 가 없었다).
 
     @staticmethod
     def init_app(app):
@@ -209,18 +216,16 @@ class DevelopmentConfig(Config):
 
     DEBUG = True
 
-    # True 로 두면 실행되는 SQL 문이 전부 터미널에 출력된다. 학습할 때 특히 유용하다.
-    SQLALCHEMY_ECHO = True
-
 
 class TestingConfig(Config):
     """자동 테스트용. 진짜 DB 를 건드리지 않도록 메모리 SQLite 를 쓴다."""
 
     TESTING = True
 
-    # "sqlite://" 는 파일이 아니라 메모리에 DB 를 만든다는 뜻이다.
-    # 테스트가 끝나면 흔적 없이 사라지므로 개발용 데이터가 오염되지 않는다.
-    SQLALCHEMY_DATABASE_URI = "sqlite://"
+    # psycopg 가 쓸 수 없는 값을 일부러 넣는다. DB 를 보는 코드가 전부
+    # 실패하게 만들어서, 테스트가 개발용 데이터를 건드리지 않게 한다.
+    # (DB 가 필요한 테스트는 conftest 의 db_app 이 development 설정을 쓴다.)
+    DATABASE_URI = "sqlite://"
 
     # 폼 테스트를 편하게 하려고 CSRF 검사를 끈다(Flask-WTF 를 쓸 경우에 해당).
     WTF_CSRF_ENABLED = False
@@ -230,7 +235,6 @@ class ProductionConfig(Config):
     """실제 서비스용. 디버그를 끄고, 위험한 기본값이 남아있으면 실행을 막는다."""
 
     DEBUG = False
-    SQLALCHEMY_ECHO = False
 
     # 운영에서는 쿠키를 HTTPS 로만 전송하고, 자바스크립트가 읽지 못하게 막는다.
     SESSION_COOKIE_SECURE = True

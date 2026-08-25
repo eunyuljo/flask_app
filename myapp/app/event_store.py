@@ -23,7 +23,7 @@ class EventStoreError(Exception):
 
 
 def psycopg_uri():
-    return current_app.config["SQLALCHEMY_DATABASE_URI"].replace(
+    return current_app.config["DATABASE_URI"].replace(
         "postgresql+psycopg://", "postgresql://"
     )
 

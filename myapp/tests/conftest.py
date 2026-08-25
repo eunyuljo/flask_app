@@ -40,7 +40,7 @@ def logged_in(app):
 def db_app():
     """진짜 PostgreSQL 을 보는 앱.
 
-    testing 설정은 SQLALCHEMY_DATABASE_URI 가 "sqlite://" 라서 DB 질의가
+    testing 설정은 DATABASE_URI 가 "sqlite://" 라서 DB 질의가
     전부 실패한다(그게 의도다 - 개발용 데이터를 건드리지 않는다).
     DB 가 필요한 테스트는 development 설정을 쓴다.
     """
@@ -63,7 +63,7 @@ def db_uri(db_app):
     보게 된다. 이 프로젝트는 DB 없이도 앱이 뜨는 것을 전제로 한다.
     """
     psycopg = pytest.importorskip("psycopg")
-    uri = db_app.config["SQLALCHEMY_DATABASE_URI"].replace(
+    uri = db_app.config["DATABASE_URI"].replace(
         "postgresql+psycopg://", "postgresql://"
     )
     try:
@@ -118,7 +118,7 @@ def _test_customers():
 
     from app import create_app
 
-    uri = create_app("development").config["SQLALCHEMY_DATABASE_URI"].replace(
+    uri = create_app("development").config["DATABASE_URI"].replace(
         "postgresql+psycopg://", "postgresql://"
     )
     try:

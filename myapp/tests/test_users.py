@@ -253,7 +253,7 @@ class TestUserTable:
 
         with db_app.app_context():
             users.create("test-해시", "비밀번호12345", "operator")
-        uri = db_app.config["SQLALCHEMY_DATABASE_URI"].replace(
+        uri = db_app.config["DATABASE_URI"].replace(
             "postgresql+psycopg://", "postgresql://"
         )
         with psycopg.connect(uri) as conn, conn.cursor() as cur:

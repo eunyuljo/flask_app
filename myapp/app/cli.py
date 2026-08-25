@@ -32,7 +32,7 @@ def _psycopg_uri():
     SQLAlchemy 에게 어떤 드라이버를 쓸지 알려주는 표시일 뿐이다.
     psycopg 에 직접 넘길 때는 빼야 한다.
     """
-    return current_app.config["SQLALCHEMY_DATABASE_URI"].replace(
+    return current_app.config["DATABASE_URI"].replace(
         "postgresql+psycopg://", "postgresql://"
     )
 
