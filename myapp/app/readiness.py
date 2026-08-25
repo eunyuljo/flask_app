@@ -20,6 +20,8 @@
 
 from flask import current_app
 
+from app import db
+
 # 필수  : 없으면 서비스를 시작하면 안 된다
 # 권장  : 없어도 돌아가지만 사고가 났을 때 곤란해진다
 # 선택  : 있으면 좋다
@@ -39,28 +41,16 @@ class ReadinessError(Exception):
     """준비도를 확인하지 못했을 때."""
 
 
-def psycopg_uri():
-    return current_app.config["DATABASE_URI"].replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+# 접속 문자열은 app/db.py 가 만든다. 다른 모듈이 이 이름으로
+# 가져다 쓰고 있어서 별칭으로 남긴다.
+psycopg_uri = db.uri
 
 
-def _rows(cur):
-    cols = [d.name for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+_rows = db.rows
 
 
 def _connect():
-    try:
-        import psycopg
-    except ImportError as e:
-        raise ReadinessError("psycopg 가 설치되어 있지 않습니다.") from e
-    try:
-        return psycopg.connect(psycopg_uri())
-    except Exception as e:
-        if type(e).__module__.split(".")[0] == "psycopg":
-            raise ReadinessError(f"DB 에 접속하지 못했습니다: {e}") from e
-        raise
+    return db.connect(ReadinessError)
 
 
 def _has(cur, name):

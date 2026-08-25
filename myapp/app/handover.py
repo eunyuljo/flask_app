@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 
 from flask import current_app
 
+from app import db
+
 # 심각도를 '나쁜 순' 으로 세우는 SQL 조각.
 #
 # max(severity) 를 쓰면 안 된다. 문자열 비교라 알파벳 순으로 가장 큰 값,
@@ -24,26 +26,18 @@ class HandoverError(Exception):
     """인계 자료를 모으지 못했을 때."""
 
 
-def psycopg_uri():
-    return current_app.config["DATABASE_URI"].replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+# 접속 문자열은 app/db.py 가 만든다. 다른 모듈이 이 이름으로
+# 가져다 쓰고 있어서 별칭으로 남긴다.
+psycopg_uri = db.uri
 
 
-def _rows(cur):
-    cols = [d.name for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+_rows = db.rows
 
 
 def collect(hours=12):
     """지난 N시간의 인계 자료를 한 번의 접속으로 모은다."""
     try:
-        import psycopg
-    except ImportError as e:
-        raise HandoverError("psycopg 가 설치되어 있지 않습니다.") from e
-
-    try:
-        with psycopg.connect(psycopg_uri()) as conn, conn.cursor() as cur:
+        with db.connect(HandoverError) as conn, conn.cursor() as cur:
             cur.execute("SELECT to_regclass('public.events')")
             if cur.fetchone()[0] is None:
                 raise HandoverError(

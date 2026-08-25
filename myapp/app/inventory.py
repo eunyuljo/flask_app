@@ -18,6 +18,8 @@
 
 from flask import current_app
 
+from app import db
+
 # 태그를 붙일 수 있는 리소스인지 판단할 때 쓴다.
 # attributes 에 tags 키가 아예 없으면 태그를 못 다는 종류로 본다.
 TAG_KEY = "tags"
@@ -27,28 +29,16 @@ class InventoryError(Exception):
     """목록을 읽지 못했을 때."""
 
 
-def psycopg_uri():
-    return current_app.config["DATABASE_URI"].replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+# 접속 문자열은 app/db.py 가 만든다. 다른 모듈이 이 이름으로
+# 가져다 쓰고 있어서 별칭으로 남긴다.
+psycopg_uri = db.uri
 
 
-def _rows(cur):
-    cols = [d.name for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+_rows = db.rows
 
 
 def _connect():
-    try:
-        import psycopg
-    except ImportError as e:
-        raise InventoryError("psycopg 가 설치되어 있지 않습니다.") from e
-    try:
-        return psycopg.connect(psycopg_uri())
-    except Exception as e:
-        if type(e).__module__.split(".")[0] == "psycopg":
-            raise InventoryError(f"DB 에 접속하지 못했습니다: {e}") from e
-        raise
+    return db.connect(InventoryError)
 
 
 def _has(cur, name):

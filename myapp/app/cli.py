@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 import click
 from flask import current_app
 
+from app import db
+
 # Lambda 핸들러의 정규화 함수를 그대로 가져다 쓴다.
 # 샘플 데이터도 실제와 똑같은 경로를 거치게 하려는 것이다.
 from api.normalize_handler import normalize
@@ -25,16 +27,10 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCHEMA_PATH = os.path.join(_PROJECT_ROOT, "db", "schema.sql")
 
 
-def _psycopg_uri():
-    """SQLAlchemy 형식 URI 를 psycopg 가 이해하는 형식으로 바꾼다.
-
-    설정에는 "postgresql+psycopg://..." 로 적혀 있는데, 가운데 "+psycopg" 는
-    SQLAlchemy 에게 어떤 드라이버를 쓸지 알려주는 표시일 뿐이다.
-    psycopg 에 직접 넘길 때는 빼야 한다.
-    """
-    return current_app.config["DATABASE_URI"].replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+# 접속 문자열은 app/db.py 가 만든다.
+# CLI 는 db.connect() 를 쓰지 않는다 - 실패를 click.ClickException 으로
+# 바꿔서 "무엇을 실행하세요" 까지 알려줘야 하는데, 그건 화면 계층의 일이다.
+_psycopg_uri = db.uri
 
 
 def tracked(job):

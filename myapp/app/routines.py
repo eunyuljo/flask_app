@@ -14,6 +14,8 @@
 
 from flask import current_app
 
+from app import db
+
 # 흔한 주기. 화면의 선택지로 쓴다. 값은 그냥 일수라, 목록에 없는 주기도
 # 숫자로 넣으면 그대로 동작한다.
 PRESETS = [
@@ -44,28 +46,16 @@ class RoutineError(Exception):
     """정기 점검을 읽거나 쓰는 데 실패했을 때."""
 
 
-def psycopg_uri():
-    return current_app.config["DATABASE_URI"].replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+# 접속 문자열은 app/db.py 가 만든다. 다른 모듈이 이 이름으로
+# 가져다 쓰고 있어서 별칭으로 남긴다.
+psycopg_uri = db.uri
 
 
-def _rows(cur):
-    cols = [d.name for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+_rows = db.rows
 
 
 def _connect():
-    try:
-        import psycopg
-    except ImportError as e:
-        raise RoutineError("psycopg 가 설치되어 있지 않습니다.") from e
-    try:
-        return psycopg.connect(psycopg_uri())
-    except Exception as e:
-        if type(e).__module__.split(".")[0] == "psycopg":
-            raise RoutineError(f"DB 에 접속하지 못했습니다: {e}") from e
-        raise
+    return db.connect(RoutineError)
 
 
 def _ensure(cur, table):

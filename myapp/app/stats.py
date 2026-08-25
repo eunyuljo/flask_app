@@ -4,6 +4,8 @@
 
 from flask import current_app
 
+from app import db
+
 # 심각도는 정해진 순서로만 보여준다. 개수 순으로 정렬하면 매번 순서가 바뀌어서
 # "위에서 두 번째가 error" 같은 위치 기억이 깨진다. 색뿐 아니라 위치도 식별 단서다.
 SEVERITY_ORDER = ("critical", "error", "warning", "info")
@@ -16,11 +18,8 @@ class StatsUnavailable(Exception):
     """DB 가 없거나 테이블이 아직 없어서 집계를 못 낼 때."""
 
 
-def _psycopg_uri():
-    """설정의 SQLAlchemy 형식 URI 를 psycopg 가 이해하는 형식으로 바꾼다."""
-    return current_app.config["DATABASE_URI"].replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+# 접속 문자열은 app/db.py 가 만든다.
+_psycopg_uri = db.uri
 
 
 def collect(hours=24, top_sources=6):
@@ -30,12 +29,7 @@ def collect(hours=24, top_sources=6):
     접속 자체가 질의보다 훨씬 비싸기 때문이다.
     """
     try:
-        import psycopg
-    except ImportError as e:
-        raise StatsUnavailable("psycopg 가 설치되어 있지 않습니다.") from e
-
-    try:
-        with psycopg.connect(_psycopg_uri()) as conn:
+        with db.connect(StatsUnavailable) as conn:
             with conn.cursor() as cur:
                 # 테이블이 없으면 아래 질의들이 전부 에러를 내므로 먼저 확인한다.
                 cur.execute("SELECT to_regclass('public.events')")
@@ -145,12 +139,7 @@ def fingerprint_history(fingerprint, hours=168, sample=5):
     (api/normalize_handler.py 의 _fingerprint 참고).
     """
     try:
-        import psycopg
-    except ImportError as e:
-        raise StatsUnavailable("psycopg 가 설치되어 있지 않습니다.") from e
-
-    try:
-        with psycopg.connect(_psycopg_uri()) as conn, conn.cursor() as cur:
+        with db.connect(StatsUnavailable) as conn, conn.cursor() as cur:
             cur.execute("SELECT to_regclass('public.events')")
             if cur.fetchone()[0] is None:
                 raise StatsUnavailable("events 테이블이 없습니다.")

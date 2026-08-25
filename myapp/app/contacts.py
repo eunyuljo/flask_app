@@ -11,6 +11,8 @@
 
 from flask import current_app
 
+from app import db
+
 KINDS = {
     "primary": "기술 담당",
     "report": "보고 수신",
@@ -26,28 +28,16 @@ class ContactError(Exception):
     """연락처를 읽거나 쓰는 데 실패했을 때."""
 
 
-def psycopg_uri():
-    return current_app.config["DATABASE_URI"].replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+# 접속 문자열은 app/db.py 가 만든다. 다른 모듈이 이 이름으로
+# 가져다 쓰고 있어서 별칭으로 남긴다.
+psycopg_uri = db.uri
 
 
-def _rows(cur):
-    cols = [d.name for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+_rows = db.rows
 
 
 def _connect():
-    try:
-        import psycopg
-    except ImportError as e:
-        raise ContactError("psycopg 가 설치되어 있지 않습니다.") from e
-    try:
-        return psycopg.connect(psycopg_uri())
-    except Exception as e:
-        if type(e).__module__.split(".")[0] == "psycopg":
-            raise ContactError(f"DB 에 접속하지 못했습니다: {e}") from e
-        raise
+    return db.connect(ContactError)
 
 
 def _ensure(cur):

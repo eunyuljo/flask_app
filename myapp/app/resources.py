@@ -7,6 +7,8 @@ import json
 
 from flask import current_app
 
+from app import db
+
 
 class ResourceError(Exception):
     """DB 가 없거나 스냅샷이 부족할 때."""
@@ -52,10 +54,9 @@ def digest_of(attributes):
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
 
-def psycopg_uri():
-    return current_app.config["DATABASE_URI"].replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+# 접속 문자열은 app/db.py 가 만든다. 다른 모듈이 이 이름으로
+# 가져다 쓰고 있어서 별칭으로 남긴다.
+psycopg_uri = db.uri
 
 
 # ----------------------------------------------------------------------
@@ -145,8 +146,7 @@ def list_snapshots(uri, limit=20, account_id=None, region=None):
             """,
             params,
         )
-        cols = [d.name for d in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        return db.rows(cur)
 
 
 def _field_diff(old_attrs, new_attrs):

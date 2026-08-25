@@ -13,6 +13,8 @@ from datetime import datetime, timedelta, timezone
 
 from flask import current_app
 
+from app import db
+
 # 장애 구간 앞뒤로 더 볼 여유. 원인은 보통 알람보다 먼저 있다.
 LEAD_MINUTES = 30
 TAIL_MINUTES = 30
@@ -52,28 +54,16 @@ class IncidentError(Exception):
     """장애 기록을 읽거나 쓰는 데 실패했을 때."""
 
 
-def psycopg_uri():
-    return current_app.config["DATABASE_URI"].replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+# 접속 문자열은 app/db.py 가 만든다. 다른 모듈이 이 이름으로
+# 가져다 쓰고 있어서 별칭으로 남긴다.
+psycopg_uri = db.uri
 
 
-def _rows(cur):
-    cols = [d.name for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+_rows = db.rows
 
 
 def _connect():
-    try:
-        import psycopg
-    except ImportError as e:
-        raise IncidentError("psycopg 가 설치되어 있지 않습니다.") from e
-    try:
-        return psycopg.connect(psycopg_uri())
-    except Exception as e:
-        if type(e).__module__.split(".")[0] == "psycopg":
-            raise IncidentError(f"DB 에 접속하지 못했습니다: {e}") from e
-        raise
+    return db.connect(IncidentError)
 
 
 def _ensure_table(cur):

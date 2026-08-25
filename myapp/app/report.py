@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 from flask import current_app
 
+from app import db
+
 from app.resources import psycopg_uri
 
 # 표본이 이보다 적으면 순위를 신뢰할 수 없다고 알린다.
@@ -30,17 +32,12 @@ def collect(days=7):
     핵심은 '이번 기간'만이 아니라 '직전 같은 길이의 기간'도 함께 뽑는다는 점이다.
     절대 건수보다 변화가 훨씬 신뢰할 만한 신호이기 때문이다.
     """
-    try:
-        import psycopg
-    except ImportError as e:
-        raise ReportError("psycopg 가 설치되어 있지 않습니다.") from e
-
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=days)
     prev_start = now - timedelta(days=days * 2)
 
     try:
-        with psycopg.connect(psycopg_uri()) as conn:
+        with db.connect(ReportError) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT to_regclass('public.events')")
                 if cur.fetchone()[0] is None:

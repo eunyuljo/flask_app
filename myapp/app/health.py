@@ -20,6 +20,8 @@ import time
 
 from flask import current_app
 
+from app import db
+
 
 def _timed(fn):
     """점검 하나를 돌리고 (성공 여부, 설명, 걸린 시간) 을 돌려준다.
@@ -49,10 +51,13 @@ def check_db():
     """DB 에 붙고 스키마가 있는가."""
     import psycopg
 
-    uri = current_app.config["DATABASE_URI"].replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
-    with psycopg.connect(uri, connect_timeout=5) as conn, conn.cursor() as cur:
+    # db.connect() 를 쓰지 않는다. 두 가지가 다르다.
+    #   * 여기는 타임아웃이 필요하다. 점검이 걸려서 안 끝나면 '운영 상태'
+    #     화면 전체가 멈춘다 - 죽었는지 보러 온 화면이 같이 죽는 셈이다.
+    #   * 여기는 예외를 도메인 에러로 바꾸면 안 된다. 부르는 쪽이 원래
+    #     예외를 받아서 '무엇이 왜 안 되는가' 로 만든다.
+    # 접속 문자열만 db.uri() 에서 가져온다.
+    with psycopg.connect(db.uri(), connect_timeout=5) as conn, conn.cursor() as cur:
         cur.execute("SELECT to_regclass('public.events')")
         if cur.fetchone()[0] is None:
             return False, "붙었지만 events 테이블이 없습니다. init-db 가 필요합니다."
