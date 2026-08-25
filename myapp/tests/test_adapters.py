@@ -501,3 +501,47 @@ class TestUnparsedIsVisibleOnScreen:
         body = client.get("/alarm/").get_data(as_text=True)
         assert "정규화하지 못한 이벤트" in body
         assert "zzq_unknown_sender" in body
+
+
+@pytest.mark.db
+class TestTheAlarmFormCarriesTheAccount:
+    """화면에서 넣은 알람만 고객사 집계에서 빠지면 화면을 못 믿게 된다.
+
+    고객사 현황·SLA·리포트·노이즈 필터가 전부 account_id 로 묶는다.
+    """
+
+    def test_the_form_offers_registered_accounts(self, db_app, db_uri):
+        db_app.config["WTF_CSRF_ENABLED"] = False
+        client = db_app.test_client()
+        client.post("/auth/login", data={"username": "admin", "password": "1234"})
+        body = client.get("/alarm/").get_data(as_text=True)
+        assert 'name="account_id"' in body
+        assert "고객사 집계에서 빠집니다" in body, "안 고르면 어떻게 되는지 알려야 한다"
+
+    def test_submitting_with_an_account_attributes_the_event(self, db_app, db_uri):
+        import psycopg
+
+        from app.accounts import list_accounts
+
+        db_app.config["WTF_CSRF_ENABLED"] = False
+        with db_app.app_context():
+            accounts = list_accounts()
+        if not accounts:
+            pytest.skip("등록된 계정이 없습니다")
+        account_id = accounts[0]["account_id"]
+
+        client = db_app.test_client()
+        client.post("/auth/login", data={"username": "admin", "password": "1234"})
+        marker = "zzq폼에서보낸알람"
+        client.post("/alarm/send", data={
+            "message": marker, "severity": "info", "source": "web",
+            "event_type": "manual", "account_id": account_id,
+        }, follow_redirects=True)
+
+        with psycopg.connect(db_uri) as conn, conn.cursor() as cur:
+            cur.execute("SELECT account_id FROM events WHERE message = %s", (marker,))
+            row = cur.fetchone()
+            if row is None:
+                pytest.skip("DATABASE_URL 이 없어 적재되지 않았습니다")
+            assert row[0] == account_id
+            cur.execute("DELETE FROM events WHERE message = %s", (marker,))

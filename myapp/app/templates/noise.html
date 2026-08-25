@@ -18,10 +18,36 @@
     구간:
     {% for h in choices %}
       {% if h == hours %}<strong>{{ h }}시간</strong>
-      {% else %}<a href="{{ url_for('noise.index', hours=h) }}">{{ h }}시간</a>{% endif %}
+      {% else %}
+        <a href="{{ url_for('noise.index', hours=h, customer=selected or None) }}">{{ h }}시간</a>
+      {% endif %}
       {% if not loop.last %}&middot;{% endif %}
     {% endfor %}
   </p>
+
+  {# 고객사 필터. 이벤트는 고객사를 직접 들고 있지 않고 account_id 만
+     있어서, 그 계정이 어느 고객사인지로 거른다. 계정을 안 실어 보낸
+     이벤트는 어느 고객사에도 안 잡힌다. #}
+  {% if customers %}
+    <p class="muted">
+      고객사:
+      {% if not selected %}<strong>전체</strong>
+      {% else %}<a href="{{ url_for('noise.index', hours=hours) }}">전체</a>{% endif %}
+      {% for c in customers %}
+        &middot;
+        {% if c == selected %}<strong>{{ c }}</strong>
+        {% else %}
+          <a href="{{ url_for('noise.index', hours=hours, customer=c) }}">{{ c }}</a>
+        {% endif %}
+      {% endfor %}
+    </p>
+    {% if selected %}
+      <p class="muted">
+        <strong>{{ selected }}</strong> 계정에서 온 알람만 세고 있습니다.
+        계정을 실어 보내지 않은 이벤트는 여기 안 잡힙니다.
+      </p>
+    {% endif %}
+  {% endif %}
 
   {% if error %}
     <div class="flash error">{{ error }}</div>
@@ -250,6 +276,7 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="fingerprint" value="{{ i.fingerprint }}">
           <input type="hidden" name="sample" value="{{ i.sample[:120] }}">
+          <input type="hidden" name="customer" value="{{ selected }}">
           <label>
             같은 알람은 몇 분에 한 번만 <span class="muted">(0 = 억제 안 함)</span>
             <input type="text" name="window_minutes" value="{{ i.window_minutes or 0 }}">

@@ -37,17 +37,41 @@ SEVERITY_RANK = ("CASE severity WHEN 'critical' THEN 1 WHEN 'error' THEN 2 "
                  "WHEN 'warning' THEN 3 ELSE 4 END")
 
 
-def ranking(hours=168, limit=30):
+def _customer_filter(cur, customer):
+    """이 고객사의 계정 번호들. 고객사를 안 고르면 None(= 전체).
+
+    이벤트는 고객사를 직접 들고 있지 않다. account_id 만 있고, 그게 어느
+    고객사인지는 aws_accounts 가 안다. 그래서 계정 목록으로 바꿔서 거른다.
+
+    계정이 하나도 없으면 빈 목록을 돌려준다 - '전체' 로 떨어뜨리면 안 된다.
+    온보딩 중이라 계정이 없는 고객사를 골랐는데 전체 알람이 나오면,
+    그게 그 고객사 것으로 읽힌다.
+    """
+    if not customer:
+        return None
+    cur.execute("SELECT account_id FROM aws_accounts WHERE customer = %s",
+                (customer,))
+    return [r[0] for r in cur.fetchall()]
+
+
+def ranking(hours=168, limit=30, customer=""):
     """시끄러운 알람 순위.
 
     '건수' 만으로는 부족하다. 500번 났어도 절차가 있고 억제 규칙이 걸려
     있으면 관리되고 있는 것이고, 20번 났는데 아무것도 없으면 그게 문제다.
     그래서 런북 유무와 규칙 유무를 같은 줄에 붙여서 본다.
+
+    customer 를 주면 그 고객사 계정에서 온 알람만 본다.
     """
     with _connect() as conn, conn.cursor() as cur:
         cur.execute("SELECT to_regclass('public.events')")
         if cur.fetchone()[0] is None:
             raise NoiseError("events 테이블이 없습니다. flask --app run init-db 를 실행하세요.")
+
+        # 계정 목록은 %s 로 넘긴다. SQL 본문에 값이 들어가지 않는다.
+        accounts = _customer_filter(cur, customer)
+        where_customer = "AND e.account_id = ANY(%s)" if accounts is not None else ""
+        params = [hours] + ([accounts] if accounts is not None else []) + [limit]
 
         cur.execute(
             f"""
@@ -84,19 +108,28 @@ def ranking(hours=168, limit=30):
               LEFT JOIN (SELECT DISTINCT fingerprint FROM runbooks) rb
                      ON rb.fingerprint = e.fingerprint
              WHERE e.occurred_at >= now() - make_interval(hours => %s)
+               {where_customer}
              GROUP BY e.fingerprint, r.window_minutes, r.muted, r.note,
                       rb.fingerprint, s.sent_count, s.suppressed_count
              ORDER BY c DESC, last_seen DESC
              LIMIT %s
-            """,
-            (hours, limit),
+            """.replace("{where_customer}", where_customer),
+            params,
         )
         return _rows(cur)
 
 
-def summary(hours=168):
-    """전체 그림. 상위 몇 종이 전체의 몇 %를 차지하는지."""
+def summary(hours=168, customer=""):
+    """전체 그림. 상위 몇 종이 전체의 몇 %를 차지하는지.
+
+    customer 를 주면 그 고객사 계정에서 온 알람만 센다. 순위표와 같은
+    범위를 봐야 한다 - 위쪽 숫자는 전체이고 아래 목록만 걸러져 있으면
+    "상위 5종이 40%" 가 무엇에 대한 40% 인지 알 수 없다.
+    """
     with _connect() as conn, conn.cursor() as cur:
+        accounts = _customer_filter(cur, customer)
+        where_customer = "AND e.account_id = ANY(%s)" if accounts is not None else ""
+        params = [hours] + ([accounts] if accounts is not None else [])
         cur.execute(
             """
             WITH per_kind AS (
@@ -107,6 +140,7 @@ def summary(hours=168):
                   LEFT JOIN (SELECT DISTINCT fingerprint FROM runbooks) rb
                          ON rb.fingerprint = e.fingerprint
                  WHERE e.occurred_at >= now() - make_interval(hours => %s)
+                   {where_customer}
                  GROUP BY e.fingerprint, rb.fingerprint
             )
             SELECT
@@ -125,8 +159,8 @@ def summary(hours=168):
                 count(*) FILTER (WHERE has_runbook)                        AS covered_kinds,
                 COALESCE(sum(c) FILTER (WHERE has_runbook), 0)             AS covered_events
               FROM per_kind
-            """,
-            (hours,),
+            """.replace("{where_customer}", where_customer),
+            params,
         )
         total, kinds, top5, covered_kinds, covered_events = cur.fetchone()
 

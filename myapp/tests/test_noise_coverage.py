@@ -269,3 +269,96 @@ class TestSeverityBeatsCountWithinAVerdict:
                 row("prov", 1, severity="info")]
         got = noise.uncovered(rows, {"prov": link()})
         assert [r["fingerprint"] for r in got] == ["prov", "crit"]
+
+
+# ----------------------------------------------------------------------
+# 고객사 필터
+# ----------------------------------------------------------------------
+# 이벤트는 고객사를 직접 들고 있지 않다. account_id 만 있고, 그게 어느
+# 고객사인지는 aws_accounts 가 안다. 그래서 계정 목록으로 바꿔서 거른다.
+
+@pytest.mark.db
+class TestCustomerFilter:
+    def _customers(self, db_app):
+        from app import customer as customer_mod
+
+        with db_app.app_context():
+            return customer_mod.names(with_accounts=True)
+
+    def test_filtering_narrows_the_list(self, db_app, db_uri):
+        who = self._customers(db_app)
+        if not who:
+            pytest.skip("계정이 붙은 고객사가 없습니다")
+        with db_app.app_context():
+            everything = noise.ranking(24 * 60)
+            just_one = noise.ranking(24 * 60, customer=who[0])
+        if not everything:
+            pytest.skip("이벤트가 없습니다")
+        assert len(just_one) <= len(everything)
+
+    def test_summary_and_ranking_see_the_same_scope(self, db_app, db_uri):
+        """위쪽 숫자는 전체인데 아래 목록만 걸러져 있으면 '상위 5종이 40%' 가
+        무엇에 대한 40% 인지 알 수 없다."""
+        who = self._customers(db_app)
+        if not who:
+            pytest.skip("계정이 붙은 고객사가 없습니다")
+        with db_app.app_context():
+            rows = noise.ranking(24 * 60, limit=1000, customer=who[0])
+            head = noise.summary(24 * 60, customer=who[0])
+        assert head["kinds"] == len(rows)
+
+    def test_a_customer_without_accounts_gets_zero_not_everything(self, db_app, db_uri):
+        """이게 제일 위험한 실패다.
+
+        계정이 없는 고객사를 골랐는데 전체 알람이 나오면, 그게 그 고객사
+        것으로 읽힌다. 온보딩 중인 고객사가 정확히 그 상태다.
+        """
+        from app import customer as customer_mod
+
+        name = "zzq계정없는고객"
+        with db_app.app_context():
+            try:
+                customer_mod.delete(name)
+            except customer_mod.CustomerError:
+                pass
+            customer_mod.create(name)
+            try:
+                assert noise.summary(24 * 60, customer=name)["total"] == 0
+                assert noise.ranking(24 * 60, customer=name) == []
+            finally:
+                customer_mod.delete(name)
+
+    def test_unknown_customer_falls_back_to_everything_and_says_so(self, db_app, db_uri):
+        """쿼리스트링을 그대로 믿고 넘기면 없는 고객사가 조용히 0건이 되고,
+        그게 '알람이 없다' 로 읽힌다."""
+        db_app.config["WTF_CSRF_ENABLED"] = False
+        client = db_app.test_client()
+        client.post("/auth/login", data={"username": "admin", "password": "1234"})
+        body = client.get("/noise/?customer=zzq그런고객없음",
+                          follow_redirects=True).get_data(as_text=True)
+        assert "등록되지 않은 고객사" in body
+
+    def test_the_filter_survives_a_period_change(self, db_app, db_uri):
+        """구간을 바꿨더니 고객사 필터가 풀리면 다른 고객사 알람을 보게 된다."""
+        who = self._customers(db_app)
+        if not who:
+            pytest.skip("계정이 붙은 고객사가 없습니다")
+        db_app.config["WTF_CSRF_ENABLED"] = False
+        client = db_app.test_client()
+        client.post("/auth/login", data={"username": "admin", "password": "1234"})
+        body = client.get(f"/noise/?customer={who[0]}").get_data(as_text=True)
+
+        # 한글 고객사명은 퍼센트 인코딩되므로 문자열로 찾지 않는다.
+        # 구간 링크를 실제로 따라가서 필터가 남아 있는지 본다.
+        import re
+        from urllib.parse import unquote
+
+        links = [m for m in re.findall(r'href="(/noise/\?[^"]+)"', body)
+                 if "hours=" in m]
+        assert links, "구간 링크가 없습니다"
+        kept = [l for l in links if f"customer={who[0]}" in unquote(l)]
+        assert kept, f"구간 링크에 고객사 필터가 없습니다: {links[:3]}"
+
+        # 따라갔을 때도 여전히 그 고객사여야 한다.
+        followed = client.get(kept[0]).get_data(as_text=True)
+        assert who[0] in followed

@@ -173,6 +173,17 @@ def send():
         "submitted_by": session.get("username"),
     }
 
+    # 계정을 실어 보낸다. 이게 없으면 이 이벤트는 어느 고객사에도 안 잡힌다 -
+    # 고객사 현황의 알람 칸, SLA, 리포트, 노이즈의 고객사 필터가 전부
+    # account_id 로 묶는다. 화면에서 넣은 알람만 그 집계에서 빠지는 것은
+    # 화면을 못 믿게 만드는 종류의 구멍이다.
+    #
+    # 등록된 계정 중에서만 고르게 한다(폼이 select 다). 손으로 치게 두면
+    # 오타가 조용히 미귀속을 만든다.
+    account_id = request.form.get("account_id", "").strip()
+    if account_id:
+        payload["account_id"] = account_id
+
     try:
         result = _process(payload)
     except LambdaInvokeError as e:

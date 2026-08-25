@@ -40,6 +40,25 @@
       이벤트 종류
       <input type="text" name="event_type" value="disk">
     </label>
+    {# 계정을 안 실으면 이 이벤트는 어느 고객사에도 안 잡힌다. 고객사 현황·
+       SLA·리포트·노이즈 필터가 전부 account_id 로 묶기 때문이다.
+       등록된 계정 중에서 고르게 한다 - 손으로 치면 오타가 조용히
+       미귀속을 만든다. #}
+    <label>
+      계정 <span class="muted">(고객사에 묶으려면 골라야 합니다)</span>
+      <select name="account_id">
+        <option value="">(고르지 않음 &mdash; 고객사 집계에서 빠집니다)</option>
+        {% for customer, accounts in grouped.items() %}
+          <optgroup label="{{ customer }}">
+            {% for a in accounts %}
+              <option value="{{ a.account_id }}">
+                {{ a.alias or a.account_id }} ({{ a.account_id }})
+              </option>
+            {% endfor %}
+          </optgroup>
+        {% endfor %}
+      </select>
+    </label>
     <button type="submit">Lambda 로 보내기</button>
   </form>
 

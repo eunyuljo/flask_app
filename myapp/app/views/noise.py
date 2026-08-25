@@ -7,6 +7,7 @@ from flask import (
 )
 
 from app import noise
+from app.customer import names as customer_names, CustomerError
 from app.noise import NoiseError
 
 noise_bp = Blueprint("noise", __name__)
@@ -41,10 +42,24 @@ def _hours():
 def index():
     """시끄러운 알람 순위와 억제 규칙."""
     hours = _hours()
+
+    # 고객사 필터. 등록된 이름만 받는다 - 쿼리스트링을 그대로 믿고 넘기면
+    # 없는 고객사를 골랐을 때 조용히 0건이 나오고, 그게 "알람이 없다" 로
+    # 읽힌다. 목록에 없으면 전체로 되돌리고 그 사실을 알린다.
+    selected = request.args.get("customer", "").strip()
+    customers = []
+    try:
+        customers = customer_names()
+    except CustomerError:
+        pass
+    if selected and selected not in customers:
+        flash(f"등록되지 않은 고객사입니다: {selected}", "error")
+        selected = ""
+
     items, total, error, advice = [], None, None, None
     try:
-        items = noise.ranking(hours)
-        total = noise.summary(hours)
+        items = noise.ranking(hours, customer=selected)
+        total = noise.summary(hours, customer=selected)
     except NoiseError as e:
         error = str(e)
 
@@ -72,6 +87,7 @@ def index():
         items=items, total=total, error=error, advice=advice,
         gaps=gaps, coverage=coverage,
         hours=hours, choices=HOUR_CHOICES,
+        customers=customers, selected=selected,
         noisy_enough=noise.NOISY_ENOUGH,
         worth_a_runbook=noise.WORTH_A_RUNBOOK,
         not_a_runbook_target=noise.NOT_A_RUNBOOK_TARGET,
@@ -94,7 +110,8 @@ def rule():
         flash("억제 규칙을 저장했습니다.", "success")
     except NoiseError as e:
         flash(str(e), "error")
-    return redirect(url_for("noise.index", hours=_hours()))
+    return redirect(url_for("noise.index", hours=_hours(),
+                            customer=request.form.get("customer", "") or None))
 
 
 # 최종 URL: /noise/rule/delete
@@ -106,4 +123,5 @@ def delete_rule():
         flash("억제 규칙을 지웠습니다.", "success")
     except NoiseError as e:
         flash(str(e), "error")
-    return redirect(url_for("noise.index", hours=_hours()))
+    return redirect(url_for("noise.index", hours=_hours(),
+                            customer=request.form.get("customer", "") or None))
